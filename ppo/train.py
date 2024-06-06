@@ -28,7 +28,7 @@ def train():
     max_training_timesteps = int(1e6)   # break training loop if timeteps > max_training_timesteps
     print_freq = max_ep_len * 5        # print avg reward in the interval (in num timesteps)
     log_freq = max_ep_len * 2           # log avg reward in the interval (in num timesteps)
-    save_model_freq = int(2e5)          # save model frequency (in num timesteps)
+    save_model_freq = int(1e5)          # save model frequency (in num timesteps)
     action_std = 0.6                    # starting std for action distribution (Multivariate Normal)
     action_std_decay_rate = 0.05        # linearly decay action_std (action_std = action_std - action_std_decay_rate)
     min_action_std = 0.1                # minimum action_std (stop decay after action_std <= min_action_std)
@@ -45,7 +45,7 @@ def train():
     gamma = 0.99            # discount factor
     lr_actor = 0.0005       # learning rate for actor network
     lr_critic = 0.001       # learning rate for critic network
-    random_seed = 46         # set random seed if required (0 = no random seed)
+    random_seed = 0         # set random seed if required (0 = no random seed)
     #####################################################
 
     print("training environment name : " + env_name)
@@ -64,7 +64,7 @@ def train():
     ###################### logging ######################
 
     #### log files for multiple runs are NOT overwritten
-    log_dir = "PPO_logs"
+    log_dir = "ppo/PPO_logs"
     if not os.path.exists(log_dir):
           os.makedirs(log_dir)
 
@@ -86,7 +86,7 @@ def train():
     ################### checkpointing ###################
     run_num_pretrained = 0   #### change this to prevent overwriting weights in same env_name folder
 
-    directory = "PPO_preTrained"
+    directory = "ppo/PPO_preTrained"
     if not os.path.exists(directory):
           os.makedirs(directory)
 
