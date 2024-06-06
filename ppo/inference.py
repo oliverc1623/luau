@@ -1,4 +1,8 @@
 import os
+import sys
+os.chdir('..')
+sys.path.append(os.getcwd())
+sys.path.insert(0, '..')
 import glob
 import time
 from datetime import datetime
@@ -8,17 +12,18 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import minigrid
 from minigrid.wrappers import ImgObsWrapper, RGBImgPartialObsWrapper, RGBImgObsWrapper
-from ppo import PPO
+from luau.ppo.ppo import PPO
+from luau.introspective_ppo import IntrospectiveEnv
 
 ################################### Training ###################################
 def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "EmptyRandomEnv"
-    size=8 # gridworld env size
+    env_name = "SmallDoorRoom"
+    size=6 # gridworld env size
     has_continuous_action_space = False  # continuous action space; else discrete
-    save_frames = True
+    save_frames = False
     max_ep_len = 4 * size**2                   # max timesteps in one episode
     max_training_timesteps = int(1e5)   # break training loop if timeteps > max_training_timesteps
     print_freq = max_ep_len * 5        # print avg reward in the interval (in num timesteps)
@@ -36,19 +41,16 @@ def train():
     ################ PPO hyperparameters ################
     update_timestep = max_ep_len * 4     # update policy every n timesteps
     K_epochs = 4               # update policy for K epochs in one PPO update
-
     eps_clip = 0.2          # clip parameter for PPO
     gamma = 0.99            # discount factor
-
     lr_actor = 0.0005       # learning rate for actor network
     lr_critic = 0.001       # learning rate for critic network
-
     random_seed = 46         # set random seed if required (0 = no random seed)
     #####################################################
 
     print("training environment name : " + env_name)
 
-    env = gym.make('MiniGrid-Empty-Random-5x5-v0', render_mode="rgb_array")
+    env = IntrospectiveEnv.SmallUnlockedDoorEnv(size=size, locked=False, render_mode="rgb_array")
     if image_observation:
         env = RGBImgObsWrapper(env)
     print(f"Gridworld size: {env.max_steps}")
@@ -65,7 +67,7 @@ def train():
     ###################### logging ######################
 
     #### log files for multiple runs are NOT overwritten
-    log_dir = "PPO_logs"
+    log_dir = "ppo/PPO_inference"
     if not os.path.exists(log_dir):
           os.makedirs(log_dir)
 
@@ -88,14 +90,13 @@ def train():
     ################### checkpointing ###################
     run_num_pretrained = 2   #### change this to prevent overwriting weights in same env_name folder
 
-    directory = "PPO_preTrained"
+    directory = "ppo/PPO_inference"
     if not os.path.exists(directory):
           os.makedirs(directory)
 
     directory = directory + '/' + env_name + '/'
     if not os.path.exists(directory):
           os.makedirs(directory)
-
 
     checkpoint_path = directory + "PPO_{}_{}_{}.pth".format(env_name, random_seed, run_num_pretrained)
     print("save checkpoint path : " + checkpoint_path)
@@ -150,8 +151,12 @@ def train():
         image_observation,
         action_std
     )
-    ppo_agent.policy.load_state_dict(torch.load("PPO_preTrained/EmptyRandomEnv/PPO_EmptyRandomEnv_46_0.pth"))
-    ppo_agent.policy_old.load_state_dict(torch.load("PPO_preTrained/EmptyRandomEnv/PPO_EmptyRandomEnv_46_0.pth"))
+    ppo_agent.policy.load_state_dict(torch.load(
+        "ppo/PPO_preTrained/SmallDoorRoom/PPO_SmallDoorRoom_46_0.pth"
+    ))
+    ppo_agent.policy_old.load_state_dict(torch.load(
+        "ppo/PPO_preTrained/SmallDoorRoom/PPO_SmallDoorRoom_46_0.pth"
+    ))
     
     # track total training time
     start_time = datetime.now().replace(microsecond=0)
@@ -205,7 +210,7 @@ def train():
 
             if save_frames:
                 img = env.render()
-                plt.imsave(f"frames/frame_{time_step:06}.png", img)
+                plt.imsave(f"ppo/frames/frame_{time_step:06}.png", img)
 
             # log in logging file
             if time_step % log_freq == 0:
