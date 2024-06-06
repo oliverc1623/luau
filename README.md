@@ -13,3 +13,9 @@ pip install scikit-image
 pip install h5py
 pip install seaborn
 ```
+
+# Making a video from image frames
+
+```
+ffmpeg -framerate 25 -i frame_%06d.png -c:v libx264 -profile:v high -crf 20 -pix_fmt yuv420p ../output.mp4
+```
