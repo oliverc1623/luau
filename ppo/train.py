@@ -1,4 +1,8 @@
 import os
+import sys
+os.chdir('..')
+sys.path.append(os.getcwd())
+sys.path.insert(0, '..')
 import glob
 import time
 from datetime import datetime
@@ -8,15 +12,16 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import minigrid
 from minigrid.wrappers import ImgObsWrapper, RGBImgPartialObsWrapper, RGBImgObsWrapper
-from ppo import PPO
+from luau.ppo.ppo import PPO
+from luau.introspective_ppo import IntrospectiveEnv
 
 ################################### Training ###################################
 def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "EmptyRandomEnv"
-    size=5 # gridworld env size
+    env_name = "SmallDoorRoom"
+    size=6 # gridworld env size
     has_continuous_action_space = False  # continuous action space; else discrete
     save_frames = False
     max_ep_len = 4 * size**2                   # max timesteps in one episode
@@ -44,7 +49,7 @@ def train():
     #####################################################
 
     print("training environment name : " + env_name)
-    env = gym.make('MiniGrid-Empty-Random-5x5-v0', render_mode="rgb_array")
+    env = IntrospectiveEnv.SmallUnlockedDoorEnv(size=size, locked=False)
     if image_observation:
         env = RGBImgObsWrapper(env)
     print(f"Gridworld size: {env.max_steps}")
