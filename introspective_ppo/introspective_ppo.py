@@ -113,7 +113,7 @@ class ActorCritic(nn.Module):
     def forward(self):
         raise NotImplementedError
 
-    def act(self, features, scalar):
+    def act(self, state, scalar):
         # actor
         x = F.relu(self.actor_conv1(state))
         x = F.max_pool2d(x, 2)
@@ -146,7 +146,7 @@ class ActorCritic(nn.Module):
 
         return action.detach(), action_logprob.detach(), state_values.detach()
 
-    def evaluate(self, features, action, scalar):
+    def evaluate(self, state, action, scalar):
         # actor
         x = F.relu(self.actor_conv1(state))
         x = F.max_pool2d(x, 2)
@@ -253,7 +253,7 @@ class PPOIntrospective:
             "--------------------------------------------------------------------------------------------"
         )
 
-    def select_action(self, state, scalar):
+    def select_action(self, state, direction):
         with torch.no_grad():
             state = self.preprocess(state).to(device)
             direction = (

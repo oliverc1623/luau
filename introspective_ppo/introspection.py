@@ -14,13 +14,10 @@ def introspect(
     h = 0
     probability = introspection_decay**(max(0, t - burn_in))
     p = Bernoulli(probability).sample()
-    
-    feature, classcode = state
-    latentcode = torch.cat([feature, classcode], dim=1).to("cuda")
     direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to("cuda")
     if t > burn_in and p == 1:
-        _, _, teacher_source_val = teacher_source_policy.act(latentcode, direction)
-        _, _, teacher_target_val = teacher_target_policy.act(latentcode, direction)
+        _, _, teacher_source_val = teacher_source_policy.act(state, direction)
+        _, _, teacher_target_val = teacher_target_policy.act(state, direction)
         if abs(teacher_target_val - teacher_source_val) <= inspection_threshold:
             h = 1
     return h

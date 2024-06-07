@@ -13,7 +13,7 @@ import gymnasium as gym
 import minigrid
 from minigrid.wrappers import ImgObsWrapper, RGBImgPartialObsWrapper, RGBImgObsWrapper
 from luau.introspective_ppo import IntrospectiveEnv
-from lual.introspective_ppo.introspective_ppo import PPOIntrospective
+from luau.introspective_ppo.introspective_ppo import PPOIntrospective
 from luau.introspective_ppo.introspection import introspect, correct
 
 ################################### Training ###################################
@@ -69,7 +69,7 @@ def train():
     ###################### logging ######################
 
     #### log files for multiple runs are NOT overwritten
-    log_dir = "ippo/PPO_logs"
+    log_dir = "introspective_ppo/PPO_logs"
     if not os.path.exists(log_dir):
           os.makedirs(log_dir)
 
@@ -91,7 +91,7 @@ def train():
     ################### checkpointing ###################
     run_num_pretrained = 0      #### change this to prevent overwriting weights in same env_name folder
 
-    directory = "ippo/PPO_preTrained"
+    directory = "introspective_ppo/PPO_preTrained"
     if not os.path.exists(directory):
           os.makedirs(directory)
 
@@ -142,11 +142,12 @@ def train():
     student_ppo_agent = PPOIntrospective(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, teacher=False)
     teacher_ppo_agent = PPOIntrospective(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, teacher=True)
     # TODO: we need to fine-tune a copy 
+    print(os.getcwd())
     teacher_ppo_agent.policy.load_state_dict(
-        torch.load("/home/luau/ppo/PPO_preTrained/SmallDoorRoom/PPO_SmallDoorRoom_0_0.pth")
+        torch.load("/home/jovyan/luau/ppo/PPO_preTrained/SmallDoorRoom/PPO_SmallDoorRoom_0_0.pth")
     )
     teacher_ppo_agent.policy_old.load_state_dict(
-        torch.load("/home/luau/ppo/PPO_preTrained/PPO_preTrained/SmallDoorRoom/PPO_SmallDoorRoom_0_0.pth")
+        torch.load("/home/jovyan/luau/ppo/PPO_preTrained/SmallDoorRoom/PPO_SmallDoorRoom_0_0.pth")
     )
 
     # track total training time
