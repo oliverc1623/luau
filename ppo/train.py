@@ -20,20 +20,20 @@ def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "SmallDoorRoom"
-    size=6 # gridworld env size
-    has_continuous_action_space = False  # continuous action space; else discrete
-    save_frames = False
-    max_ep_len = 4 * size**2                   # max timesteps in one episode
-    max_training_timesteps = int(1e6)   # break training loop if timeteps > max_training_timesteps
-    print_freq = max_ep_len * 5        # print avg reward in the interval (in num timesteps)
-    log_freq = max_ep_len * 2           # log avg reward in the interval (in num timesteps)
-    save_model_freq = int(1e5)          # save model frequency (in num timesteps)
-    action_std = 0.6                    # starting std for action distribution (Multivariate Normal)
-    action_std_decay_rate = 0.05        # linearly decay action_std (action_std = action_std - action_std_decay_rate)
-    min_action_std = 0.1                # minimum action_std (stop decay after action_std <= min_action_std)
-    action_std_decay_freq = int(2.5e5)  # action_std decay frequency (in num timesteps)
-    image_observation = False
+    env_name = "SmallDoorRoomLocked"
+    size=6                                # gridworld env size
+    has_continuous_action_space = False   # continuous action space; else discrete
+    save_frames = False                   # save frames?
+    max_ep_len = 4 * size**2              # max timesteps in one episode
+    max_training_timesteps = int(1e6)     # break training loop if timeteps > max_training_timesteps
+    print_freq = max_ep_len * 5           # print avg reward in the interval (in num timesteps)
+    log_freq = max_ep_len * 2             # log avg reward in the interval (in num timesteps)
+    save_model_freq = int(1e5)            # save model frequency (in num timesteps)
+    action_std = 0.6                      # starting std for action distribution (Multivariate Normal)
+    action_std_decay_rate = 0.05          # linearly decay action_std (action_std = action_std - action_std_decay_rate)
+    min_action_std = 0.1                  # minimum action_std (stop decay after action_std <= min_action_std)
+    action_std_decay_freq = int(2.5e5)    # action_std decay frequency (in num timesteps)
+    image_observation = False             # rgb-images as observations?
     #####################################################
 
     ## Note : print/log frequencies should be > than max_ep_len
@@ -46,10 +46,14 @@ def train():
     lr_actor = 0.0005       # learning rate for actor network
     lr_critic = 0.001       # learning rate for critic network
     random_seed = 0         # set random seed if required (0 = no random seed)
+    print("--------------------------------------------------------------------------------------------")
+    print("setting random seed to ", random_seed)
+    torch.manual_seed(random_seed)
+    np.random.seed(random_seed)
     #####################################################
 
     print("training environment name : " + env_name)
-    env = IntrospectiveEnv.SmallUnlockedDoorEnv(size=size, locked=False)
+    env = IntrospectiveEnv.SmallUnlockedDoorEnv(size=size, locked=True)
     if image_observation:
         env = RGBImgObsWrapper(env)
     print(f"Gridworld size: {env.max_steps}")
@@ -168,13 +172,6 @@ def train():
         state = state["image"]
         current_ep_reward = 0
         for t in range(1, max_ep_len+1):
-            if time_step % 500000 == 0:
-                random_seed += 1
-                print("--------------------------------------------------------------------------------------------")
-                print("setting random seed to ", random_seed)
-                torch.manual_seed(random_seed)
-                np.random.seed(random_seed)
-
             # select action with policy
             action = ppo_agent.select_action(state, direction)
             state, reward, done, truncated, info = env.step(action)
