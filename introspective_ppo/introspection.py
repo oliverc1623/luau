@@ -31,23 +31,18 @@ def correct(
     student_ratios = []
 
     for action, state, direction, indicator, logprob, in zip(rolloutbuffer.actions, rolloutbuffer.states, rolloutbuffer.direction, rolloutbuffer.indicators, rolloutbuffer.logprobs):
-        
         if indicator:
-            
             # compute importance sampling ratio
             _, student_action_logprob, _ = student_policy.act(state.detach(), direction.detach())
             ratio = student_action_logprob / logprob
-            
-            # append corrections
             teacher_ratios.append(1.0)
-            student_ratios.append(ratio.item())
+            student_ratios.append(torch.clamp(ratio, -2, 2).item())
 
         else:
             # compute importance sampling ratio
             _, teacher_action_logprob, _ = teacher_policy.act(state.detach(), direction.detach())
             ratio = teacher_action_logprob / logprob
-
-            teacher_ratios.append(ratio.item())
+            teacher_ratios.append(torch.clamp(ratio, -0.2, 0.2).item())
             student_ratios.append(1.0)
 
     teacher_ratios = torch.tensor(teacher_ratios).float()

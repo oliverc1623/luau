@@ -21,7 +21,7 @@ def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "SmallDoorRoomLocked"
+    env_name = "Small-Door-Room-Locked-Student"
     size=6                                # gridworld env size
     has_continuous_action_space = False   # continuous action space; else discrete
     save_frames = False                   # save frames?
@@ -46,7 +46,7 @@ def train():
     gamma = 0.99            # discount factor
     lr_actor = 0.0005       # learning rate for actor network
     lr_critic = 0.001       # learning rate for critic network
-    random_seed = 0         # set random seed if required (0 = no random seed)
+    random_seed = 47        # set random seed if required (0 = no random seed)
     print("--------------------------------------------------------------------------------------------")
     print("setting random seed to ", random_seed)
     torch.manual_seed(random_seed)
@@ -144,10 +144,10 @@ def train():
     # TODO: we need to fine-tune a copy 
     print(os.getcwd())
     teacher_ppo_agent.policy.load_state_dict(
-        torch.load("/home/jovyan/luau/ppo/PPO_preTrained/SmallDoorRoom/PPO_SmallDoorRoom_0_0.pth")
+        torch.load("ppo/PPO_preTrained/SmallDoorRoomUnLocked/PPO_SmallDoorRoomUnLocked_0_0.pth")
     )
     teacher_ppo_agent.policy_old.load_state_dict(
-        torch.load("/home/jovyan/luau/ppo/PPO_preTrained/SmallDoorRoom/PPO_SmallDoorRoom_0_0.pth")
+        torch.load("ppo/PPO_preTrained/SmallDoorRoomUnLocked/PPO_SmallDoorRoomUnLocked_0_0.pth")
     )
 
     # track total training time
@@ -178,7 +178,12 @@ def train():
         for t in range(1, max_ep_len+1):
             # select action with policy
             h = introspect(
-                teacher_ppo_agent.preprocess(state, invert=False), direction, teacher_ppo_agent.policy_old, teacher_ppo_agent.policy, time_step, inspection_threshold=0.45
+                teacher_ppo_agent.preprocess(state, invert=False), 
+                direction, 
+                teacher_ppo_agent.policy_old, 
+                teacher_ppo_agent.policy, 
+                time_step, 
+                inspection_threshold=0.9
             )
             if h:
                 action, teacher_direction, teacher_state, teacher_action_logprob, teacher_state_val = teacher_ppo_agent.select_action(state, direction)
