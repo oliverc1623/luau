@@ -21,7 +21,7 @@ def train():
     print("============================================================================================")
 
     ####### initialize environment hyperparameters ######
-    env_name = "Small-Door-Room-Locked-Student"
+    env_name = "Small-Door-Room-Locked-Adaptive-Student"
     size=6                                # gridworld env size
     has_continuous_action_space = False   # continuous action space; else discrete
     save_frames = False                   # save frames?
@@ -144,10 +144,10 @@ def train():
     # TODO: we need to fine-tune a copy 
     print(os.getcwd())
     teacher_ppo_agent.policy.load_state_dict(
-        torch.load("ppo/PPO_preTrained/SmallDoorRoomUnLocked/PPO_SmallDoorRoomUnLocked_0_0.pth")
+        torch.load("ppo/PPO_preTrained/SmallDoorRoomTeacher/PPO_SmallDoorRoomTeacher_0_0.pth")
     )
     teacher_ppo_agent.policy_old.load_state_dict(
-        torch.load("ppo/PPO_preTrained/SmallDoorRoomUnLocked/PPO_SmallDoorRoomUnLocked_0_0.pth")
+        torch.load("ppo/PPO_preTrained/SmallDoorRoomTeacher/PPO_SmallDoorRoomTeacher_0_0.pth")
     )
 
     # track total training time
@@ -183,6 +183,7 @@ def train():
                 teacher_ppo_agent.policy_old, 
                 teacher_ppo_agent.policy, 
                 time_step, 
+                current_ep_reward,
                 inspection_threshold=0.9
             )
             if h:
