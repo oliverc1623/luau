@@ -255,3 +255,5 @@ class PPO:
         else:
             x = x.permute(0, 3, 1, 2).to(device)
         return x
+
+print(1)
