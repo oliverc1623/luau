@@ -1,4 +1,4 @@
-#%%
+# %%
 from pathlib import Path
 
 import numpy as np
@@ -20,10 +20,12 @@ else:
 print("Device set to : " + str(device))
 print("============================================================================================")
 
-#%%
+
+# %%
 ################################## PPO Policy ##################################
 class RolloutBuffer:
     """A buffer to store rollout data for reinforcement learning agents and supports the generation of minibatches for training."""
+
     def __init__(self):
         self.actions = []
         self.direction = []
@@ -43,7 +45,7 @@ class RolloutBuffer:
         del self.state_values[:]
         del self.is_terminals[:]
 
-    def generate_minibatch(self, minibatch_size: int=128) -> tuple:
+    def generate_minibatch(self, minibatch_size: int = 128) -> tuple:
         """Generate a minibatch of data from the buffer."""
         batch_size = len(self.states)  # Assuming all lists are of the same size
         indices = np.random.default_rng().choice(batch_size, minibatch_size, replace=False)
@@ -69,6 +71,7 @@ class RolloutBuffer:
 
 class ActorCritic(nn.Module):
     """Actor-Critic class. Only discrete action spaces are supported... for now."""
+
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
 
@@ -89,7 +92,6 @@ class ActorCritic(nn.Module):
         # critic linear layers
         self.critic_fc1 = nn.Linear(65, 512)  # Add +1 for the scalar input
         self.critic_fc2 = nn.Linear(512, 1)
-
 
     def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Forward pass."""
@@ -121,7 +123,6 @@ class ActorCritic(nn.Module):
         state_values = self.critic_fc2(y)
 
         return action.detach(), action_logprob.detach(), state_values.detach()
-
 
     def evaluate(self, state: torch.tensor, action: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Evaluate the policy."""
@@ -157,6 +158,7 @@ class ActorCritic(nn.Module):
 
 class PPO:
     """Proximal Policy Optimization (PPO) agent."""
+
     def __init__(
         self,
         state_dim: torch.tensor,
@@ -167,7 +169,6 @@ class PPO:
         eps_clip: float,
         action_std_init: float = 0.6,
     ):
-
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
@@ -178,14 +179,13 @@ class PPO:
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.MseLoss = nn.MSELoss()
 
-
     def select_action(self, state: dict) -> int:
         """Select an action."""
         direction = state["direction"]
         image = state["image"]
         with torch.no_grad():
             image = self.preprocess(image).to(device)
-            direction = (torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device))
+            direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
             action, action_logprob, state_val = self.policy_old.act(state, direction)
         self.buffer.states.append(state)
         self.buffer.direction.append(direction)
@@ -208,28 +208,28 @@ class PPO:
         rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
         rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
         # convert list to tensor
-        old_states = (torch.squeeze(torch.stack(self.buffer.states, dim=0)).detach().to(device))
-        old_direction = (torch.squeeze(torch.stack(self.buffer.direction, dim=0)).detach().to(device))
-        old_actions = (torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device))
-        old_logprobs = (torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device))
-        old_state_values = (torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device))
+        old_states = torch.squeeze(torch.stack(self.buffer.states, dim=0)).detach().to(device)
+        old_direction = torch.squeeze(torch.stack(self.buffer.direction, dim=0)).detach().to(device)
+        old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
+        old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
+        old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
         # calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
             # Evaluating old actions and values
             logprobs, state_values, dist_entropy = self.policy.evaluate(old_states, old_actions, old_direction)
-            state_values = torch.squeeze(state_values) # match state_values tensor dimensions with rewards tensor
-            ratios = torch.exp(logprobs - old_logprobs.detach()) # Finding the ratio (pi_theta / pi_theta__old)
+            state_values = torch.squeeze(state_values)  # match state_values tensor dimensions with rewards tensor
+            ratios = torch.exp(logprobs - old_logprobs.detach())  # Finding the ratio (pi_theta / pi_theta__old)
             surr1 = ratios * advantages
-            surr2 = (torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages)
-            vf_loss = self.MseLoss(state_values, rewards) # value function loss
-            loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy # final loss of clipped objective PPO
-            self.optimizer.zero_grad() # take gradient step
+            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+            vf_loss = self.MseLoss(state_values, rewards)  # value function loss
+            loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy  # final loss of clipped objective PPO
+            self.optimizer.zero_grad()  # take gradient step
             loss.mean().backward()
             self.optimizer.step()
-        self.policy_old.load_state_dict(self.policy.state_dict()) # Copy new weights into old policy
-        self.buffer.clear() # clear buffer
+        self.policy_old.load_state_dict(self.policy.state_dict())  # Copy new weights into old policy
+        self.buffer.clear()  # clear buffer
 
     def save(self, checkpoint_path: Path) -> None:
         """Save the model."""
@@ -240,7 +240,7 @@ class PPO:
         self.policy_old.load_state_dict(torch.load(checkpoint_path))
         self.policy.load_state_dict(torch.load(checkpoint_path))
 
-    def preprocess(self, x: np.array, *, image_observation: bool=False, invert: bool=False) -> torch.tensor:
+    def preprocess(self, x: np.array, *, image_observation: bool = False, invert: bool = False) -> torch.tensor:
         """Preprocess the input."""
         # if rgb-image, normalize
         if image_observation:
@@ -255,5 +255,3 @@ class PPO:
         else:
             x = x.permute(0, 3, 1, 2).to(device)
         return x
-
-print(1)
