@@ -68,13 +68,13 @@ class Trainer:
     def setup_directories(self) -> tuple[Path, Path]:
         """Make logging and checkpoint directories."""
         if self.log_dir is not None:
-            log_dir = Path(self.log_dir)
+            log_dir = Path(f"{self.log_dir}/PPO_logs/{self.env_name}/")
         else:
             log_dir = Path(f"./PPO_logs/{self.env_name}/")
         log_dir.mkdir(parents=True, exist_ok=True)
 
         if self.model_dir is not None:
-            model_dir = Path(self.model_dir)
+            model_dir = Path(f"{self.model_dir}/models/{self.env_name}/")
         else:
             model_dir = Path(f"./models/{self.env_name}/")
         model_dir.mkdir(parents=True, exist_ok=True)
