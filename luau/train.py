@@ -27,7 +27,7 @@ root_path = Path(__file__).resolve().parent.parent
 class Trainer:
     """A class to train the agent."""
 
-    def __init__(self, config_path: str) -> None:
+    def __init__(self, config_path: str, log_dir: str | None = None, model_dir: str | None = None) -> None:
         with Path.open(config_path, "r") as file:
             config = yaml.safe_load(file)
 
@@ -49,7 +49,7 @@ class Trainer:
         self.image_observation = config["image_observation"]
         self.run_num_pretrained = config["run_num"]
         #####################################################
-        ## Note : print/log frequencies should be > than max_ep_len
+        ## Note : print and log frequencies should be > than max_ep_len
         ################ PPO hyperparameters ################
         self.update_timestep = self.max_ep_len * 4
         self.k_epochs = config["k_epochs"]
@@ -60,6 +60,10 @@ class Trainer:
         self.random_seed = config["random_seed"]
         torch.manual_seed(self.random_seed)
         self.rng = np.random.default_rng(self.random_seed)
+
+        # Store log_dir and model_dir
+        self.log_dir = log_dir
+        self.model_dir = model_dir
 
     def setup_directories(self) -> tuple[Path, Path]:
         """Make logging and checkpoint directories."""
