@@ -27,7 +27,14 @@ root_path = Path(__file__).resolve().parent.parent
 class Trainer:
     """A class to train the agent."""
 
-    def __init__(self, config_path: str, log_dir: str | None = None, model_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        config_path: str,
+        log_dir: str | None = None,
+        model_dir: str | None = None,
+        random_seed: int | None = None,
+        run_id: str | None = None,
+    ) -> None:
         with Path.open(config_path, "r") as file:
             config = yaml.safe_load(file)
 
@@ -57,24 +64,29 @@ class Trainer:
         self.gamma = config["gamma"]
         self.lr_actor = config["lr_actor"]
         self.lr_critic = config["lr_critic"]
-        self.random_seed = config["random_seed"]
+        # Set the random seed
+        if random_seed is not None:
+            self.random_seed = random_seed
+        else:
+            self.random_seed = config["random_seed"]
         torch.manual_seed(self.random_seed)
         self.rng = np.random.default_rng(self.random_seed)
 
         # Store log_dir and model_dir
         self.log_dir = log_dir
         self.model_dir = model_dir
+        self.run_id = run_id
 
     def setup_directories(self) -> tuple[Path, Path]:
         """Make logging and checkpoint directories."""
         if self.log_dir is not None:
-            log_dir = Path(f"{self.log_dir}/PPO_logs/{self.env_name}/")
+            log_dir = Path(f"{self.log_dir}/PPO_logs/{self.env_name}/run_{self.run_id}")
         else:
             log_dir = Path(f"./PPO_logs/{self.env_name}/")
         log_dir.mkdir(parents=True, exist_ok=True)
 
         if self.model_dir is not None:
-            model_dir = Path(f"{self.model_dir}/models/{self.env_name}/")
+            model_dir = Path(f"{self.model_dir}/models/{self.env_name}/run_{self.run_id}")
         else:
             model_dir = Path(f"./models/{self.env_name}/")
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -235,11 +247,30 @@ if __name__ == "__main__":
         default=None,
         help="Directory to save models.",
     )
+    parser.add_argument(
+        "--num_experiments",
+        type=int,
+        default=1,
+        help="Number of experiments to run.",
+    )
     args = parser.parse_args()
 
-    trainer = Trainer(
-        config_path=args.config_path,
-        log_dir=args.log_dir,
-        model_dir=args.model_dir,
-    )
-    trainer.train()
+    # Load the base random seed from the config file
+    with Path(args.config_path).open("r") as file:
+        base_config = yaml.safe_load(file)
+    base_random_seed = base_config.get("random_seed", 0)
+
+    for i in range(args.num_experiments):
+        # Generate a unique random seed for each experiment
+        random_seed = base_random_seed + i
+        run_id = f"seed_{random_seed}"
+        print(f"Running experiment {i + 1} with random seed {random_seed}.")
+
+        trainer = Trainer(
+            config_path=args.config_path,
+            log_dir=args.log_dir,
+            model_dir=args.model_dir,
+            random_seed=random_seed,
+            run_id=run_id,
+        )
+        trainer.train()

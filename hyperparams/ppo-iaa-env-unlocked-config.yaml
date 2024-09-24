@@ -5,7 +5,7 @@ size: 9                              # gridworld env size
 has_continuous_action_space: False   # continuous action space; else discrete
 save_frames: False                   # save frames?
 max_ep_len: 324                      # max timesteps in one episode. 4 * size**2
-max_training_timesteps: 1000000      # break training loop if timeteps > max_training_timesteps. 1e6
+max_training_timesteps: 1000000      # break training loop if timesteps > max_training_timesteps. 1e6
 print_freq: 1620                     # print avg reward in the interval (in num timesteps). 5 * max_ep_len
 log_freq: 648                        # log avg reward in the interval (in num timesteps). 2 * max_ep_len
 save_model_freq: 100000              # save model frequency (in num timesteps)
@@ -21,4 +21,4 @@ eps_clip: 0.2                        # clip parameter for PPO
 gamma: 0.99                          # discount factor
 lr_actor: 0.0005                     # learning rate for actor
 lr_critic: 0.001                     # learning rate for critic
-random_seed: 0                       # random seed value
+random_seed: 47                      # random seed value
