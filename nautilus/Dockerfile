@@ -5,7 +5,8 @@ RUN micromamba install -y -n base -f /tmp/env.yaml && \
 
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bluetooth git vim \
+    bluetooth git vim pipx curl \
+    && pipx ensurepath \
     && rm -rf /var/lib/apt/lists/*
 
 USER $MAMBA_USER
