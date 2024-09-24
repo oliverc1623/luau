@@ -203,12 +203,8 @@ class Trainer:
 
 
 # %%
-config_path = root_path / "hyperparams/ppo-iaa-env-unlocked-config.yaml"
-trainer = Trainer(config_path=config_path)
-trainer.train()
-
-# %%
 
 if __name__ == "__main__":
-    config_path = root_path / "ppo-iaa-env-unlocked-config.yaml"
+    config_path = root_path / "hyperparams/ppo-iaa-env-unlocked-config.yaml"
     trainer = Trainer(config_path=config_path)
+    trainer.train()
