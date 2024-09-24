@@ -6,6 +6,8 @@ spec:
   containers:
   - name: chang-hippo
     image: gitlab-registry.nrp-nautilus.io/oliverc1622/luau:latest
+    securityContext:
+        runAsUser: 0
     command: ["sh", "-c", "sleep infinity"]
     volumeMounts: 
     - mountPath: /pvcvolume
