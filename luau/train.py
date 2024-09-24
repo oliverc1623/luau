@@ -1,4 +1,5 @@
 # %%
+import argparse
 import logging
 import os
 from datetime import datetime
@@ -60,13 +61,19 @@ class Trainer:
         torch.manual_seed(self.random_seed)
         self.rng = np.random.default_rng(self.random_seed)
 
-    def setup_directories(self, env_name: str) -> tuple[str, str]:
+    def setup_directories(self) -> tuple[Path, Path]:
         """Make logging and checkpoint directories."""
-        log_dir = Path(f"{root_path}/PPO_logs/{env_name}/")
-        Path.mkdir(log_dir, parents=True, exist_ok=True)
+        if self.log_dir is not None:
+            log_dir = Path(self.log_dir)
+        else:
+            log_dir = Path(f"./PPO_logs/{self.env_name}/")
+        log_dir.mkdir(parents=True, exist_ok=True)
 
-        model_dir = Path(f"{root_path}/models/{env_name}/")
-        Path.mkdir(model_dir, parents=True, exist_ok=True)
+        if self.model_dir is not None:
+            model_dir = Path(self.model_dir)
+        else:
+            model_dir = Path(f"./models/{self.env_name}/")
+        model_dir.mkdir(parents=True, exist_ok=True)
 
         return log_dir, model_dir
 
@@ -205,6 +212,30 @@ class Trainer:
 # %%
 
 if __name__ == "__main__":
-    config_path = root_path / "hyperparams/ppo-iaa-env-unlocked-config.yaml"
-    trainer = Trainer(config_path=config_path)
+    parser = argparse.ArgumentParser(description="Train the agent.")
+    parser.add_argument(
+        "--config_path",
+        type=str,
+        default="./hyperparams/ppo-iaa-env-unlocked-config.yaml",
+        help="Path to the config file.",
+    )
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default=None,
+        help="Directory to save logs.",
+    )
+    parser.add_argument(
+        "--model_dir",
+        type=str,
+        default=None,
+        help="Directory to save models.",
+    )
+    args = parser.parse_args()
+
+    trainer = Trainer(
+        config_path=args.config_path,
+        log_dir=args.log_dir,
+        model_dir=args.model_dir,
+    )
     trainer.train()
