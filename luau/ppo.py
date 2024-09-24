@@ -28,7 +28,6 @@ class RolloutBuffer:
 
     def __init__(self):
         self.actions = []
-        self.direction = []
         self.states = []
         self.logprobs = []
         self.rewards = []
@@ -39,34 +38,10 @@ class RolloutBuffer:
         """Clear the buffer."""
         del self.actions[:]
         del self.states[:]
-        del self.direction[:]
         del self.logprobs[:]
         del self.rewards[:]
         del self.state_values[:]
         del self.is_terminals[:]
-
-    def generate_minibatch(self, minibatch_size: int = 128) -> tuple:
-        """Generate a minibatch of data from the buffer."""
-        batch_size = len(self.states)  # Assuming all lists are of the same size
-        indices = np.random.default_rng().choice(batch_size, minibatch_size, replace=False)
-
-        minibatch_states = [self.states[i] for i in indices]
-        minibatch_direction = [self.direction[i] for i in indices]
-        minibatch_actions = [self.actions[i] for i in indices]
-        minibatch_logprobs = [self.logprobs[i] for i in indices]
-        minibatch_rewards = [self.rewards[i] for i in indices]
-        minibatch_state_values = [self.state_values[i] for i in indices]
-        minibatch_is_terminals = [self.is_terminals[i] for i in indices]
-
-        return (
-            minibatch_states,
-            minibatch_direction,
-            minibatch_actions,
-            minibatch_logprobs,
-            minibatch_rewards,
-            minibatch_state_values,
-            minibatch_is_terminals,
-        )
 
 
 class ActorCritic(nn.Module):
@@ -124,10 +99,10 @@ class ActorCritic(nn.Module):
 
         return action.detach(), action_logprob.detach(), state_values.detach()
 
-    def evaluate(self, state: torch.tensor, action: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
+    def evaluate(self, state: list, action: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Evaluate the policy."""
-        direction = state["direction"]
-        image = state["image"]
+        image = torch.squeeze(torch.stack([s["image"] for s in state], dim=0)).detach().to(device)
+        direction = torch.squeeze(torch.stack([s["direction"] for s in state], dim=0)).detach().to(device)
 
         # actor
         x = f.relu(self.actor_conv1(image))
@@ -167,15 +142,14 @@ class PPO:
         gamma: float,
         k_epochs: int,
         eps_clip: float,
-        action_std_init: float = 0.6,
     ):
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
         self.buffer = RolloutBuffer()
-        self.policy = ActorCritic(state_dim, action_dim, action_std_init).to(device)
+        self.policy = ActorCritic(state_dim, action_dim).to(device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor)
-        self.policy_old = ActorCritic(state_dim, action_dim, action_std_init).to(device)
+        self.policy_old = ActorCritic(state_dim, action_dim).to(device)
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.MseLoss = nn.MSELoss()
 
@@ -186,9 +160,9 @@ class PPO:
         with torch.no_grad():
             image = self.preprocess(image).to(device)
             direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
-            action, action_logprob, state_val = self.policy_old.act(state, direction)
+            state = {"direction": direction, "image": image}
+            action, action_logprob, state_val = self.policy_old(state)
         self.buffer.states.append(state)
-        self.buffer.direction.append(direction)
         self.buffer.actions.append(action)
         self.buffer.logprobs.append(action_logprob)
         self.buffer.state_values.append(state_val)
@@ -208,8 +182,6 @@ class PPO:
         rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
         rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
         # convert list to tensor
-        old_states = torch.squeeze(torch.stack(self.buffer.states, dim=0)).detach().to(device)
-        old_direction = torch.squeeze(torch.stack(self.buffer.direction, dim=0)).detach().to(device)
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
         old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
         old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
@@ -218,7 +190,7 @@ class PPO:
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
             # Evaluating old actions and values
-            logprobs, state_values, dist_entropy = self.policy.evaluate(old_states, old_actions, old_direction)
+            logprobs, state_values, dist_entropy = self.policy.evaluate(self.buffer.states, old_actions)
             state_values = torch.squeeze(state_values)  # match state_values tensor dimensions with rewards tensor
             ratios = torch.exp(logprobs - old_logprobs.detach())  # Finding the ratio (pi_theta / pi_theta__old)
             surr1 = ratios * advantages
