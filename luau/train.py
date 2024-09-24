@@ -91,7 +91,7 @@ class Trainer:
         logging.info("Gridworld size: %s", env.max_steps)
 
         # make directory
-        log_dir, model_dir = self.setup_directories(self.env_name)
+        log_dir, model_dir = self.setup_directories()
         log_file = f"{log_dir}/PPO_{self.env_name}_log_{len(next(os.walk(log_dir))[2])}.csv"
         checkpoint_path = f"{model_dir}/PPO_{self.env_name}_{self.random_seed}_{self.run_num_pretrained}.pth"
         print("save checkpoint path : " + checkpoint_path)
