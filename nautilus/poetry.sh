@@ -1,7 +1,5 @@
 #!/bin/bash
 
 micromamba create -n poetry python=3.11 -c conda-forge
-micromamba activate poetry
-pipx ensurepath
-pipx install poetry
-micromamba deactivate
+micromamba run -n poetry pipx ensurepath
+micromamba run -n poetry pipx install poetry
