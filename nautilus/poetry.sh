@@ -5,6 +5,7 @@ micromamba run -n poetry pipx ensurepath
 micromamba run -n poetry pipx install poetry
 
 micromamba create -n luau python=3.11 -c conda-forge -y
+eval "$(micromamba shell.bash hook --shell )"
 micromamba activate luau
 git clone https://github.com/oliverc1623/luau.git
 cd luau
