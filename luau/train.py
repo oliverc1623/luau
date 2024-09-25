@@ -82,13 +82,13 @@ class Trainer:
         if self.log_dir is not None:
             log_dir = Path(f"{self.log_dir}/PPO_logs/{self.env_name}/run_{self.run_id}")
         else:
-            log_dir = Path(f"./PPO_logs/{self.env_name}/")
+            log_dir = Path(f"./PPO_logs/{self.env_name}/run_{self.run_id}")
         log_dir.mkdir(parents=True, exist_ok=True)
 
         if self.model_dir is not None:
             model_dir = Path(f"{self.model_dir}/models/{self.env_name}/run_{self.run_id}")
         else:
-            model_dir = Path(f"./models/{self.env_name}/")
+            model_dir = Path(f"./models/{self.env_name}/run_{self.run_id}")
         model_dir.mkdir(parents=True, exist_ok=True)
 
         return log_dir, model_dir
