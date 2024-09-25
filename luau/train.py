@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import yaml
 from minigrid.wrappers import RGBImgObsWrapper
+from torch.utils.tensorboard import SummaryWriter  # Added for TensorBoard
 
 from luau.iaa_env import IntrospectiveEnv
 from luau.ppo import PPO
@@ -80,15 +81,15 @@ class Trainer:
     def setup_directories(self) -> tuple[Path, Path]:
         """Make logging and checkpoint directories."""
         if self.log_dir is not None:
-            log_dir = Path(f"{self.log_dir}/PPO_logs/{self.env_name}/run_{self.run_id}")
+            log_dir = Path(f"{self.log_dir}/PPO_logs/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
         else:
-            log_dir = Path(f"./PPO_logs/{self.env_name}/run_{self.run_id}")
+            log_dir = Path(f"./PPO_logs/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
         log_dir.mkdir(parents=True, exist_ok=True)
 
         if self.model_dir is not None:
-            model_dir = Path(f"{self.model_dir}/models/{self.env_name}/run_{self.run_id}")
+            model_dir = Path(f"{self.model_dir}/models/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
         else:
-            model_dir = Path(f"./models/{self.env_name}/run_{self.run_id}")
+            model_dir = Path(f"./models/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
         model_dir.mkdir(parents=True, exist_ok=True)
 
         return log_dir, model_dir
@@ -106,22 +107,27 @@ class Trainer:
         log_dir, model_dir = self.setup_directories()
         log_file = f"{log_dir}/PPO_{self.env_name}_log_{len(next(os.walk(log_dir))[2])}.csv"
         checkpoint_path = f"{model_dir}/PPO_{self.env_name}_{self.random_seed}_{self.run_num_pretrained}.pth"
-        print("save checkpoint path : " + checkpoint_path)
+        logging.info("Save checkpoint path: %s", checkpoint_path)
+
+        # Initialize TensorBoard writer
+        writer = SummaryWriter(log_dir=str(log_dir))
 
         # state space dimension
         state_dim = env.observation_space["image"].shape[2]
         action_dim = env.action_space.n
-        print(f"state_dim : {state_dim} \t action_dim : {action_dim}")
+        logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
         ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
         self.print_hyperparameters()
 
         # track total training time
         start_time = datetime.now().astimezone().replace(microsecond=0)
-        print("Started training at (GMT) : ", start_time)
-        print("============================================================================================")
+        logging.info("Started training at (GMT): %s", start_time)
+        logging.info("============================================================================================")
+
         # logging file
         log_f = Path.open(log_file, "w+")
         log_f.write("episode,timestep,reward\n")
+
         # printing and logging variables
         print_running_reward = 0
         print_running_episodes = 0
@@ -160,27 +166,37 @@ class Trainer:
                     log_avg_reward = round(log_avg_reward, 4)
                     log_f.write(f"{i_episode},{time_step},{log_avg_reward}\n")
                     log_f.flush()
+
+                    # Log to TensorBoard
+                    writer.add_scalar("Average Reward", log_avg_reward, time_step)
+                    writer.add_scalar("Time Step", time_step, time_step)
+
                     log_running_reward = 0
                     log_running_episodes = 0
 
-                # printing average reward
+                # logging average reward
                 if time_step % self.print_freq == 0:
                     # print average reward till last episode
                     print_avg_reward = print_running_reward / print_running_episodes
                     print_avg_reward = round(print_avg_reward, 2)
-                    print(f"Episode : {i_episode} \t\t Timestep : {time_step} \t\t Average Reward : {print_avg_reward}")
+                    logging.info(
+                        "Episode: %s \t\t Timestep: %s \t\t Average Reward: %s",
+                        i_episode,
+                        time_step,
+                        print_avg_reward,
+                    )
                     print_running_reward = 0
                     print_running_episodes = 0
 
                 # save model weights
                 if time_step % self.save_model_freq == 0:
-                    print("--------------------------------------------------------------------------------------------")
-                    print("saving model at : " + checkpoint_path)
+                    logging.info("--------------------------------------------------------------------------------------------")
+                    logging.info("Saving model at: %s", checkpoint_path)
                     ppo_agent.save(checkpoint_path)
-                    print("model saved")
                     pacific_time = datetime.now().astimezone().replace(microsecond=0)
-                    print("Elapsed Time  : ", pacific_time - start_time)
-                    print("--------------------------------------------------------------------------------------------")
+                    logging.info("Model saved")
+                    logging.info("Elapsed Time: %s", pacific_time - start_time)
+                    logging.info("--------------------------------------------------------------------------------------------")
 
                 # break; if the episode is over
                 if done:
@@ -194,35 +210,36 @@ class Trainer:
 
         log_f.close()
         env.close()
+        writer.close()
 
         # print total training time
-        print("============================================================================================")
+        logging.info("============================================================================================")
         end_time = datetime.now().astimezone().replace(microsecond=0)
-        print("Started training at (GMT) : ", start_time)
-        print("Finished training at (GMT) : ", end_time)
-        print("Total training time  : ", end_time - start_time)
-        print("============================================================================================")
+        logging.info("Started training at (GMT): %s", start_time)
+        logging.info("Finished training at (GMT): %s", end_time)
+        logging.info("Total training time: %s", end_time - start_time)
+        logging.info("============================================================================================")
 
     def print_hyperparameters(self) -> None:
         """Print the hyperparameters."""
-        print("--------------------------------------------------------------------------------------------")
-        print(f"Training the agent in the {self.env_name} environment. Door: {self.door_locked}")
-        print(f"max training timesteps : {self.max_training_timesteps}")
-        print(f"max timesteps per episode : {self.max_ep_len}")
-        print(f"model saving frequency : {self.save_model_freq} timesteps")
-        print(f"log frequency : {self.log_freq} timesteps")
-        print(f"printing average reward over episodes in last : {self.print_freq} timesteps")
-        print("--------------------------------------------------------------------------------------------")
-        print("Initializing a discrete action space policy")
-        print("--------------------------------------------------------------------------------------------")
-        print(f"PPO update frequency : {self.update_timestep} timesteps")
-        print(f"PPO K epochs : {self.k_epochs}")
-        print(f"PPO epsilon clip : {self.eps_clip}")
-        print(f"discount factor (gamma) : {self.gamma}")
-        print("--------------------------------------------------------------------------------------------")
-        print(f"optimizer learning rate actor : {self.lr_actor}")
-        print(f"optimizer learning rate critic : {self.lr_critic}")
-        print("============================================================================================")
+        logging.info("--------------------------------------------------------------------------------------------")
+        logging.info("Training the agent in the %s environment. Door: %s", self.env_name, self.door_locked)
+        logging.info("max training timesteps: %s", self.max_training_timesteps)
+        logging.info("max timesteps per episode: %s", self.max_ep_len)
+        logging.info("model saving frequency: %s timesteps", self.save_model_freq)
+        logging.info("log frequency: %s timesteps", self.log_freq)
+        logging.info("printing average reward over episodes in last: %s timesteps", self.print_freq)
+        logging.info("--------------------------------------------------------------------------------------------")
+        logging.info("Initializing a discrete action space policy")
+        logging.info("--------------------------------------------------------------------------------------------")
+        logging.info("PPO update frequency: %s timesteps", self.update_timestep)
+        logging.info("PPO K epochs: %s", self.k_epochs)
+        logging.info("PPO epsilon clip: %s", self.eps_clip)
+        logging.info("discount factor (gamma): %s", self.gamma)
+        logging.info("--------------------------------------------------------------------------------------------")
+        logging.info("optimizer learning rate actor: %s", self.lr_actor)
+        logging.info("optimizer learning rate critic: %s", self.lr_critic)
+        logging.info("============================================================================================")
 
 
 # %%
@@ -263,8 +280,8 @@ if __name__ == "__main__":
     for i in range(args.num_experiments):
         # Generate a unique random seed for each experiment
         random_seed = base_random_seed + i
-        run_id = f"seed_{random_seed}"
-        print(f"Running experiment {i + 1} with random seed {random_seed}.")
+        run_id = base_config.get("run_num", 0)
+        logging.info("Running experiment %s with random seed %s.", i + 1, random_seed)
 
         trainer = Trainer(
             config_path=args.config_path,
