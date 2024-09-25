@@ -11,4 +11,5 @@ micromamba create -n luau python=3.11 -c conda-forge -y
 export PATH="/root/.local/bin:$PATH"
 micromamba run -n luau poetry install
 micromamba run -n luau poetry run inv setup
+micromamba run -n tensorboard --logdir=./PPO_logs &
 micromamba run -n luau python luau/train.py --log_dir ~/../pvcvolume --model_dir ~/../pvcvolume --num_experiments 4
