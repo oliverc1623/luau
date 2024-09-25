@@ -4,7 +4,7 @@ metadata:
   name: chang-luau
 spec:
   containers:
-  - name: chang-hippo
+  - name: chang-luau
     image: gitlab-registry.nrp-nautilus.io/oliverc1622/luau:latest
     securityContext:
         runAsUser: 0
