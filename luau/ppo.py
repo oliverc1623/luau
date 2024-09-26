@@ -51,6 +51,7 @@ class ActorCritic(nn.Module):
         super().__init__()
 
         # actor conv layers
+        # TODO: should probably turn into a Sequential model
         self.actor_conv1 = nn.Conv2d(state_dim, 16, 2)
         self.actor_conv2 = nn.Conv2d(16, 32, 2)
         self.actor_conv3 = nn.Conv2d(32, 64, 2)
@@ -60,6 +61,7 @@ class ActorCritic(nn.Module):
         self.actor_fc2 = nn.Linear(512, action_dim)
 
         # critic conv layers
+        # TODO: should probably turn into a Sequential model
         self.critic_conv1 = nn.Conv2d(state_dim, 16, 2)
         self.critic_conv2 = nn.Conv2d(16, 32, 2)
         self.critic_conv3 = nn.Conv2d(32, 64, 2)
@@ -68,65 +70,61 @@ class ActorCritic(nn.Module):
         self.critic_fc1 = nn.Linear(65, 512)  # Add +1 for the scalar input
         self.critic_fc2 = nn.Linear(512, 1)
 
+    def _actor_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
+        """Run common computations for the actor network."""
+        x = f.relu(self.actor_conv1(image))
+        x = f.max_pool2d(x, 2)
+        x = f.relu(self.actor_conv2(x))
+        x = f.relu(self.actor_conv3(x))
+        x = torch.flatten(x, 1)
+        direction = direction.view(-1, 1)
+        x = torch.cat((x, direction), 1)
+        x = f.relu(self.actor_fc1(x))
+        action_probs = f.softmax(self.actor_fc2(x), dim=-1)
+        return action_probs
+
+    def _critic_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
+        """Run common computations for the critic network."""
+        y = f.relu(self.critic_conv1(image))
+        y = f.max_pool2d(y, 2)
+        y = f.relu(self.critic_conv2(y))
+        y = f.relu(self.critic_conv3(y))
+        y = torch.flatten(y, 1)
+        y = torch.cat((y, direction.view(-1, 1)), 1)
+        y = f.relu(self.critic_fc1(y))
+        state_values = self.critic_fc2(y)
+        return state_values
+
     def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Forward pass."""
         direction = state["direction"]
         image = state["image"]
 
         # actor
-        x = f.relu(self.actor_conv1(image))
-        x = f.max_pool2d(x, 2)
-        x = f.relu(self.actor_conv2(x))
-        x = f.relu(self.actor_conv3(x))
-        x = torch.flatten(x, 1)  # Flatten the output for the linear layer
-        direction = direction.view(-1, 1)  # Reshape scalar to [batch_size, 1] if it's not already
-        x = torch.cat((x, direction), 1)  # Concatenate the scalar with the flattened conv output
-        x = f.relu(self.actor_fc1(x))
-        action_probs = f.softmax(self.actor_fc2(x), dim=-1)[0]
+        action_probs = self._actor_forward(image, direction)
+        action_probs = action_probs.squeeze(0)  # Remove batch dimension
         dist = Categorical(action_probs)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
 
         # critic
-        y = f.relu(self.critic_conv1(image))
-        y = f.max_pool2d(y, 2)
-        y = f.relu(self.critic_conv2(y))
-        y = f.relu(self.critic_conv3(y))
-        y = torch.flatten(y, 1)  # Flatten the output for the linear layer
-        y = torch.cat((y, direction), 1)  # Concatenate the scalar with the flattened conv output
-        y = f.relu(self.critic_fc1(y))
-        state_values = self.critic_fc2(y)
+        state_values = self._critic_forward(image, direction)
 
         return action.detach(), action_logprob.detach(), state_values.detach()
 
-    def evaluate(self, state: list, action: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
+    def evaluate(self, states: list, actions: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Evaluate the policy."""
-        image = torch.squeeze(torch.stack([s["image"] for s in state], dim=0)).detach().to(device)
-        direction = torch.squeeze(torch.stack([s["direction"] for s in state], dim=0)).detach().to(device)
+        images = torch.squeeze(torch.stack([s["image"] for s in states], dim=0)).detach().to(device)
+        directions = torch.squeeze(torch.stack([s["direction"] for s in states], dim=0)).detach().to(device)
 
         # actor
-        x = f.relu(self.actor_conv1(image))
-        x = f.max_pool2d(x, 2)
-        x = f.relu(self.actor_conv2(x))
-        x = f.relu(self.actor_conv3(x))
-        x = torch.flatten(x, 1)  # Flatten the output for the linear layer
-        scalar = direction.view(-1, 1)  # Reshape scalar to [batch_size, 1] if it's not already
-        x = torch.cat((x, scalar), 1)  # Concatenate the scalar with the flattened conv output
-        x = f.relu(self.actor_fc1(x))
-        action_probs = f.softmax(self.actor_fc2(x), dim=-1)
+        action_probs = self._actor_forward(images, directions)
         dist = Categorical(action_probs)
-        action_logprobs = dist.log_prob(action)
+        action_logprobs = dist.log_prob(actions)
         dist_entropy = dist.entropy()
 
         # critic
-        y = f.relu(self.critic_conv1(image))
-        y = f.max_pool2d(y, 2)
-        y = f.relu(self.critic_conv2(y))
-        y = f.relu(self.critic_conv3(y))
-        y = torch.flatten(y, 1)  # Flatten the output for the linear layer
-        y = torch.cat((y, scalar), 1)  # Concatenate the scalar with the flattened conv output
-        y = f.relu(self.critic_fc1(y))
-        state_values = self.critic_fc2(y)
+        state_values = self._critic_forward(images, directions)
 
         return action_logprobs, state_values, dist_entropy
 
