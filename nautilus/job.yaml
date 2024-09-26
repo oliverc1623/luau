@@ -15,7 +15,7 @@ spec:
           - |
             cd ~ && \
             git clone https://github.com/oliverc1623/luau.git && cd luau && \
-            chmod +x nautilus/poetry.sh && ./nautilus/poetry.sh
+            chmod +x nautilus/poetry.sh && ./nautilus/run_experiment.sh
         volumeMounts: 
         - mountPath: /pvcvolume
           name: elochang-volume2
