@@ -8,13 +8,7 @@ spec:
     image: gitlab-registry.nrp-nautilus.io/oliverc1622/luau:latest
     securityContext:
         runAsUser: 0
-    command: ["sh", "-c"]
-    args: 
-      - |
-        cd ~ && \
-        git clone https://github.com/oliverc1623/luau.git && cd luau && \
-        chmod +x nautilus/poetry.sh && ./nautilus/poetry.sh && \
-        sleep infinity
+    command: ["sh", "-c", "sleep infinity"]
     volumeMounts: 
     - mountPath: /pvcvolume
       name: elochang-volume2
