@@ -245,15 +245,13 @@ class IAAPPO(PPO):
 
     def introspect(self, t: int, state: dict) -> int:
         """Introspect."""
-        h = 0
         probability = self.introspection_decay ** (max(0, t - self.burn_in))
         p = Bernoulli(probability).sample()
         if t > self.burn_in and p == 1:
             _, _, teacher_source_val = self.teacher_ppo_agent.policy_old(state)
             _, _, teacher_target_val = self.teacher_ppo_agent.policy(state)
-            if abs(teacher_target_val - teacher_source_val) <= self.inspection_threshold:
-                h = 1
-        return h
+            return int(abs(teacher_target_val - teacher_source_val) <= self.inspection_threshold)
+        return 0
 
     def select_action(self, state: dict, t: int) -> int:
         """Select an action."""
