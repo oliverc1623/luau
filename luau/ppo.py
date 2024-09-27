@@ -258,6 +258,8 @@ class IAAPPO(PPO):
         self.burn_in = kwargs.get("burn_in", 0)
         self.inspection_threshold = kwargs.get("inspection_threshold", 0.9)
         self.teacher_ppo_agent = kwargs.get("teacher_ppo_agent", None)
+        if self.teacher_ppo_agent is None:
+            raise ValueError("Teacher agent is None. Please specify pth model.")
 
     def introspect(self, t: int, state: dict) -> int:
         """Introspect."""
