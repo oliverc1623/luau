@@ -1,6 +1,6 @@
 ################ Logging hyperparameters ################
 algorithm: "IAAPPO"                                          # name of the algorithm
-teacher_model_path: "./models/IntrospectiveEnv/PPO_IntrospectiveEnv_0_0.pth"  # path for teacher model 
+teacher_model_path: "~/../pvcvolume/models/IntrospectiveEnv/run_0_seed_49/PPO_IntrospectiveEnv_49_0.pth"  # path for teacher model 
 env_name: "IntrospectiveEnv"                                 # name of the environment
 door_locked: True                                            # is the door locked?
 size: 9                                                      # gridworld env size
