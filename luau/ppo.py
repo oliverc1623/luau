@@ -1,7 +1,6 @@
 # %%
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn.functional as f
 from torch import nn
@@ -153,12 +152,8 @@ class PPO:
 
     def select_action(self, state: dict) -> int:
         """Select an action."""
-        direction = state["direction"]
-        image = state["image"]
         with torch.no_grad():
-            image = self.preprocess(image).to(device)
-            direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
-            state = {"direction": direction, "image": image}
+            state = self.preprocess(state)
             action, action_logprob, state_val = self.policy_old(state)
         self.buffer.states.append(state)
         self.buffer.actions.append(action)
@@ -210,18 +205,12 @@ class PPO:
         self.policy_old.load_state_dict(torch.load(checkpoint_path))
         self.policy.load_state_dict(torch.load(checkpoint_path))
 
-    def preprocess(self, x: np.array, *, image_observation: bool = False, invert: bool = False) -> torch.tensor:
+    def preprocess(self, x: dict) -> torch.tensor:
         """Preprocess the input."""
-        # if rgb-image, normalize
-        if image_observation:
-            if invert:
-                x = 255 - x
-            x = torch.from_numpy(x).float() / 255
-        else:
-            x = torch.from_numpy(x).float()
-
-        if len(x.shape) == 3:  # noqa: PLR2004
-            x = x.permute(2, 0, 1).unsqueeze(0).to(device)
-        else:
-            x = x.permute(0, 3, 1, 2).to(device)
+        direction = x["direction"]
+        image = x["image"]
+        image = torch.from_numpy(image).float()
+        image = image.permute(2, 0, 1).unsqueeze(0).to(device)
+        direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
+        x = {"direction": direction, "image": image}
         return x
