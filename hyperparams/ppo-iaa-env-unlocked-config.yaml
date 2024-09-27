@@ -21,4 +21,4 @@ eps_clip: 0.2                        # clip parameter for PPO
 gamma: 0.99                          # discount factor
 lr_actor: 0.0005                     # learning rate for actor
 lr_critic: 0.001                     # learning rate for critic
-random_seed: 47                      # random seed value
+random_seed: 97                      # random seed value
