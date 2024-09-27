@@ -97,6 +97,18 @@ class Trainer:
 
         return log_dir, model_dir
 
+    def save_frame(self, env: IntrospectiveEnv, time_step: int) -> None:
+        """Save the current frame if save_frames is enabled."""
+        if self.save_frames:
+            img = env.render()
+            plt.imsave(f"frames/frame_{time_step:06}.png", img)
+
+    def select_action(self, ppo_agent: PPO, state: dict, time_step: int) -> int:
+        """Select an action based on the algorithm."""
+        if self.algorithm == "IAAPPO":
+            return ppo_agent.select_action(state, time_step)
+        return ppo_agent.select_action(state)
+
     def train(self) -> None:
         """Train the agent."""
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
@@ -126,16 +138,16 @@ class Trainer:
             ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
         elif self.algorithm == "IAAPPO":
             # TODO: test we're overwriting args
-            teacher_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
-            teacher_agent.load(self.teacher_model_path)
+            teacher_ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
+            teacher_ppo_agent.load(self.teacher_model_path)
             ppo_agent = IAAPPO(
-                state_dim,
-                action_dim,
-                self.lr_actor,
-                self.gamma,
-                self.k_epochs,
-                self.eps_clip,
-                teacher_agent,
+                state_dim=state_dim,
+                action_dim=action_dim,
+                lr_actor=self.lr_actor,
+                gamma=self.gamma,
+                k_epochs=self.k_epochs,
+                eps_clip=self.eps_clip,
+                teacher_ppo_agent=teacher_ppo_agent,
             )
         else:
             raise ValueError("Unknown algorithm: %s", self.algorithm)
@@ -164,15 +176,12 @@ class Trainer:
             current_ep_reward = 0
             for _ in range(1, self.max_ep_len + 1):
                 # select action with policy
-                action = ppo_agent.select_action(state)
+                action = self.select_action(ppo_agent, state, time_step)
                 state, reward, done, truncated, info = env.step(action)
                 # saving reward and is_terminals
                 ppo_agent.buffer.rewards.append(reward)
                 ppo_agent.buffer.is_terminals.append(done)
-
-                if self.save_frames:
-                    img = env.render()
-                    plt.imsave(f"frames/frame_{time_step:06}.png", img)
+                self.save_frame(env, time_step)
 
                 time_step += 1
                 current_ep_reward += reward

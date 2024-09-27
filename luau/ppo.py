@@ -251,13 +251,13 @@ class IAARolloutBuffer(RolloutBuffer):
 class IAAPPO(PPO):
     """PPO agent for the IAA."""
 
-    def __init__(self, *args: dict, **kwargs: dict):
+    def __init__(self, teacher_ppo_agent: PPO, *args: dict, **kwargs: dict):
         super().__init__(*args, **kwargs)
         self.buffer = IAARolloutBuffer()
         self.introspection_decay = kwargs.get("introspection_decay", 0.99999)
         self.burn_in = kwargs.get("burn_in", 0)
         self.inspection_threshold = kwargs.get("inspection_threshold", 0.9)
-        self.teacher_ppo_agent = kwargs.get("teacher_ppo_agent", None)
+        self.teacher_ppo_agent = teacher_ppo_agent
         if self.teacher_ppo_agent is None:
             raise ValueError("Teacher agent is None. Please specify pth model.")
 
@@ -273,42 +273,42 @@ class IAAPPO(PPO):
 
     def select_action(self, state: dict, t: int) -> int:
         """Select an action."""
+        state = self.preprocess(state)
         h = self.introspect(t, state)
         if h:
-            action, action_logprob, state_val = self.teacher_ppo_agent.select_action(state)
+            with torch.no_grad():
+                action, action_logprob, state_val = self.teacher_ppo_agent.policy_old(state)
         else:
             with torch.no_grad():
-                state = self.preprocess(state)
                 action, action_logprob, state_val = self.policy_old(state)
         self.buffer.states.append(state)
         self.buffer.actions.append(action)
         self.buffer.logprobs.append(action_logprob)
         self.buffer.state_values.append(state_val)
+        self.buffer.indicators.append(h)
         return action.item()
 
     def correct(self) -> tuple[torch.tensor, torch.tensor]:
         """Apply off-policy correction."""
         teacher_ratios = []
         student_ratios = []
-
         for state, indicator, logprob in zip(self.buffer.states, self.buffer.indicators, self.buffer.logprobs, strict=False):
             if indicator:
                 # compute importance sampling ratio
-                _, student_action_logprob, _ = self.policy_old.act(state.detach())
+                _, student_action_logprob, _ = self.policy_old(state)
                 ratio = student_action_logprob / logprob
                 teacher_ratios.append(1.0)
                 student_ratios.append(torch.clamp(ratio, -2, 2).item())
 
             else:
                 # compute importance sampling ratio
-                _, teacher_action_logprob, _ = self.teacher_ppo_agent.policy_old(state.detach())
+                _, teacher_action_logprob, _ = self.teacher_ppo_agent.policy_old(state)
                 ratio = teacher_action_logprob / logprob
                 teacher_ratios.append(torch.clamp(ratio, -0.2, 0.2).item())
                 student_ratios.append(1.0)
 
         teacher_ratios = torch.tensor(teacher_ratios).float()
         student_ratios = torch.tensor(student_ratios).float()
-
         return teacher_ratios, student_ratios
 
     def update(self) -> None:
@@ -316,11 +316,12 @@ class IAAPPO(PPO):
         teacher_correction, student_correction = self.correct()
         self._common_update(teacher_correction, student_correction)
         self._common_update(teacher_correction)
+        self.buffer.clear()
 
     def _common_update(self, teacher_correction: torch.tensor, student_correction: torch.tensor_split = None) -> None:
         """Update logic for both update and update_critic."""
         rewards = self._calculate_rewards()
-        old_actions, old_logprobs, old_state_values = self._get_old_tensors()
+        old_actions, old_logprobs, old_state_values = self._tensorize_rollout_buffer()
 
         # Calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
@@ -347,4 +348,3 @@ class IAAPPO(PPO):
 
         if student_correction is not None:
             self.policy_old.load_state_dict(self.policy.state_dict())
-        self.buffer.clear()
