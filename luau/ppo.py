@@ -161,8 +161,7 @@ class PPO:
         self.buffer.state_values.append(state_val)
         return action.item()
 
-    def update(self) -> None:
-        """Update the policy."""
+    def _calculate_rewards(self) -> torch.tensor:
         # Monte Carlo estimate of returns
         rewards = []
         discounted_reward = 0
@@ -173,26 +172,43 @@ class PPO:
             rewards.insert(0, discounted_reward)
         # Normalizing the rewards
         rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
-        # convert list to tensor
+        return (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+
+    def _tensorize_rollout_buffer(self) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
         old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
         old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
+        return old_actions, old_logprobs, old_state_values
+
+    def update(self) -> None:
+        """Update the policy."""
+        rewards = self._calculate_rewards()
+
+        # convert list to tensor
+        old_actions, old_logprobs, old_state_values = self._tensorize_rollout_buffer()
+
         # calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
+
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
             # Evaluating old actions and values
             logprobs, state_values, dist_entropy = self.policy.evaluate(self.buffer.states, old_actions)
             state_values = torch.squeeze(state_values)  # match state_values tensor dimensions with rewards tensor
+
+            # Finding the ratio (pi_theta / pi_theta__old)
             ratios = torch.exp(logprobs - old_logprobs.detach())  # Finding the ratio (pi_theta / pi_theta__old)
+
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
             vf_loss = self.MseLoss(state_values, rewards)  # value function loss
+
+            # final loss of clipped objective PPO
             loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy  # final loss of clipped objective PPO
             self.optimizer.zero_grad()  # take gradient step
             loss.mean().backward()
             self.optimizer.step()
+
         self.policy_old.load_state_dict(self.policy.state_dict())  # Copy new weights into old policy
         self.buffer.clear()  # clear buffer
 
@@ -267,3 +283,66 @@ class IAAPPO(PPO):
         self.buffer.logprobs.append(action_logprob)
         self.buffer.state_values.append(state_val)
         return action.item()
+
+    def correct(self) -> tuple[torch.tensor, torch.tensor]:
+        """Apply off-policy correction."""
+        teacher_ratios = []
+        student_ratios = []
+
+        for state, indicator, logprob in zip(self.buffer.states, self.buffer.indicators, self.buffer.logprobs, strict=False):
+            if indicator:
+                # compute importance sampling ratio
+                _, student_action_logprob, _ = self.policy_old.act(state.detach())
+                ratio = student_action_logprob / logprob
+                teacher_ratios.append(1.0)
+                student_ratios.append(torch.clamp(ratio, -2, 2).item())
+
+            else:
+                # compute importance sampling ratio
+                _, teacher_action_logprob, _ = self.teacher_ppo_agent.policy_old(state.detach())
+                ratio = teacher_action_logprob / logprob
+                teacher_ratios.append(torch.clamp(ratio, -0.2, 0.2).item())
+                student_ratios.append(1.0)
+
+        teacher_ratios = torch.tensor(teacher_ratios).float()
+        student_ratios = torch.tensor(student_ratios).float()
+
+        return teacher_ratios, student_ratios
+
+    def update(self) -> None:
+        """Update the policy with student correction."""
+        teacher_correction, student_correction = self.correct()
+        self._common_update(teacher_correction, student_correction)
+        self._common_update(teacher_correction)
+
+    def _common_update(self, teacher_correction: torch.tensor, student_correction: torch.tensor_split = None) -> None:
+        """Update logic for both update and update_critic."""
+        rewards = self._calculate_rewards()
+        old_actions, old_logprobs, old_state_values = self._get_old_tensors()
+
+        # Calculate advantages
+        advantages = rewards.detach() - old_state_values.detach()
+
+        # Optimize policy for K epochs
+        for _ in range(self.k_epochs):
+            logprobs, state_values, dist_entropy = self.policy.evaluate(self.buffer.states, old_actions)
+            state_values = torch.squeeze(state_values)
+
+            # Determine which correction to apply
+            correction = student_correction if student_correction is not None else teacher_correction
+
+            # Calculate ratios and loss
+            ratios = torch.exp(logprobs - old_logprobs.detach()) * correction.to(device)
+            surr1 = ratios * advantages
+            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+            vf_loss = self.MseLoss(state_values, rewards)
+
+            # Final loss computation
+            loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy
+            self.optimizer.zero_grad()
+            loss.mean().backward()
+            self.optimizer.step()
+
+        if student_correction is not None:
+            self.policy_old.load_state_dict(self.policy.state_dict())
+        self.buffer.clear()
