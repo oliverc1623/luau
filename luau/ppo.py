@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as f
 from torch import nn
-from torch.distributions import Categorical
+from torch.distributions import Bernoulli, Categorical
 
 
 ################################## set device ##################################
@@ -214,3 +214,58 @@ class PPO:
         direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
         x = {"direction": direction, "image": image}
         return x
+
+
+# %% V################################## Introspective PPO ##################################
+
+
+class IAARolloutBuffer(RolloutBuffer):
+    """A buffer to store rollout data for Introspective Action Advising (IAA)."""
+
+    def __init__(self):
+        super().__init__()
+        self.indicators = []
+
+    def clear(self) -> None:
+        """Clear the buffer."""
+        super().clear()
+        del self.indicators[:]
+
+
+class IAAPPO(PPO):
+    """PPO agent for the IAA."""
+
+    def __init__(self, *args: dict, **kwargs: dict):
+        super().__init__(*args, **kwargs)
+        self.buffer = IAARolloutBuffer()
+        self.introspection_decay = kwargs.get("introspection_decay", 0.99999)
+        self.burn_in = kwargs.get("burn_in", 0)
+        self.inspection_threshold = kwargs.get("inspection_threshold", 0.9)
+        self.teacher_ppo_agent = kwargs.get("teacher_ppo_agent", None)
+
+    def introspect(self, t: int, state: dict) -> int:
+        """Introspect."""
+        h = 0
+        probability = self.introspection_decay ** (max(0, t - self.burn_in))
+        p = Bernoulli(probability).sample()
+        if t > self.burn_in and p == 1:
+            _, _, teacher_source_val = self.teacher_ppo_agent.policy_old(state)
+            _, _, teacher_target_val = self.teacher_ppo_agent.policy(state)
+            if abs(teacher_target_val - teacher_source_val) <= self.inspection_threshold:
+                h = 1
+        return h
+
+    def select_action(self, state: dict, t: int) -> int:
+        """Select an action."""
+        h = self.introspect(t, state)
+        if h:
+            action, action_logprob, state_val = self.teacher_ppo_agent.select_action(state)
+        else:
+            with torch.no_grad():
+                state = self.preprocess(state)
+                action, action_logprob, state_val = self.policy_old(state)
+        self.buffer.states.append(state)
+        self.buffer.actions.append(action)
+        self.buffer.logprobs.append(action_logprob)
+        self.buffer.state_values.append(state_val)
+        return action.item()
