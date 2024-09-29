@@ -13,7 +13,7 @@ from minigrid.wrappers import RGBImgObsWrapper
 from torch.utils.tensorboard import SummaryWriter  # Added for TensorBoard
 
 from luau.iaa_env import IntrospectiveEnv
-from luau.ppo import PPO
+from luau.ppo import IAAPPO, PPO
 
 
 # Configure logging
@@ -40,6 +40,7 @@ class Trainer:
             config = yaml.safe_load(file)
 
         ################ Logging hyperparameters ################
+        self.algorithm = config["algorithm"]
         self.env_name = config["env_name"]
         self.door_locked = config["door_locked"]
         self.size = config["size"]
@@ -56,6 +57,8 @@ class Trainer:
         self.action_std_decay_freq = config["action_std_decay_freq"]
         self.image_observation = config["image_observation"]
         self.run_num_pretrained = config["run_num"]
+        if self.algorithm == "IAAPPO":
+            self.teacher_model_path = config["teacher_model_path"]
         #####################################################
         ## Note : print and log frequencies should be > than max_ep_len
         ################ PPO hyperparameters ################
@@ -81,22 +84,34 @@ class Trainer:
     def setup_directories(self) -> tuple[Path, Path]:
         """Make logging and checkpoint directories."""
         if self.log_dir is not None:
-            log_dir = Path(f"{self.log_dir}/PPO_logs/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
+            log_dir = Path(f"{self.log_dir}/PPO_logs/{self.algorithm}/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
         else:
-            log_dir = Path(f"./PPO_logs/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
+            log_dir = Path(f"./PPO_logs/{self.algorithm}/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
         log_dir.mkdir(parents=True, exist_ok=True)
 
         if self.model_dir is not None:
-            model_dir = Path(f"{self.model_dir}/models/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
+            model_dir = Path(f"{self.model_dir}/models/{self.algorithm}/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
         else:
-            model_dir = Path(f"./models/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
+            model_dir = Path(f"./models/{self.algorithm}/{self.env_name}/run_{self.run_id}_seed_{self.random_seed}")
         model_dir.mkdir(parents=True, exist_ok=True)
 
         return log_dir, model_dir
 
+    def save_frame(self, env: IntrospectiveEnv, time_step: int) -> None:
+        """Save the current frame if save_frames is enabled."""
+        if self.save_frames:
+            img = env.render()
+            plt.imsave(f"frames/frame_{time_step:06}.png", img)
+
+    def select_action(self, ppo_agent: PPO, state: dict, time_step: int) -> int:
+        """Select an action based on the algorithm."""
+        if self.algorithm == "IAAPPO":
+            return ppo_agent.select_action(state, time_step)
+        return ppo_agent.select_action(state)
+
     def train(self) -> None:
         """Train the agent."""
-        msg = f"Training the agent in the {self.env_name} environment."
+        msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
         env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
         if self.image_observation:
@@ -105,8 +120,11 @@ class Trainer:
 
         # make directory
         log_dir, model_dir = self.setup_directories()
-        log_file = f"{log_dir}/PPO_{self.env_name}_log_{len(next(os.walk(log_dir))[2])}.csv"
-        checkpoint_path = f"{model_dir}/PPO_{self.env_name}_{self.random_seed}_{self.run_num_pretrained}.pth"
+        log_file = f"{log_dir}/{self.algorithm}_{self.env_name}_\
+            run_{self.run_num_pretrained}_\
+            seed_{self.random_seed}_\
+            log_{len(next(os.walk(log_dir))[2])}.csv"
+        checkpoint_path = f"{model_dir}/{self.algorithm}_{self.env_name}_run_{self.run_num_pretrained}_seed_{self.random_seed}.pth"
         logging.info("Save checkpoint path: %s", checkpoint_path)
 
         # Initialize TensorBoard writer
@@ -116,7 +134,23 @@ class Trainer:
         state_dim = env.observation_space["image"].shape[2]
         action_dim = env.action_space.n
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
-        ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
+        if self.algorithm == "PPO":
+            ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
+        elif self.algorithm == "IAAPPO":
+            # TODO: test we're overwriting args
+            teacher_ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
+            teacher_ppo_agent.load(self.teacher_model_path)
+            ppo_agent = IAAPPO(
+                state_dim=state_dim,
+                action_dim=action_dim,
+                lr_actor=self.lr_actor,
+                gamma=self.gamma,
+                k_epochs=self.k_epochs,
+                eps_clip=self.eps_clip,
+                teacher_ppo_agent=teacher_ppo_agent,
+            )
+        else:
+            raise ValueError("Unknown algorithm: %s", self.algorithm)
         self.print_hyperparameters()
 
         # track total training time
@@ -142,15 +176,12 @@ class Trainer:
             current_ep_reward = 0
             for _ in range(1, self.max_ep_len + 1):
                 # select action with policy
-                action = ppo_agent.select_action(state)
+                action = self.select_action(ppo_agent, state, time_step)
                 state, reward, done, truncated, info = env.step(action)
                 # saving reward and is_terminals
                 ppo_agent.buffer.rewards.append(reward)
                 ppo_agent.buffer.is_terminals.append(done)
-
-                if self.save_frames:
-                    img = env.render()
-                    plt.imsave(f"frames/frame_{time_step:06}.png", img)
+                self.save_frame(env, time_step)
 
                 time_step += 1
                 current_ep_reward += reward

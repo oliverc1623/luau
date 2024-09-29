@@ -1,5 +1,6 @@
 ################ Logging hyperparameters ################
-env_name: "IntrospectiveEnvLocked"         # name of the environment
+algorithm: "PPO"                     # name of the algorithm
+env_name: "IntrospectiveEnvLocked"   # name of the environment
 door_locked: True                    # is the door locked?
 size: 9                              # gridworld env size
 has_continuous_action_space: False   # continuous action space; else discrete

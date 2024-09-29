@@ -1,4 +1,5 @@
 ################ Logging hyperparameters ################
+algorithm: "PPO"                     # name of the algorithm
 env_name: "IntrospectiveEnv"         # name of the environment
 door_locked: False                   # is the door locked?
 size: 9                              # gridworld env size
