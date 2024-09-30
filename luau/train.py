@@ -112,7 +112,7 @@ class Trainer:
         """Train the agent."""
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
-        env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
+        env = IntrospectiveEnv(size=self.size, locked=self.door_locked, max_steps=self.horizon)
         if self.image_observation:
             env = RGBImgObsWrapper(env)
         logging.info("Gridworld size: %s", env.max_steps)
