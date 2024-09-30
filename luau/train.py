@@ -4,11 +4,11 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
-from minigrid.wrappers import RGBImgObsWrapper
 from torch.utils.tensorboard import SummaryWriter  # Added for TensorBoard
 
 from luau.iaa_env import IntrospectiveEnv
@@ -67,6 +67,7 @@ class Trainer:
         self.gamma = config["gamma"]
         self.lr_actor = config["lr_actor"]
         self.lr_critic = config["lr_critic"]
+        self.num_envs = config["num_envs"]
         # Set the random seed
         if random_seed is not None:
             self.random_seed = random_seed
@@ -108,14 +109,22 @@ class Trainer:
             return ppo_agent.select_action(state, time_step)
         return ppo_agent.select_action(state)
 
+    def _make_env(self) -> IntrospectiveEnv:
+        """Create the environment."""
+
+        def _init() -> IntrospectiveEnv:
+            env = IntrospectiveEnv(size=self.size, locked=self.door_locked, max_steps=self.horizon)
+            return env
+
+        return _init
+
     def train(self) -> None:
         """Train the agent."""
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
-        env = IntrospectiveEnv(size=self.size, locked=self.door_locked, max_steps=self.horizon)
-        if self.image_observation:
-            env = RGBImgObsWrapper(env)
-        logging.info("Gridworld size: %s", env.max_steps)
+        envs = [self._make_env() for _ in range(self.num_envs)]
+        env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
+        logging.info("Gridworld size: %s", envs[0]().max_steps)
 
         # make directory
         log_dir, model_dir = self.setup_directories()
@@ -127,8 +136,8 @@ class Trainer:
         writer = SummaryWriter(log_dir=str(log_dir))
 
         # state space dimension
-        state_dim = env.observation_space["image"].shape[2]
-        action_dim = env.action_space.n
+        state_dim = envs[0]().observation_space["image"].shape[2]
+        action_dim = envs[0]().action_space.n
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
         if self.algorithm == "PPO":
             ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip, self.minibatch_size)
@@ -159,68 +168,62 @@ class Trainer:
         log_f.write("episode,timestep,reward\n")
 
         # printing and logging variables
-        print_running_reward = 0
-        print_running_episodes = 0
-        log_running_reward = 0
+        print_running_reward = np.zeros(self.num_envs)
+        print_running_episodes = np.zeros(self.num_envs)
+        log_running_reward = []
         log_running_episodes = 0
         time_step = 0
 
+        # Reset all environments
+        states, _ = env.reset()
+        dones = np.zeros(self.num_envs, dtype=bool)
         # training loop
-        for i_episode in range(1, self.max_training_timesteps // self.horizon + 1):
-            state, _ = env.reset()
-            current_ep_reward = 0
-            for _ in range(1, self.horizon + 1):
-                # select action with policy
-                action = self.select_action(ppo_agent, state, time_step)
-                state, reward, done, truncated, info = env.step(action)
-                # saving reward and is_terminals
-                ppo_agent.buffer.rewards.append(reward)
-                ppo_agent.buffer.is_terminals.append(done)
-                self.save_frame(env, time_step)
+        for i_episode in range(1, self.max_training_timesteps // self.horizon * self.num_envs):
+            for _ in range(self.horizon):
+                # Select actions for all environments
+                actions = []
+                for env_idx in range(self.num_envs):
+                    single_state = {"image": states["image"][env_idx], "direction": states["direction"][env_idx]}
+                    action = ppo_agent.select_action(single_state)
+                    actions.append(action)
+                    # Store data for PPO update
+                    ppo_agent.buffer.states.append(single_state)
+                    ppo_agent.buffer.actions.append(action)
+                    ppo_agent.buffer.is_terminals.append(dones[env_idx])
+                actions = np.array(actions)
 
-                time_step += 1
-                current_ep_reward += reward
+                states, rewards, dones, truncated, info = env.step(actions)
 
-                # Handle the reset and continuation for done episodes
-                if done:
-                    # Accumulate rewards and episodes
-                    print_running_reward += current_ep_reward
-                    log_running_reward += current_ep_reward
-                    print_running_episodes += 1
-                    log_running_episodes += 1
+                # Store rewards
+                for env_idx in range(self.num_envs):
+                    ppo_agent.buffer.rewards.append(rewards[env_idx])
+                    # Update running rewards and episode counts
+                    print_running_reward[env_idx] += rewards[env_idx]
+                    time_step += 1
 
-                    # Reset for the next episode
-                    current_ep_reward = 0
-                    state, _ = env.reset()
+                    if dones[env_idx]:
+                        # Episode finished in environment env_idx
+                        log_running_reward.append(print_running_reward[env_idx])
+                        print_running_episodes[env_idx] += 1
+                        print_running_reward[env_idx] = 0
+
+                # PPO update at the end of the horizon
+                ppo_agent.update()
 
                 # log in logging file
-                if time_step % self.log_freq == 0 and log_running_episodes > 0:
+                if i_episode % self.log_freq == 0 and log_running_episodes > 0:
                     # log average reward till last episode
-                    log_avg_reward = log_running_reward / log_running_episodes
-                    log_avg_reward = round(log_avg_reward, 4)
-                    log_f.write(f"{i_episode},{time_step},{log_avg_reward}\n")
+                    avg_reward = np.mean(log_running_reward)
+                    avg_reward = round(avg_reward, 4)
+                    log_f.write(f"{i_episode},{time_step},{avg_reward}\n")
                     log_f.flush()
 
                     # Log to TensorBoard
-                    writer.add_scalar("Average Reward", log_avg_reward, time_step)
+                    writer.add_scalar("Average Reward", avg_reward, time_step)
                     writer.add_scalar("Time Step", time_step, time_step)
 
                     log_running_reward = 0
                     log_running_episodes = 0
-
-                # logging average reward
-                if time_step % self.print_freq == 0 and print_running_episodes > 0:
-                    # print average reward till last episode
-                    print_avg_reward = print_running_reward / print_running_episodes
-                    print_avg_reward = round(print_avg_reward, 2)
-                    logging.info(
-                        "Episode: %s \t\t Timestep: %s \t\t Average Reward: %s",
-                        i_episode,
-                        time_step,
-                        print_avg_reward,
-                    )
-                    print_running_reward = 0
-                    print_running_episodes = 0
 
                 # save model weights
                 if time_step % self.save_model_freq == 0:
@@ -231,9 +234,6 @@ class Trainer:
                     logging.info("Model saved")
                     logging.info("Elapsed Time: %s", pacific_time - start_time)
                     logging.info("--------------------------------------------------------------------------------------------")
-
-            # PPO update at the end of the horizon
-            ppo_agent.update()
 
         log_f.close()
         env.close()
