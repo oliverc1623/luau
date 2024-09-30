@@ -46,7 +46,7 @@ class Trainer:
         self.size = config["size"]
         self.has_continuous_action_space = config["has_continuous_action_space"]
         self.save_frames = config["save_frames"]
-        self.max_ep_len = config["max_ep_len"]
+        self.horizon = config["horizon"]
         self.max_training_timesteps = config["max_training_timesteps"]
         self.print_freq = config["print_freq"]
         self.log_freq = config["log_freq"]
@@ -62,7 +62,6 @@ class Trainer:
         #####################################################
         ## Note : print and log frequencies should be > than max_ep_len
         ################ PPO hyperparameters ################
-        self.update_timestep = self.max_ep_len * 4
         self.k_epochs = config["k_epochs"]
         self.eps_clip = config["eps_clip"]
         self.gamma = config["gamma"]
@@ -171,10 +170,10 @@ class Trainer:
         i_episode = 0
 
         # training loop
-        while time_step <= self.max_training_timesteps:
+        while time_step <= self.max_training_timesteps // self.horizon:
             state, _ = env.reset()
             current_ep_reward = 0
-            for _ in range(1, self.max_ep_len + 1):
+            for _ in range(1, self.horizon + 1):
                 # select action with policy
                 action = self.select_action(ppo_agent, state, time_step)
                 state, reward, done, truncated, info = env.step(action)
@@ -185,10 +184,6 @@ class Trainer:
 
                 time_step += 1
                 current_ep_reward += reward
-
-                # update PPO agent
-                if time_step % self.update_timestep == 0:
-                    ppo_agent.update()
 
                 # log in logging file
                 if time_step % self.log_freq == 0:
@@ -231,13 +226,17 @@ class Trainer:
 
                 # break; if the episode is over
                 if done:
-                    break
+                    state, _ = env.reset()
+                    current_ep_reward = 0
 
             print_running_reward += current_ep_reward
             print_running_episodes += 1
             log_running_reward += current_ep_reward
             log_running_episodes += 1
             i_episode += 1
+
+            # update PPO agent
+            ppo_agent.update()
 
         log_f.close()
         env.close()
@@ -256,14 +255,14 @@ class Trainer:
         logging.info("--------------------------------------------------------------------------------------------")
         logging.info("Training the agent in the %s environment. Door: %s", self.env_name, self.door_locked)
         logging.info("max training timesteps: %s", self.max_training_timesteps)
-        logging.info("max timesteps per episode: %s", self.max_ep_len)
+        logging.info("max timesteps per episode (M/horizon/rollout): %s", self.horizon)
         logging.info("model saving frequency: %s timesteps", self.save_model_freq)
         logging.info("log frequency: %s timesteps", self.log_freq)
         logging.info("printing average reward over episodes in last: %s timesteps", self.print_freq)
         logging.info("--------------------------------------------------------------------------------------------")
         logging.info("Initializing a discrete action space policy")
         logging.info("--------------------------------------------------------------------------------------------")
-        logging.info("PPO update frequency: %s timesteps", self.update_timestep)
+        logging.info("PPO update frequency: %s timesteps", self.horizon)
         logging.info("PPO K epochs: %s", self.k_epochs)
         logging.info("PPO epsilon clip: %s", self.eps_clip)
         logging.info("discount factor (gamma): %s", self.gamma)
