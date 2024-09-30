@@ -167,10 +167,9 @@ class Trainer:
         log_running_reward = 0
         log_running_episodes = 0
         time_step = 0
-        i_episode = 0
 
         # training loop
-        while time_step <= self.max_training_timesteps // self.horizon:
+        for i_episode in range(self.max_training_timesteps // self.horizon):
             state, _ = env.reset()
             current_ep_reward = 0
             for _ in range(1, self.horizon + 1):
@@ -233,7 +232,6 @@ class Trainer:
             print_running_episodes += 1
             log_running_reward += current_ep_reward
             log_running_episodes += 1
-            i_episode += 1
 
             # update PPO agent
             ppo_agent.update()
