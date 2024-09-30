@@ -27,8 +27,8 @@ spec:
             cpu: "16"
             nvidia.com/gpu: "1"
           requests: 
-            memory: 16Gi
-            cpu: "8"
+            memory: 22Gi
+            cpu: "10"
             nvidia.com/gpu: "1"
       volumes: 
         - name: elochang-volume2

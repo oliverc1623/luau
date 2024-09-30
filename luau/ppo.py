@@ -1,4 +1,5 @@
 # %%
+import random
 from pathlib import Path
 
 import torch
@@ -139,10 +140,12 @@ class PPO:
         gamma: float,
         k_epochs: int,
         eps_clip: float,
+        minibatch_size: int,
     ):
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
+        self.minibatch_size = minibatch_size
         self.buffer = RolloutBuffer()
         self.policy = ActorCritic(state_dim, action_dim).to(device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor)
@@ -190,24 +193,46 @@ class PPO:
         # calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
 
+        # Store data as a list of tuples for easier shuffling
+        buffer_data = list(zip(self.buffer.states, old_actions, old_logprobs, old_state_values, rewards, advantages, strict=False))
+
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
-            # Evaluating old actions and values
-            logprobs, state_values, dist_entropy = self.policy.evaluate(self.buffer.states, old_actions)
-            state_values = torch.squeeze(state_values)  # match state_values tensor dimensions with rewards tensor
+            # Shuffle the data for each epoch
+            random.shuffle(buffer_data)
 
-            # Finding the ratio (pi_theta / pi_theta__old)
-            ratios = torch.exp(logprobs - old_logprobs.detach())  # Finding the ratio (pi_theta / pi_theta__old)
+            # Split data into minibatches
+            for i in range(0, len(buffer_data), self.minibatch_size):
+                minibatch = buffer_data[i : i + self.minibatch_size]
 
-            surr1 = ratios * advantages
-            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-            vf_loss = self.MseLoss(state_values, rewards)  # value function loss
+                # Unzip the minibatch
+                states_mb, actions_mb, logprobs_mb, values_mb, rewards_mb, advantages_mb = zip(*minibatch, strict=False)
 
-            # final loss of clipped objective PPO
-            loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy  # final loss of clipped objective PPO
-            self.optimizer.zero_grad()  # take gradient step
-            loss.mean().backward()
-            self.optimizer.step()
+                # Convert minibatch data back to tensors
+                states_mb = list(states_mb)  # keep as list for policy evaluation
+                actions_mb = torch.stack(actions_mb).to(device)
+                logprobs_mb = torch.stack(logprobs_mb).to(device)
+                values_mb = torch.stack(values_mb).to(device)
+                rewards_mb = torch.stack(rewards_mb).to(device)
+                advantages_mb = torch.stack(advantages_mb).to(device)
+
+                # Evaluating old actions and values
+                logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, actions_mb)
+                state_values = torch.squeeze(state_values)  # match state_values tensor dimensions with rewards tensor
+
+                # Finding the ratio (pi_theta / pi_theta__old)
+                ratios = torch.exp(logprobs - logprobs_mb.detach())  # Finding the ratio (pi_theta / pi_theta__old)
+
+                surr1 = ratios * advantages_mb
+                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages_mb
+                vf_loss = self.MseLoss(state_values, rewards_mb)  # value function loss
+
+                # final loss of clipped objective PPO
+                loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy  # final loss of clipped objective PPO
+
+                self.optimizer.zero_grad()  # take gradient step
+                loss.mean().backward()
+                self.optimizer.step()
 
         self.policy_old.load_state_dict(self.policy.state_dict())  # Copy new weights into old policy
         self.buffer.clear()  # clear buffer

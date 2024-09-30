@@ -61,6 +61,7 @@ class Trainer:
         #####################################################
         ## Note : print and log frequencies should be > than max_ep_len
         ################ PPO hyperparameters ################
+        self.minibatch_size = config["minibatch_size"]
         self.k_epochs = config["k_epochs"]
         self.eps_clip = config["eps_clip"]
         self.gamma = config["gamma"]
@@ -130,7 +131,7 @@ class Trainer:
         action_dim = env.action_space.n
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
         if self.algorithm == "PPO":
-            ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
+            ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip, self.minibatch_size)
         elif self.algorithm == "IAAPPO":
             # TODO: test we're overwriting args
             teacher_ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)

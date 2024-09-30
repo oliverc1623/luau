@@ -5,10 +5,8 @@ door_locked: False                   # is the door locked?
 size: 9                              # gridworld env size
 has_continuous_action_space: False   # continuous action space; else discrete
 save_frames: False                   # save frames?
-horizon: 128                         # max timesteps in one update (episode); in other words, M rollout steps
-max_training_timesteps: 1000000      # break training loop if timesteps > max_training_timesteps. 1e6
-print_freq: 640                      # print avg reward in the interval (in num timesteps). 5 * horizon
-log_freq: 256                        # log avg reward in the interval (in num timesteps). 2 * horizon. horizon = 324
+print_freq: 1280                     # print avg reward in the interval (in num timesteps). 5 * horizon
+log_freq: 512                        # log avg reward in the interval (in num timesteps). 2 * horizon. horizon = 324
 save_model_freq: 100000              # save model frequency (in num timesteps)
 action_std: 0.6                      # starting std for action distribution (Multivariate Normal)
 action_std_decay_rate: 0.05          # linearly decay action_std (action_std = action_std - action_std_decay_rate)
@@ -17,6 +15,9 @@ action_std_decay_freq: 250000        # action_std decay frequency (in num timest
 image_observation: False             # rgb-images as observations?
 run_num: 0                           # experiment run number for seeding
 ################ PPO hyperparameters ################
+max_training_timesteps: 1000000      # break training loop if timesteps > max_training_timesteps. 1e6
+horizon: 256                         # max timesteps in one update (episode); in other words, M rollout steps
+minibatch_size: 128                  # mini batch size
 k_epochs: 4                          # update policy for K epochs
 eps_clip: 0.2                        # clip parameter for PPO
 gamma: 0.99                          # discount factor
