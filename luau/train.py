@@ -1,7 +1,6 @@
 # %%
 import argparse
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -56,7 +55,7 @@ class Trainer:
         self.min_action_std = config["min_action_std"]
         self.action_std_decay_freq = config["action_std_decay_freq"]
         self.image_observation = config["image_observation"]
-        self.run_num_pretrained = config["run_num"]
+        self.run_num = config["run_num"]
         if self.algorithm == "IAAPPO":
             self.teacher_model_path = config["teacher_model_path"]
         #####################################################
@@ -119,11 +118,8 @@ class Trainer:
 
         # make directory
         log_dir, model_dir = self.setup_directories()
-        log_file = f"{log_dir}/{self.algorithm}_{self.env_name}_\
-            run_{self.run_num_pretrained}_\
-            seed_{self.random_seed}_\
-            log_{len(next(os.walk(log_dir))[2])}.csv"
-        checkpoint_path = f"{model_dir}/{self.algorithm}_{self.env_name}_run_{self.run_num_pretrained}_seed_{self.random_seed}.pth"
+        log_file = f"{log_dir}/{self.algorithm}_{self.env_name}_run_{self.run_num}_seed_{self.random_seed}_log.csv"
+        checkpoint_path = f"{model_dir}/{self.algorithm}_{self.env_name}_run_{self.run_num}_seed_{self.random_seed}.pth"
         logging.info("Save checkpoint path: %s", checkpoint_path)
 
         # Initialize TensorBoard writer
@@ -183,11 +179,20 @@ class Trainer:
 
                 time_step += 1
                 current_ep_reward += reward
+                print_running_reward += reward
+                log_running_reward += reward
+
+                # Handle the reset and continuation for done episodes
+                if done:
+                    state, _ = env.reset()
+                    print_running_episodes += 1
+                    log_running_episodes += 1
+                    current_ep_reward = 0
 
                 # log in logging file
                 if time_step % self.log_freq == 0:
                     # log average reward till last episode
-                    log_avg_reward = log_running_reward / log_running_episodes
+                    log_avg_reward = log_running_reward / i_episode
                     log_avg_reward = round(log_avg_reward, 4)
                     log_f.write(f"{i_episode},{time_step},{log_avg_reward}\n")
                     log_f.flush()
@@ -202,7 +207,7 @@ class Trainer:
                 # logging average reward
                 if time_step % self.print_freq == 0:
                     # print average reward till last episode
-                    print_avg_reward = print_running_reward / print_running_episodes
+                    print_avg_reward = print_running_reward / i_episode
                     print_avg_reward = round(print_avg_reward, 2)
                     logging.info(
                         "Episode: %s \t\t Timestep: %s \t\t Average Reward: %s",
@@ -223,17 +228,7 @@ class Trainer:
                     logging.info("Elapsed Time: %s", pacific_time - start_time)
                     logging.info("--------------------------------------------------------------------------------------------")
 
-                # break; if the episode is over
-                if done:
-                    state, _ = env.reset()
-                    current_ep_reward = 0
-
-            print_running_reward += current_ep_reward
-            print_running_episodes += 1
-            log_running_reward += current_ep_reward
-            log_running_episodes += 1
-
-            # update PPO agent
+            # PPO update at the end of the horizon
             ppo_agent.update()
 
         log_f.close()

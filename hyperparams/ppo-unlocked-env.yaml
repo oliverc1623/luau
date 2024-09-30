@@ -1,14 +1,14 @@
 ################ Logging hyperparameters ################
 algorithm: "PPO"                     # name of the algorithm, enter "PPO" or "IAAPPO"
-env_name: "IntrospectiveEnv"         # name of the environment
+env_name: "IntrospectiveEnvUnlocked"         # name of the environment
 door_locked: False                   # is the door locked?
 size: 9                              # gridworld env size
 has_continuous_action_space: False   # continuous action space; else discrete
 save_frames: False                   # save frames?
 horizon: 128                         # max timesteps in one update (episode); in other words, M rollout steps
 max_training_timesteps: 1000000      # break training loop if timesteps > max_training_timesteps. 1e6
-print_freq: 1620                     # print avg reward in the interval (in num timesteps). 5 * max_ep_len
-log_freq: 648                        # log avg reward in the interval (in num timesteps). 2 * max_ep_len
+print_freq: 640                      # print avg reward in the interval (in num timesteps). 5 * horizon
+log_freq: 256                        # log avg reward in the interval (in num timesteps). 2 * horizon. horizon = 324
 save_model_freq: 100000              # save model frequency (in num timesteps)
 action_std: 0.6                      # starting std for action distribution (Multivariate Normal)
 action_std_decay_rate: 0.05          # linearly decay action_std (action_std = action_std - action_std_decay_rate)
