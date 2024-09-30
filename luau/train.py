@@ -166,7 +166,7 @@ class Trainer:
         time_step = 0
 
         # training loop
-        for i_episode in range(self.max_training_timesteps // self.horizon):
+        for i_episode in range(1, self.max_training_timesteps // self.horizon + 1):
             state, _ = env.reset()
             current_ep_reward = 0
             for _ in range(1, self.horizon + 1):
@@ -180,12 +180,16 @@ class Trainer:
 
                 time_step += 1
                 current_ep_reward += reward
-                print_running_reward += reward
-                log_running_reward += reward
 
                 # Handle the reset and continuation for done episodes
                 if done:
-                    # Reset for next episode
+                    # Accumulate rewards and episodes
+                    print_running_reward += current_ep_reward
+                    log_running_reward += current_ep_reward
+                    print_running_episodes += 1
+                    log_running_episodes += 1
+
+                    # Reset for the next episode
                     current_ep_reward = 0
                     state, _ = env.reset()
 
@@ -230,12 +234,6 @@ class Trainer:
 
             # PPO update at the end of the horizon
             ppo_agent.update()
-            # Increment episode counts
-            print_running_episodes += 1
-            log_running_episodes += 1
-            # Accumulate episode reward
-            print_running_reward += current_ep_reward
-            log_running_reward += current_ep_reward
 
         log_f.close()
         env.close()
