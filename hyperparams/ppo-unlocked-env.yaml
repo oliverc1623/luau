@@ -24,3 +24,4 @@ gamma: 0.99                          # discount factor
 lr_actor: 0.0005                     # learning rate for actor
 lr_critic: 0.001                     # learning rate for critic
 random_seed: 47                      # random seed value
+num_envs: 2                          # number of parallel environments
