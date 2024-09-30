@@ -185,15 +185,14 @@ class Trainer:
 
                 # Handle the reset and continuation for done episodes
                 if done:
-                    state, _ = env.reset()
-                    print_running_episodes += 1
-                    log_running_episodes += 1
+                    # Reset for next episode
                     current_ep_reward = 0
+                    state, _ = env.reset()
 
                 # log in logging file
-                if time_step % self.log_freq == 0:
+                if time_step % self.log_freq == 0 and log_running_episodes > 0:
                     # log average reward till last episode
-                    log_avg_reward = log_running_reward / i_episode
+                    log_avg_reward = log_running_reward / log_running_episodes
                     log_avg_reward = round(log_avg_reward, 4)
                     log_f.write(f"{i_episode},{time_step},{log_avg_reward}\n")
                     log_f.flush()
@@ -206,9 +205,9 @@ class Trainer:
                     log_running_episodes = 0
 
                 # logging average reward
-                if time_step % self.print_freq == 0:
+                if time_step % self.print_freq == 0 and print_running_episodes > 0:
                     # print average reward till last episode
-                    print_avg_reward = print_running_reward / i_episode
+                    print_avg_reward = print_running_reward / print_running_episodes
                     print_avg_reward = round(print_avg_reward, 2)
                     logging.info(
                         "Episode: %s \t\t Timestep: %s \t\t Average Reward: %s",
@@ -231,6 +230,12 @@ class Trainer:
 
             # PPO update at the end of the horizon
             ppo_agent.update()
+            # Increment episode counts
+            print_running_episodes += 1
+            log_running_episodes += 1
+            # Accumulate episode reward
+            print_running_reward += current_ep_reward
+            log_running_reward += current_ep_reward
 
         log_f.close()
         env.close()
