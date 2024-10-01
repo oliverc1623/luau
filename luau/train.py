@@ -113,7 +113,7 @@ class Trainer:
         """Create the environment."""
 
         def _init() -> IntrospectiveEnv:
-            env = IntrospectiveEnv(size=self.size, locked=self.door_locked, max_steps=self.horizon)
+            env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
             return env
 
         return _init
@@ -178,7 +178,7 @@ class Trainer:
         states, _ = env.reset()
         dones = np.zeros(self.num_envs, dtype=bool)
         # training loop
-        for i_episode in range(1, self.max_training_timesteps // self.horizon * self.num_envs):
+        for i_episode in range(1, self.max_training_timesteps // (self.horizon * self.num_envs)):
             current_ep_reward = np.zeros(self.num_envs)
             for _ in range(self.horizon):
                 # Select actions for all environments
