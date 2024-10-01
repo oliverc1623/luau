@@ -173,7 +173,7 @@ class Trainer:
         time_step = 0
 
         # training loop
-        for i_episode in range(1, self.max_training_timesteps // (self.horizon * self.num_envs) + 1):
+        for update in range(1, self.max_training_timesteps // (self.horizon * self.num_envs) + 1):
             for _ in range(self.horizon):
                 # Select actions for all environments
                 actions = []
@@ -195,15 +195,15 @@ class Trainer:
                     if dones[env_idx]:
                         # log average reward till last episode
                         log_avg_reward = round(rewards[env_idx], 4)
-                        log_f.write(f"{i_episode},{time_step},{log_avg_reward}\n")
+                        log_f.write(f"{update},{time_step},{log_avg_reward}\n")
                         log_f.flush()
 
                         # Log to TensorBoard
-                        writer.add_scalar("Average Reward", log_avg_reward, time_step)
+                        writer.add_scalar("Reward", log_avg_reward, time_step)
                         writer.add_scalar("Time Step", time_step, time_step)
 
                         # Print average reward
-                        logging.info("Episode: %s \t\t Timestep: %s \t\t Average Reward: %s", i_episode, time_step, log_avg_reward)
+                        logging.info("Update: %s \t\t Timestep: %s \t\t Reward: %s", update, time_step, log_avg_reward)
                         break
 
             # PPO update at the end of the horizon
