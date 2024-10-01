@@ -167,13 +167,11 @@ class Trainer:
         log_f = Path.open(log_file, "w+")
         log_f.write("episode,timestep,reward\n")
 
-        # printing and logging variables
-        time_step = 0
-        episode_rewards = np.zeros(self.num_envs)
-
         # Reset all environments
         states, _ = env.reset()
         dones = np.zeros(self.num_envs, dtype=bool)
+        time_step = 0
+
         # training loop
         for i_episode in range(1, self.max_training_timesteps // (self.horizon * self.num_envs) + 1):
             for _ in range(self.horizon):
@@ -184,29 +182,32 @@ class Trainer:
                     action = ppo_agent.select_action(single_state)
                     actions.append(action)
                     time_step += 1
+
+                # Step in all environments
                 actions = np.array(actions)
                 states, rewards, dones, truncated, info = env.step(actions)
                 ppo_agent.buffer.rewards.extend(rewards)
                 dones = [a or b for a, b in zip(dones, truncated, strict=False)]
-                print(rewards)
                 ppo_agent.buffer.is_terminals.extend(dones)
-                episode_rewards += rewards
+
+                # Log rewards and break if any environment is done
+                for env_idx in range(self.num_envs):
+                    if dones[env_idx]:
+                        # log average reward till last episode
+                        log_avg_reward = round(rewards[env_idx], 4)
+                        log_f.write(f"{i_episode},{time_step},{log_avg_reward}\n")
+                        log_f.flush()
+
+                        # Log to TensorBoard
+                        writer.add_scalar("Average Reward", log_avg_reward, time_step)
+                        writer.add_scalar("Time Step", time_step, time_step)
+
+                        # Print average reward
+                        logging.info("Episode: %s \t\t Timestep: %s \t\t Average Reward: %s", i_episode, time_step, log_avg_reward)
+                        break
 
             # PPO update at the end of the horizon
             ppo_agent.update()
-
-            # log average reward till last episode
-            log_avg_reward = round(np.mean(episode_rewards), 4)
-            log_f.write(f"{i_episode},{time_step},{log_avg_reward}\n")
-            log_f.flush()
-
-            # Log to TensorBoard
-            writer.add_scalar("Average Reward", log_avg_reward, time_step)
-            writer.add_scalar("Time Step", time_step, time_step)
-
-            # Print average reward
-            logging.info("Episode: %s \t\t Timestep: %s \t\t Average Reward: %s", i_episode, time_step, log_avg_reward)
-            episode_rewards = np.zeros(self.num_envs)
 
         log_f.close()
         env.close()
