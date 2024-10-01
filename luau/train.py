@@ -199,14 +199,14 @@ class Trainer:
                     current_ep_reward[env_idx] += rewards[env_idx]
                     time_step += 1
 
-                    if dones[env_idx]:
-                        # Episode finished in environment env_idx
-                        print_running_reward += np.mean(current_ep_reward)
-                        log_running_reward += np.mean(current_ep_reward)
-                        print_running_episodes += 1
-                        log_running_episodes += 1
-                        current_ep_reward = np.zeros(self.num_envs)
-                        states, _ = env.reset()
+                if dones.any():
+                    # Episode finished in environment env_idx
+                    print_running_reward += np.mean(current_ep_reward)
+                    log_running_reward += np.mean(current_ep_reward)
+                    print_running_episodes += 1
+                    log_running_episodes += 1
+                    current_ep_reward = np.zeros(self.num_envs)
+                    states, _ = env.reset()
 
                 # log in logging file
                 if time_step % self.log_freq == 0 and log_running_episodes > 0:
