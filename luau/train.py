@@ -187,6 +187,8 @@ class Trainer:
                 actions = np.array(actions)
                 states, rewards, dones, truncated, info = env.step(actions)
                 ppo_agent.buffer.rewards.extend(rewards)
+                dones = [a or b for a, b in zip(dones, truncated, strict=False)]
+                print(rewards)
                 ppo_agent.buffer.is_terminals.extend(dones)
                 episode_rewards += rewards
 
