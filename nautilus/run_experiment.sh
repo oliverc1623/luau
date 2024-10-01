@@ -12,4 +12,4 @@ export PATH="/root/.local/bin:$PATH"
 micromamba run -n luau poetry install
 micromamba run -n luau poetry run inv setup
 micromamba run -n luau tensorboard --logdir=~/../pvcvolume/PPO_logs &
-micromamba run -n luau python luau/train.py --config_path ./hyperparams/ppo-unlocked-env.yaml --log_dir ~/../pvcvolume --model_dir ~/../pvcvolume --num_experiments 1
+micromamba run -n luau python luau/train.py --config_path ./hyperparams/ppo-unlocked-env.yaml --log_dir ~/../pvcvolume --model_dir ~/../pvcvolume --num_experiments 4
