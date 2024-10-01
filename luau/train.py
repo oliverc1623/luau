@@ -187,7 +187,6 @@ class Trainer:
                 actions = np.array(actions)
                 states, rewards, dones, truncated, info = env.step(actions)
                 ppo_agent.buffer.rewards.extend(rewards)
-                dones = [a or b for a, b in zip(dones, truncated, strict=False)]
                 ppo_agent.buffer.is_terminals.extend(dones)
 
                 # Log rewards and break if any environment is done
@@ -199,11 +198,11 @@ class Trainer:
                         log_f.flush()
 
                         # Log to TensorBoard
-                        writer.add_scalar("Reward", log_avg_reward, time_step)
+                        writer.add_scalar("Average Reward", log_avg_reward, time_step)
                         writer.add_scalar("Time Step", time_step, time_step)
 
                         # Print average reward
-                        logging.info("Update: %s \t\t Timestep: %s \t\t Reward: %s", update, time_step, log_avg_reward)
+                        logging.info("Update: %s \t\t Timestep: %s \t\t Average Reward: %s", update, time_step, log_avg_reward)
                         break
 
             # PPO update at the end of the horizon
