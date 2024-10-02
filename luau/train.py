@@ -193,7 +193,7 @@ class Trainer:
                 for env_idx in range(self.num_envs):
                     if dones[env_idx]:
                         # log average reward till last episode
-                        log_avg_reward = round(rewards[env_idx], 4)
+                        log_avg_reward = round(np.mean(rewards), 4)
                         log_f.write(f"{update},{time_step},{log_avg_reward}\n")
                         log_f.flush()
 
