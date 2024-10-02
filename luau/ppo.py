@@ -185,13 +185,8 @@ class PPO:
     def select_action(self, state: dict) -> int:
         """Select an action."""
         with torch.no_grad():
-            state = self.preprocess(state)
             action, action_logprob, state_val = self.policy_old(state)
-        self.buffer.states.append(state)
-        self.buffer.actions.append(action)
-        self.buffer.logprobs.append(action_logprob)
-        self.buffer.state_values.append(state_val)
-        return action.item()
+            return action.item(), action_logprob, state_val
 
     def _calculate_rewards(self) -> torch.tensor:
         # Monte Carlo estimate of returns
