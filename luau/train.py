@@ -200,12 +200,12 @@ class Trainer:
                 log_running_reward += sum(rewards)  # sum rewards over all environments
                 print_running_reward += sum(rewards)
 
+                # zip truncated and dones for logging TODO: if current run bad
+                dones = [a or b for a, b in zip(dones, truncated, strict=False)]
+
                 # Track the number of episodes for logging
                 log_running_episodes += np.sum(dones)  # count completed episodes
                 print_running_episodes += np.sum(dones)
-
-                # zip truncated and dones for logging TODO: if current run bad
-                dones = [a or b for a, b in zip(dones, truncated, strict=False)]
 
                 # Log rewards and break if any environment is done
                 for env_idx in range(self.num_envs):
