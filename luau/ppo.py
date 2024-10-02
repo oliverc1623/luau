@@ -138,10 +138,10 @@ class ActorCritic(nn.Module):
 
         return action.detach(), action_logprob.detach(), state_values.detach()
 
-    def evaluate(self, states: list, actions: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
+    def evaluate(self, states: dict, actions: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Evaluate the policy."""
-        images = torch.squeeze(torch.stack([s["image"] for s in states], dim=0)).detach().to(device)
-        directions = torch.squeeze(torch.stack([s["direction"] for s in states], dim=0)).detach().to(device)
+        images = states["image"]
+        directions = states["direction"]
 
         # actor
         action_probs = self._actor_forward(images, directions)
@@ -181,44 +181,61 @@ class PPO:
         self.policy_old = ActorCritic(state_dim, action_dim).to(device)
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.MseLoss = nn.MSELoss()
+        self.env = env
+        self.horizon = horizon
+        self.num_envs = num_envs
 
     def select_action(self, state: dict) -> int:
         """Select an action."""
         with torch.no_grad():
             action, action_logprob, state_val = self.policy_old(state)
-            return action.item(), action_logprob, state_val
+            return action, action_logprob, state_val
 
     def _calculate_rewards(self) -> torch.tensor:
-        # Monte Carlo estimate of returns
-        rewards = []
-        discounted_reward = 0
-        for reward, is_terminal in zip(reversed(self.buffer.rewards), reversed(self.buffer.is_terminals), strict=False):
-            if is_terminal:
-                discounted_reward = 0
-            discounted_reward = reward + (self.gamma * discounted_reward)
-            rewards.insert(0, discounted_reward)
-        # Normalizing the rewards
-        rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
-        return (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+        # Monte Carlo estimate of returns for each environment
+        rewards = torch.zeros(self.horizon, self.num_envs).to(device)
+        discounted_reward = torch.zeros(self.num_envs).to(device)
+
+        for step in reversed(range(self.horizon)):
+            is_terminal = self.buffer.is_terminals[step]
+            reward = self.buffer.rewards[step]
+            discounted_reward = reward + (self.gamma * discounted_reward * (1 - is_terminal))
+            rewards[step] = discounted_reward
+
+        # Normalize rewards for stability
+        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+        return rewards
 
     def _tensorize_rollout_buffer(self) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
-        old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
-        old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
-        old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
+        # Extract and prepare the buffer data for optimization
+        old_actions = torch.flatten(self.buffer.actions, 0, 1).detach().to(device)
+        old_logprobs = torch.flatten(self.buffer.logprobs, 0, 1).detach().to(device)
+        old_state_values = torch.flatten(self.buffer.state_values, 0, 1).detach().to(device)
         return old_actions, old_logprobs, old_state_values
 
     def update(self) -> None:
         """Update the policy."""
-        rewards = self._calculate_rewards()
+        rewards = torch.flatten(self._calculate_rewards(), 0, 1)
 
-        # convert list to tensor
+        # Convert buffer data into flat tensors
         old_actions, old_logprobs, old_state_values = self._tensorize_rollout_buffer()
 
         # calculate advantages
         advantages = rewards.detach() - old_state_values.detach()
 
-        # Store data as a list of tuples for easier shuffling
-        buffer_data = list(zip(self.buffer.states, old_actions, old_logprobs, old_state_values, rewards, advantages, strict=False))
+        # Prepare data for minibatch shuffling
+        buffer_data = list(
+            zip(
+                torch.flatten(self.buffer.images, 0, 1),  # flatten images for each environment
+                torch.flatten(self.buffer.directions, 0, 1),  # flatten directions
+                old_actions,
+                old_logprobs,
+                old_state_values,
+                rewards,
+                advantages,
+                strict=False,
+            ),
+        )
 
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
@@ -230,15 +247,18 @@ class PPO:
                 minibatch = buffer_data[i : i + self.minibatch_size]
 
                 # Unzip the minibatch
-                states_mb, actions_mb, logprobs_mb, values_mb, rewards_mb, advantages_mb = zip(*minibatch, strict=False)
+                states_img_mb, states_dir_mb, actions_mb, logprobs_mb, values_mb, rewards_mb, advantages_mb = zip(*minibatch, strict=False)
 
                 # Convert minibatch data back to tensors
-                states_mb = list(states_mb)  # keep as list for policy evaluation
+                images_mb = torch.stack(states_img_mb).to(device)
+                directions_mb = torch.stack(states_dir_mb).to(device)
                 actions_mb = torch.stack(actions_mb).to(device)
                 logprobs_mb = torch.stack(logprobs_mb).to(device)
                 values_mb = torch.stack(values_mb).to(device)
                 rewards_mb = torch.stack(rewards_mb).to(device)
                 advantages_mb = torch.stack(advantages_mb).to(device)
+
+                states_mb = {"image": images_mb, "direction": directions_mb}
 
                 # Evaluating old actions and values
                 logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, actions_mb)

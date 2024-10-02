@@ -141,7 +141,18 @@ class Trainer:
         action_dim = envs[0]().action_space.n
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
         if self.algorithm == "PPO":
-            ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip, self.minibatch_size)
+            ppo_agent = PPO(
+                state_dim,
+                action_dim,
+                self.lr_actor,
+                self.gamma,
+                self.k_epochs,
+                self.eps_clip,
+                self.minibatch_size,
+                env=env,
+                horizon=self.horizon,
+                num_envs=self.num_envs,
+            )
         elif self.algorithm == "IAAPPO":
             # TODO: test we're overwriting args
             teacher_ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
@@ -184,7 +195,7 @@ class Trainer:
                 done = next_dones
                 ppo_agent.buffer.images[step] = obs["image"]  # obs
                 ppo_agent.buffer.directions[step] = obs["direction"]  # obs
-                ppo_agent.buffer.is_terminals[step] = done
+                ppo_agent.buffer.is_terminals[step] = torch.from_numpy(done)
 
                 # Select actions and store them in the PPO agent's buffer
                 actions, action_logprobs, state_vals = ppo_agent.select_action(obs)  # get action
@@ -193,8 +204,8 @@ class Trainer:
                 ppo_agent.buffer.state_values[step] = state_vals
 
                 # Step the environment and store the rewards
-                next_obs, rewards, next_dones, truncated, info = env.step(actions)
-                ppo_agent.buffer.rewards[step] = rewards
+                next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
+                ppo_agent.buffer.rewards[step] = torch.from_numpy(rewards)
 
                 time_step += self.num_envs
 
