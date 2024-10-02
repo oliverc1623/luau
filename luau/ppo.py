@@ -10,6 +10,7 @@ from torch import nn
 from torch.distributions import Bernoulli, Categorical
 
 
+RGB_CHANNEL = 3
 ################################## set device ##################################
 print("============================================================================================")
 # set device to cpu, mps, or cuda
@@ -279,7 +280,10 @@ class PPO:
         direction = x["direction"]
         image = x["image"]
         image = torch.from_numpy(image).float()
-        image = image.permute(2, 0, 1).unsqueeze(0).to(device)
+        if len(image.shape) == RGB_CHANNEL:
+            image = image.unsqueeze(0).to(device)
+        else:
+            image = image.permute(0, 3, 1, 2).to(device)
         direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
         x = {"direction": direction, "image": image}
         return x
