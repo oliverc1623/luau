@@ -5,8 +5,8 @@ door_locked: False                   # is the door locked?
 size: 9                              # gridworld env size
 has_continuous_action_space: False   # continuous action space; else discrete
 save_frames: False                   # save frames?
-print_freq: 2560                     # print avg reward in the interval (in num timesteps). 5 * horizon
-log_freq: 1024                       # log avg reward in the interval (in num timesteps). 2 * horizon
+print_freq: 640                      # print avg reward in the interval (in num timesteps). 5 * horizon
+log_freq: 256                        # log avg reward in the interval (in num timesteps). 2 * horizon
 save_model_freq: 100_000              # save model frequency (in num timesteps)
 action_std: 0.6                      # starting std for action distribution (Multivariate Normal)
 action_std_decay_rate: 0.05          # linearly decay action_std (action_std = action_std - action_std_decay_rate)
