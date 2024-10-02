@@ -18,7 +18,7 @@ spec:
             chmod +x nautilus/run_experiment.sh && ./nautilus/run_experiment.sh
         volumeMounts: 
         - mountPath: /pvcvolume
-          name: elochang-volume2
+          name: elochang-rbd-volume
         - mountPath: /dev/shm
           name: dshm
         resources: 
@@ -31,9 +31,9 @@ spec:
             cpu: "8"
             nvidia.com/gpu: "1"
       volumes: 
-        - name: elochang-volume2
+        - name: elochang-rbd-volume
           persistentVolumeClaim: 
-            claimName: elochang-volume2
+            claimName: elochang-rbd-volume
         - name: dshm
           emptyDir:
             medium: Memory

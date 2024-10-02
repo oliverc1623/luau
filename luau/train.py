@@ -193,7 +193,6 @@ class Trainer:
                 # Step in all environments
                 actions = np.array(actions)
                 states, rewards, dones, truncated, info = env.step(actions)
-                dones = [a or b for a, b in zip(dones, truncated, strict=False)]
                 ppo_agent.buffer.rewards.extend(rewards)
                 ppo_agent.buffer.is_terminals.extend(dones)
 
@@ -204,6 +203,9 @@ class Trainer:
                 # Track the number of episodes for logging
                 log_running_episodes += np.sum(dones)  # count completed episodes
                 print_running_episodes += np.sum(dones)
+
+                # zip truncated and dones for logging TODO: if current run bad
+                dones = [a or b for a, b in zip(dones, truncated, strict=False)]
 
                 # Log rewards and break if any environment is done
                 for env_idx in range(self.num_envs):
