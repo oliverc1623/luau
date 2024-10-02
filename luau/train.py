@@ -172,26 +172,31 @@ class Trainer:
         i_episode = 0
 
         # Reset all environments
-        states, _ = env.reset()
-        dones = np.zeros(self.num_envs, dtype=bool)
+        next_obs, _ = env.reset()
+        next_dones = np.zeros(self.num_envs, dtype=bool)
         time_step = 0
 
         # training loop
         for _ in range(1, self.max_training_timesteps // (self.horizon * self.num_envs) + 1):
-            for _ in range(1, self.horizon + 1):
-                # Select actions for all environments
-                actions = []
-                for env_idx in range(self.num_envs):
-                    single_state = {"image": states["image"][env_idx], "direction": states["direction"][env_idx]}
-                    action = ppo_agent.select_action(single_state)
-                    actions.append(action)
-                    time_step += 1
+            for step in range(self.horizon):
+                # Preprocess the next observation and store relevant data in the PPO agent's buffer
+                obs = ppo_agent.preprocess(next_obs)
+                done = next_dones
+                ppo_agent.buffer.images[step] = obs["image"]  # obs
+                ppo_agent.buffer.directions[step] = obs["direction"]  # obs
+                ppo_agent.buffer.is_terminals[step] = done
 
-                # Step in all environments
-                actions = np.array(actions)
-                states, rewards, dones, truncated, info = env.step(actions)
-                ppo_agent.buffer.rewards.extend(rewards)
-                ppo_agent.buffer.is_terminals.extend(dones)
+                # Select actions and store them in the PPO agent's buffer
+                actions, action_logprobs, state_vals = ppo_agent.select_action(obs)  # get action
+                ppo_agent.buffer.actions[step] = actions
+                ppo_agent.buffer.logprobs[step] = action_logprobs
+                ppo_agent.buffer.state_values[step] = state_vals
+
+                # Step the environment and store the rewards
+                next_obs, rewards, next_dones, truncated, info = env.step(actions)
+                ppo_agent.buffer.rewards[step] = rewards
+
+                time_step += self.num_envs
 
                 if "final_info" in info:
                     for e in info["final_info"]:
@@ -202,7 +207,7 @@ class Trainer:
                             writer.add_scalar("charts/episodic_length", episodic_length, time_step)
                             # Print average reward
                             logging.info(
-                                "i_episode: %s \t\t Timestep: %s \t\t Average Reward: %s \t\t Episodic length: %s",
+                                "i_episode: %s \t Timestep: %s \t Average Reward: %s \t Episodic length: %s",
                                 i_episode,
                                 time_step,
                                 episodic_reward,
