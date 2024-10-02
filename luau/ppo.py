@@ -2,6 +2,8 @@
 import random
 from pathlib import Path
 
+import gymnasium
+import numpy as np
 import torch
 import torch.nn.functional as f
 from torch import nn
@@ -26,22 +28,34 @@ print("=========================================================================
 class RolloutBuffer:
     """A buffer to store rollout data for reinforcement learning agents and supports the generation of minibatches for training."""
 
-    def __init__(self):
-        self.actions = []
-        self.states = []
-        self.logprobs = []
-        self.rewards = []
-        self.state_values = []
-        self.is_terminals = []
+    def __init__(self, horizon: int, num_envs: int, state: dict, action_space: gymnasium.Space):
+        # Storage setup
+        self.horizon = horizon
+        self.num_envs = num_envs
+        self.state = state
+        self.action_space = action_space
+
+        sample = state["image"].sample()
+        permuted_sample = np.transpose(sample, (2, 0, 1))
+        self.img_shape = permuted_sample.shape
+
+        self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
+        self.directions = torch.zeros((self.horizon, self.num_envs, *self.state["direction"].shape)).to(device)
+        self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
+        self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.is_terminals = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.state_values = torch.zeros((self.horizon, self.num_envs)).to(device)
 
     def clear(self) -> None:
         """Clear the buffer."""
-        del self.actions[:]
-        del self.states[:]
-        del self.logprobs[:]
-        del self.rewards[:]
-        del self.state_values[:]
-        del self.is_terminals[:]
+        self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
+        self.directions = torch.zeros((self.horizon, self.num_envs, *self.state["direction"].shape)).to(device)
+        self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
+        self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.is_terminals = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.state_values = torch.zeros((self.horizon, self.num_envs)).to(device)
 
 
 class ActorCritic(nn.Module):
@@ -103,7 +117,7 @@ class ActorCritic(nn.Module):
         y = torch.flatten(y, 1)
         y = torch.cat((y, direction.view(-1, 1)), 1)
         y = f.relu(self.critic_fc1(y))
-        state_values = self.critic_fc2(y)
+        state_values = self.critic_fc2(y).squeeze(-1)
         return state_values
 
     def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
@@ -152,12 +166,15 @@ class PPO:
         k_epochs: int,
         eps_clip: float,
         minibatch_size: int,
+        env: gymnasium.Env,
+        horizon: int,
+        num_envs: int,
     ):
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
         self.minibatch_size = minibatch_size
-        self.buffer = RolloutBuffer()
+        self.buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
         self.policy = ActorCritic(state_dim, action_dim).to(device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
         self.policy_old = ActorCritic(state_dim, action_dim).to(device)
