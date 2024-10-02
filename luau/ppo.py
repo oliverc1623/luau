@@ -70,6 +70,17 @@ class ActorCritic(nn.Module):
         self.critic_fc1 = nn.Linear(65, 512)  # Add +1 for the scalar input
         self.critic_fc2 = nn.Linear(512, 1)
 
+        # Initialize weights orthogonally and biases to a constant value
+        self._initialize_weights()
+
+    def _initialize_weights(self) -> None:
+        # Orthogonal initialization of conv and linear layers
+        for layer in self.modules():
+            if isinstance(layer, nn.Conv2d | nn.Linear):
+                nn.init.orthogonal_(layer.weight)
+                if layer.bias is not None:
+                    nn.init.constant_(layer.bias, 0.0)  # Set bias to 0, or any constant value you prefer
+
     def _actor_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
         x = f.relu(self.actor_conv1(image))
@@ -148,7 +159,7 @@ class PPO:
         self.minibatch_size = minibatch_size
         self.buffer = RolloutBuffer()
         self.policy = ActorCritic(state_dim, action_dim).to(device)
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
         self.policy_old = ActorCritic(state_dim, action_dim).to(device)
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.MseLoss = nn.MSELoss()
