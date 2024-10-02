@@ -114,6 +114,7 @@ class Trainer:
 
         def _init() -> IntrospectiveEnv:
             env = IntrospectiveEnv(size=self.size, locked=self.door_locked, max_steps=self.horizon)
+            env = gym.wrappers.RecordEpisodeStatistics(env)
             return env
 
         return _init
@@ -166,11 +167,7 @@ class Trainer:
         # logging file
         log_f = Path.open(log_file, "w+")
         log_f.write("episode,timestep,reward\n")
-        # printing and logging variables
-        print_running_reward = 0
-        print_running_episodes = 0
-        log_running_reward = 0
-        log_running_episodes = 0
+        # logging variables
         time_step = 0
         i_episode = 0
 
@@ -196,38 +193,23 @@ class Trainer:
                 ppo_agent.buffer.rewards.extend(rewards)
                 ppo_agent.buffer.is_terminals.extend(dones)
 
-                # Update reward tracking
-                log_running_reward += sum(rewards)  # sum rewards over all environments
-                print_running_reward += sum(rewards)
-
-                # zip truncated and dones for logging TODO: if current run bad
-                dones = [a or b for a, b in zip(dones, truncated, strict=False)]
-
-                # Track the number of episodes for logging
-                log_running_episodes += np.sum(dones)  # count completed episodes
-                print_running_episodes += np.sum(dones)
-
-                # Log rewards and break if any environment is done
-                for env_idx in range(self.num_envs):
-                    if dones[env_idx]:
-                        i_episode += 1
-
-                # Log and print average reward at the specified interval
-                if time_step % self.log_freq == 0:
-                    log_avg_reward = log_running_reward / log_running_episodes
-                    log_f.write(f"{i_episode},{time_step},{log_avg_reward}\n")
-                    log_f.flush()
-
-                    # Log to TensorBoard
-                    writer.add_scalar("Average Reward", log_avg_reward, time_step)
-                    writer.add_scalar("Time Step", time_step, time_step)
-
-                    # Print average reward
-                    logging.info("i_episode: %s \t\t Timestep: %s \t\t Average Reward: %s", i_episode, time_step, log_avg_reward)
-
-                    # Reset logging variables
-                    log_running_reward = 0
-                    log_running_episodes = 0
+                if "final_info" in info:
+                    for e in info["final_info"]:
+                        if e is not None:
+                            episodic_reward = e["episode"]["r"][0]
+                            episodic_length = e["episode"]["l"][0]
+                            writer.add_scalar("charts/episodic_return", episodic_reward, time_step)
+                            writer.add_scalar("charts/episodic_length", episodic_length, time_step)
+                            # Print average reward
+                            logging.info(
+                                "i_episode: %s \t\t Timestep: %s \t\t Average Reward: %s \t\t Episodic length: %s",
+                                i_episode,
+                                time_step,
+                                episodic_reward,
+                                episodic_length,
+                            )
+                            i_episode += 1
+                        break
 
             # PPO update at the end of the horizon
             ppo_agent.update()
