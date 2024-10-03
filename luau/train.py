@@ -188,7 +188,11 @@ class Trainer:
         time_step = 0
 
         # training loop
-        for _ in range(1, self.max_training_timesteps // (self.horizon * self.num_envs) + 1):
+        num_updates = self.max_training_timesteps // (self.horizon * self.num_envs)
+        for update in range(1, num_updates + 1):
+            frac = 1.0 - (update - 1.0) / num_updates
+            lrnow = frac * self.lr_actor
+            ppo_agent.optimizer.param_groups[0]["lr"] = lrnow
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 obs = ppo_agent.preprocess(next_obs)
