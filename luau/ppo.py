@@ -229,6 +229,7 @@ class PPO:
         b_rewards = torch.flatten(rewards, 0, 1)
         b_advantages = torch.flatten(advantages, 0, 1)
         b_actions = torch.flatten(self.buffer.actions, 0, 1)
+        b_values = torch.flatten(self.buffer.state_values, 0, 1)
         b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1)
         b_images = torch.flatten(self.buffer.images, 0, 1)
         b_directions = torch.flatten(self.buffer.directions, 0, 1)
@@ -259,11 +260,13 @@ class PPO:
                 surr2 = mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
 
                 # value function loss
-                rewards_mb = b_rewards[mb_inds]
-                vf_loss = self.MseLoss(state_values, rewards_mb)
+                v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
+                v_clipped = b_values[mb_inds] + torch.clamp(state_values - b_values[mb_inds], -10, 10)
+                v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
 
                 # final loss of clipped objective PPO
-                loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy  # final loss of clipped objective PPO
+                loss = -torch.min(surr1, surr2) + 0.5 * v_loss_max - 0.01 * dist_entropy  # final loss of clipped objective PPO
 
                 self.optimizer.zero_grad()  # take gradient step
                 loss.mean().backward()
