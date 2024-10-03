@@ -77,19 +77,21 @@ class IntrospectiveEnv(MiniGridEnv):
         self.grid.set(4, 6, Door(COLOR_NAMES[0], is_locked=False))
 
         # Place the key
-        key_width = rng.integers(1, width - 1)
-        key_width = key_width + 1 if key_width == 4 else key_width  # noqa: PLR2004
-        key_height = rng.integers(1, height // 2)
-        self.grid.set(key_width, key_height, Key(COLOR_NAMES[4]))
+        if self.locked:
+            key_width = rng.integers(1, width - 1)
+            key_width = key_width + 1 if key_width == 4 else key_width  # noqa: PLR2004
+            key_height = rng.integers(1, height // 2)
+            self.grid.set(key_width, key_height, Key(COLOR_NAMES[4]))
 
         # Place the agent
         agent_width = rng.integers(1, width - 1)
         agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
         agent_height = rng.integers(1, height // 2)
-        while agent_width == key_width and agent_height == key_height:
-            agent_width = rng.integers(1, width - 1)
-            agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
-            agent_height = rng.integers(1, height // 2)
+        if self.locked:
+            while agent_width == key_width and agent_height == key_height:
+                agent_width = rng.integers(1, width - 1)
+                agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
+                agent_height = rng.integers(1, height // 2)
         self.agent_pos = (agent_width, agent_height)
         self.agent_dir = rng.integers(0, 4)
 
