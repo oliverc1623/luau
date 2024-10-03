@@ -170,6 +170,7 @@ class PPO:
         env: gymnasium.Env,
         horizon: int,
         num_envs: int,
+        gae_lambda: float,
     ):
         self.gamma = gamma
         self.eps_clip = eps_clip
@@ -184,6 +185,7 @@ class PPO:
         self.env = env
         self.horizon = horizon
         self.num_envs = num_envs
+        self.gae_lambda = gae_lambda
 
     def select_action(self, state: dict) -> int:
         """Select an action."""
@@ -191,20 +193,38 @@ class PPO:
             action, action_logprob, state_val = self.policy_old(state)
             return action, action_logprob, state_val
 
-    def _calculate_rewards(self) -> torch.tensor:
-        # Monte Carlo estimate of returns for each environment
+    def _calculate_gae(self, next_obs: torch.tensor, next_done: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
+        # Generalized Advantage Estimation (GAE)
+        advantages = torch.zeros(self.horizon, self.num_envs).to(device)
         rewards = torch.zeros(self.horizon, self.num_envs).to(device)
-        discounted_reward = torch.zeros(self.num_envs).to(device)
+        advantages = torch.zeros_like(rewards).to(device)
+        next_done = torch.tensor(next_done).to(device)
+        lastgaelam = 0
+
+        # Get the value of the next observation for bootstrapping
+        with torch.no_grad():
+            next_obs = self.preprocess(next_obs)
+            _, _, next_value = self.policy(next_obs)
+            next_value = next_value.reshape(1, -1)
 
         for step in reversed(range(self.horizon)):
-            is_terminal = self.buffer.is_terminals[step]
-            reward = self.buffer.rewards[step]
-            discounted_reward = reward + (self.gamma * discounted_reward * (1 - is_terminal))
-            rewards[step] = discounted_reward
+            if step == self.horizon - 1:
+                nextvalues = next_value  # Bootstrapping for the last value
+                next_non_terminal = 1.0 - next_done.float()
+            else:
+                nextvalues = self.buffer.state_values[step + 1]
+                next_non_terminal = 1.0 - self.buffer.is_terminals[step + 1]
 
-        # Normalize rewards for stability
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
-        return rewards
+            # Temporal difference error
+            delta = self.buffer.rewards[step] + self.gamma * nextvalues * next_non_terminal - self.buffer.state_values[step]
+            lastgaelam = delta + self.gamma * self.gae_lambda * next_non_terminal * lastgaelam
+            advantages[step] = lastgaelam
+
+        rewards = advantages + self.buffer.state_values
+
+        # Normalize advantages for stability
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-7)
+        return rewards, advantages
 
     def _tensorize_rollout_buffer(self) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         # Extract and prepare the buffer data for optimization
@@ -213,15 +233,15 @@ class PPO:
         old_state_values = torch.flatten(self.buffer.state_values, 0, 1).detach().to(device)
         return old_actions, old_logprobs, old_state_values
 
-    def update(self) -> None:
+    def update(self, next_obs: torch.tensor, next_done: torch.tensor) -> None:
         """Update the policy."""
-        rewards = torch.flatten(self._calculate_rewards(), 0, 1)
+        # Calculate rewards and advantages using GAE
+        rewards, advantages = self._calculate_gae(next_obs, next_done)
+        rewards = torch.flatten(rewards, 0, 1)
+        advantages = torch.flatten(advantages, 0, 1)
 
         # Convert buffer data into flat tensors
         old_actions, old_logprobs, old_state_values = self._tensorize_rollout_buffer()
-
-        # calculate advantages
-        advantages = rewards.detach() - old_state_values.detach()
 
         # Prepare data for minibatch shuffling
         buffer_data = list(

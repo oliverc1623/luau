@@ -68,6 +68,7 @@ class Trainer:
         self.lr_actor = config["lr_actor"]
         self.lr_critic = config["lr_critic"]
         self.num_envs = config["num_envs"]
+        self.gae_lambda = config["gae_lambda"]
         # Set the random seed
         if random_seed is not None:
             self.random_seed = random_seed
@@ -152,6 +153,7 @@ class Trainer:
                 env=env,
                 horizon=self.horizon,
                 num_envs=self.num_envs,
+                gae_lambda=self.gae_lambda,
             )
         elif self.algorithm == "IAAPPO":
             # TODO: test we're overwriting args
@@ -232,7 +234,7 @@ class Trainer:
                         break
 
             # PPO update at the end of the horizon
-            ppo_agent.update()
+            ppo_agent.update(next_obs, next_dones)
 
         log_f.close()
         env.close()
