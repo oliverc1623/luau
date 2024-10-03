@@ -114,7 +114,7 @@ class Trainer:
         """Create the environment."""
 
         def _init() -> IntrospectiveEnv:
-            env = IntrospectiveEnv(size=self.size, locked=self.door_locked, max_steps=self.horizon)
+            env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
             env = gym.wrappers.RecordEpisodeStatistics(env)
             return env
 
