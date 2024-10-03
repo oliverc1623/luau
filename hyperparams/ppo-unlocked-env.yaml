@@ -13,7 +13,7 @@ action_std_decay_rate: 0.05          # linearly decay action_std (action_std = a
 min_action_std: 0.1                  # minimum action_std (stop decay after action_std <= min_action_std)
 action_std_decay_freq: 250000        # action_std decay frequency (in num timesteps)
 image_observation: False             # rgb-images as observations?
-run_num: 2                           # experiment run number for seeding
+run_num: 3                           # experiment run number for seeding
 ################ PPO hyperparameters ################
 max_training_timesteps: 1_000_000      # break training loop if timesteps > max_training_timesteps. 1e6
 horizon: 128                         # max timesteps in one update (episode); in other words, M rollout steps
@@ -25,3 +25,4 @@ lr_actor: 0.0005                     # learning rate for actor
 lr_critic: 0.001                     # learning rate for critic
 random_seed: 47                      # random seed value
 num_envs: 2                          # number of parallel environments; batch size = num_envs * horizon = 256
+gae_lambda: 0.95                     # gae lambda
