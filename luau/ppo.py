@@ -1,5 +1,4 @@
 # %%
-import random
 from pathlib import Path
 
 import gymnasium
@@ -195,96 +194,72 @@ class PPO:
 
     def _calculate_gae(self, next_obs: torch.tensor, next_done: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         # Generalized Advantage Estimation (GAE)
-        advantages = torch.zeros(self.horizon, self.num_envs).to(device)
-        rewards = torch.zeros(self.horizon, self.num_envs).to(device)
-        advantages = torch.zeros_like(rewards).to(device)
-        next_done = torch.tensor(next_done).to(device)
-        lastgaelam = 0
-
-        # Get the value of the next observation for bootstrapping
         with torch.no_grad():
+            advantages = torch.zeros(self.horizon, self.num_envs).to(device)
+            rewards = torch.zeros(self.horizon, self.num_envs).to(device)
+            advantages = torch.zeros_like(rewards).to(device)
+            next_done = torch.tensor(next_done).to(device)
+            lastgaelam = 0
+
+            # Get the value of the next observation for bootstrapping
             next_obs = self.preprocess(next_obs)
             _, _, next_value = self.policy(next_obs)
 
-        for step in reversed(range(self.horizon)):
-            if step == self.horizon - 1:
-                next_non_terminal = 1.0 - next_done.float()
-                nextvalues = next_value  # Bootstrapping for the last value
-            else:
-                next_non_terminal = 1.0 - self.buffer.is_terminals[step + 1]
-                nextvalues = self.buffer.state_values[step + 1]
+            for step in reversed(range(self.horizon)):
+                if step == self.horizon - 1:
+                    next_non_terminal = 1.0 - next_done.float()
+                    nextvalues = next_value  # Bootstrapping for the last value
+                else:
+                    next_non_terminal = 1.0 - self.buffer.is_terminals[step + 1]
+                    nextvalues = self.buffer.state_values[step + 1]
 
-            # Temporal difference error
-            delta = self.buffer.rewards[step] + self.gamma * nextvalues * next_non_terminal - self.buffer.state_values[step]
-            advantages[step] = lastgaelam = delta + self.gamma * self.gae_lambda * next_non_terminal * lastgaelam
+                # Temporal difference error
+                delta = self.buffer.rewards[step] + self.gamma * nextvalues * next_non_terminal - self.buffer.state_values[step]
+                advantages[step] = lastgaelam = delta + self.gamma * self.gae_lambda * next_non_terminal * lastgaelam
 
-        rewards = advantages + self.buffer.state_values
-        return rewards, advantages
-
-    def _tensorize_rollout_buffer(self) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
-        # Extract and prepare the buffer data for optimization
-        old_actions = torch.flatten(self.buffer.actions, 0, 1).detach().to(device)
-        old_logprobs = torch.flatten(self.buffer.logprobs, 0, 1).detach().to(device)
-        old_state_values = torch.flatten(self.buffer.state_values, 0, 1).detach().to(device)
-        return old_actions, old_logprobs, old_state_values
+            rewards = advantages + self.buffer.state_values
+            return rewards, advantages
 
     def update(self, next_obs: torch.tensor, next_done: torch.tensor) -> None:
         """Update the policy."""
         # Calculate rewards and advantages using GAE
         rewards, advantages = self._calculate_gae(next_obs, next_done)
-        rewards = torch.flatten(rewards, 0, 1)
-        advantages = torch.flatten(advantages, 0, 1)
-
-        # Convert buffer data into flat tensors
-        old_actions, old_logprobs, old_state_values = self._tensorize_rollout_buffer()
 
         # Prepare data for minibatch shuffling
-        buffer_data = list(
-            zip(
-                torch.flatten(self.buffer.images, 0, 1),  # flatten images for each environment
-                torch.flatten(self.buffer.directions, 0, 1),  # flatten directions
-                old_actions,
-                old_logprobs,
-                old_state_values,
-                rewards,
-                advantages,
-                strict=False,
-            ),
-        )
+        b_rewards = torch.flatten(rewards, 0, 1)
+        b_advantages = torch.flatten(advantages, 0, 1)
+        b_actions = torch.flatten(self.buffer.actions, 0, 1)
+        b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1)
+        b_images = torch.flatten(self.buffer.images, 0, 1)
+        b_directions = torch.flatten(self.buffer.directions, 0, 1)
 
+        batch_size = self.num_envs * self.horizon
+        b_inds = np.arange(batch_size)
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
             # Shuffle the data for each epoch
-            random.shuffle(buffer_data)
+            rng = np.random.default_rng()
+            rng.shuffle(b_inds)
 
             # Split data into minibatches
-            for i in range(0, len(buffer_data), self.minibatch_size):
-                minibatch = buffer_data[i : i + self.minibatch_size]
+            for i in range(0, batch_size, self.minibatch_size):
+                end = i + self.minibatch_size
+                mb_inds = b_inds[i:end]
 
-                # Unzip the minibatch
-                states_img_mb, states_dir_mb, actions_mb, logprobs_mb, values_mb, rewards_mb, advantages_mb = zip(*minibatch, strict=False)
-
-                # Convert minibatch data back to tensors
-                images_mb = torch.stack(states_img_mb).to(device)
-                directions_mb = torch.stack(states_dir_mb).to(device)
-                actions_mb = torch.stack(actions_mb).to(device)
-                logprobs_mb = torch.stack(logprobs_mb).to(device)
-                values_mb = torch.stack(values_mb).to(device)
-                rewards_mb = torch.stack(rewards_mb).to(device)
-                advantages_mb = torch.stack(advantages_mb).to(device)
-                advantages_mb = (advantages_mb - advantages_mb.mean()) / (advantages_mb.std() + 1e-8)
-                states_mb = {"image": images_mb, "direction": directions_mb}
-
+                states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 # Evaluating old actions and values
-                logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, actions_mb)
-                state_values = torch.squeeze(state_values)  # match state_values tensor dimensions with rewards tensor
+                logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
                 # Finding the ratio (pi_theta / pi_theta__old)
-                ratios = torch.exp(logprobs - logprobs_mb.detach())  # Finding the ratio (pi_theta / pi_theta__old)
-                surr1 = advantages_mb * ratios
-                surr2 = advantages_mb * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                ratios = torch.exp(logprobs - b_logprobs[mb_inds])  # Finding the ratio (pi_theta / pi_theta__old)
+
+                mb_advantages = b_advantages[mb_inds]
+                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                surr1 = mb_advantages * ratios
+                surr2 = mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
 
                 # value function loss
+                rewards_mb = b_rewards[mb_inds]
                 vf_loss = self.MseLoss(state_values, rewards_mb)
 
                 # final loss of clipped objective PPO
