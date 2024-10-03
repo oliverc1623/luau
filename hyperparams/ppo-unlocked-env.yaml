@@ -25,4 +25,4 @@ lr_actor: 0.0005                     # learning rate for actor
 lr_critic: 0.001                     # learning rate for critic
 random_seed: 47                      # random seed value
 num_envs: 2                          # number of parallel environments; batch size = num_envs * horizon = 256
-gae_lambda: 0.95                     # gae lambda
+gae_lambda: 0.9                      # gae lambda
