@@ -211,6 +211,7 @@ class Trainer:
 
                 # Step the environment and store the rewards
                 next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
+                next_dones = np.array([a or b for a, b in zip(next_dones, truncated, strict=False)])
                 ppo_agent.buffer.rewards[step] = torch.from_numpy(rewards)
 
                 time_step += self.num_envs
