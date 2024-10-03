@@ -205,25 +205,20 @@ class PPO:
         with torch.no_grad():
             next_obs = self.preprocess(next_obs)
             _, _, next_value = self.policy(next_obs)
-            next_value = next_value.reshape(1, -1)
 
         for step in reversed(range(self.horizon)):
             if step == self.horizon - 1:
-                nextvalues = next_value  # Bootstrapping for the last value
                 next_non_terminal = 1.0 - next_done.float()
+                nextvalues = next_value  # Bootstrapping for the last value
             else:
-                nextvalues = self.buffer.state_values[step + 1]
                 next_non_terminal = 1.0 - self.buffer.is_terminals[step + 1]
+                nextvalues = self.buffer.state_values[step + 1]
 
             # Temporal difference error
             delta = self.buffer.rewards[step] + self.gamma * nextvalues * next_non_terminal - self.buffer.state_values[step]
-            lastgaelam = delta + self.gamma * self.gae_lambda * next_non_terminal * lastgaelam
-            advantages[step] = lastgaelam
+            advantages[step] = lastgaelam = delta + self.gamma * self.gae_lambda * next_non_terminal * lastgaelam
 
         rewards = advantages + self.buffer.state_values
-
-        # Normalize advantages for stability
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-7)
         return rewards, advantages
 
     def _tensorize_rollout_buffer(self) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
@@ -277,7 +272,7 @@ class PPO:
                 values_mb = torch.stack(values_mb).to(device)
                 rewards_mb = torch.stack(rewards_mb).to(device)
                 advantages_mb = torch.stack(advantages_mb).to(device)
-
+                advantages_mb = (advantages_mb - advantages_mb.mean()) / (advantages_mb.std() + 1e-8)
                 states_mb = {"image": images_mb, "direction": directions_mb}
 
                 # Evaluating old actions and values
@@ -286,10 +281,11 @@ class PPO:
 
                 # Finding the ratio (pi_theta / pi_theta__old)
                 ratios = torch.exp(logprobs - logprobs_mb.detach())  # Finding the ratio (pi_theta / pi_theta__old)
+                surr1 = advantages_mb * ratios
+                surr2 = advantages_mb * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
 
-                surr1 = ratios * advantages_mb
-                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages_mb
-                vf_loss = self.MseLoss(state_values, rewards_mb)  # value function loss
+                # value function loss
+                vf_loss = self.MseLoss(state_values, rewards_mb)
 
                 # final loss of clipped objective PPO
                 loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy  # final loss of clipped objective PPO
