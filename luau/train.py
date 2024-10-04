@@ -179,7 +179,7 @@ class Trainer:
 
         # logging file
         log_f = Path.open(log_file, "w+")
-        log_f.write("episode,timestep,reward\n")
+        log_f.write("episode,timestep,reward,episode_len\n")
         # logging variables
         time_step = 0
         i_episode = 0
@@ -221,16 +221,19 @@ class Trainer:
                         if e is not None:
                             episodic_reward = e["episode"]["r"][0]
                             episodic_length = e["episode"]["l"][0]
-                            writer.add_scalar("charts/episodic_return", episodic_reward, time_step)
-                            writer.add_scalar("charts/episodic_length", episodic_length, time_step)
+                            writer.add_scalar("reward", episodic_reward, time_step)
+                            writer.add_scalar("episodic_length", episodic_length, time_step)
+                            writer.add_scalar("episodic reward", episodic_reward, update)
                             # Print average reward
                             logging.info(
-                                "i_episode: %s \t Timestep: %s \t Average Reward: %s \t Episodic length: %s",
-                                i_episode,
+                                "i_episode: %s, Timestep: %s, Average Reward: %s, Episodic length: %s",
+                                update,
                                 time_step,
                                 episodic_reward,
                                 episodic_length,
                             )
+                            log_f.write(f"{update},{time_step},{episodic_reward},{episodic_length}\n")
+                            log_f.flush()
                             i_episode += 1
                         break
 
