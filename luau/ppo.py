@@ -273,9 +273,9 @@ class PPO:
                 self.optimizer.step()
 
                 # log debug variables
-                writer.add_scalar("debugging/policy_loss", pg_loss, rollout_step)
-                writer.add_scalar("debugging/value_loss", v_loss_unclipped, rollout_step)
-                writer.add_scalar("debugging/entropy_loss", dist_entropy, rollout_step)
+                writer.add_scalar("debugging/policy_loss", -torch.min(surr1, surr2).mean(), rollout_step)
+                writer.add_scalar("debugging/value_loss", 0.5 * v_loss_unclipped.mean(), rollout_step)
+                writer.add_scalar("debugging/entropy_loss", 0.01 * dist_entropy.mean(), rollout_step)
 
         self.policy_old.load_state_dict(self.policy.state_dict())  # Copy new weights into old policy
         self.buffer.clear()  # clear buffer

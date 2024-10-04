@@ -222,8 +222,8 @@ class Trainer:
                             episodic_reward = e["episode"]["r"][0]
                             episodic_length = e["episode"]["l"][0]
                             writer.add_scalar("charts/Episodic Reward", episodic_reward, time_step)
-                            writer.add_scalar("charts/Episodic length", episodic_length, time_step)
-                            writer.add_scalar("charts/Rollout reward", episodic_reward, update)
+                            writer.add_scalar("charts/Episodic Length", episodic_length, time_step)
+                            writer.add_scalar("charts/Rollout Reward", episodic_reward, update)
                             # Print average reward
                             logging.info(
                                 "i_episode: %s, Timestep: %s, Average Reward: %s, Episodic length: %s",
