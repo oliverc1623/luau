@@ -257,19 +257,16 @@ class PPO:
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
                 surr1 = mb_advantages * ratios
                 surr2 = mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
-                pg_loss = -torch.min(surr1, surr2).mean()
 
                 # value function loss
                 v_loss_unclipped = self.MseLoss(state_values, b_rewards[mb_inds])
                 v_loss_unclipped = 0.5 * v_loss_unclipped.mean()
 
-                # entropy loss
-                dist_entropy = 0.01 * dist_entropy.mean()
                 # final loss of clipped objective PPO
-                loss = pg_loss + v_loss_unclipped - dist_entropy  # final loss of clipped objective PPO
+                loss = -torch.min(surr1, surr2) + 0.5 * v_loss_unclipped - 0.01 * dist_entropy  # final loss of clipped objective PPO
 
                 self.optimizer.zero_grad()  # take gradient step
-                loss.backward()
+                loss.mean().backward()
                 self.optimizer.step()
 
                 # log debug variables
