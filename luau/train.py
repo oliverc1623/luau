@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
-from torch.utils.tensorboard import SummaryWriter  # Added for TensorBoard
+from torch.utils.tensorboard import SummaryWriter
 
 from luau.iaa_env import IntrospectiveEnv
 from luau.ppo import IAAPPO, PPO
@@ -221,9 +221,9 @@ class Trainer:
                         if e is not None:
                             episodic_reward = e["episode"]["r"][0]
                             episodic_length = e["episode"]["l"][0]
-                            writer.add_scalar("reward", episodic_reward, time_step)
-                            writer.add_scalar("episodic_length", episodic_length, time_step)
-                            writer.add_scalar("episodic reward", episodic_reward, update)
+                            writer.add_scalar("charts/Episodic Reward", episodic_reward, time_step)
+                            writer.add_scalar("charts/Episodic length", episodic_length, time_step)
+                            writer.add_scalar("charts/Rollout reward", episodic_reward, update)
                             # Print average reward
                             logging.info(
                                 "i_episode: %s, Timestep: %s, Average Reward: %s, Episodic length: %s",
@@ -238,7 +238,7 @@ class Trainer:
                         break
 
             # PPO update at the end of the horizon
-            ppo_agent.update(next_obs, next_dones)
+            ppo_agent.update(next_obs, next_dones, writer, time_step)
 
         log_f.close()
         env.close()

@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as f
 from torch import nn
 from torch.distributions import Bernoulli, Categorical
+from torch.utils.tensorboard import SummaryWriter
 
 
 RGB_CHANNEL = 3
@@ -220,7 +221,7 @@ class PPO:
             rewards = advantages + self.buffer.state_values
             return rewards, advantages
 
-    def update(self, next_obs: torch.tensor, next_done: torch.tensor) -> None:
+    def update(self, next_obs: torch.tensor, next_done: torch.tensor, writer: SummaryWriter, rollout_step: int) -> None:
         """Update the policy."""
         # Calculate rewards and advantages using GAE
         rewards, advantages = self._calculate_gae(next_obs, next_done)
@@ -250,23 +251,31 @@ class PPO:
                 # Evaluating old actions and values
                 logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
-                # Finding the ratio (pi_theta / pi_theta__old)
+                # policy gradient
                 ratios = torch.exp(logprobs - b_logprobs[mb_inds])  # Finding the ratio (pi_theta / pi_theta__old)
-
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
                 surr1 = mb_advantages * ratios
                 surr2 = mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                pg_loss = -torch.min(surr1, surr2).mean()
 
                 # value function loss
                 v_loss_unclipped = self.MseLoss(state_values, b_rewards[mb_inds])
+                v_loss_unclipped = 0.5 * v_loss_unclipped.mean()
 
+                # entropy loss
+                dist_entropy = 0.01 * dist_entropy.mean()
                 # final loss of clipped objective PPO
-                loss = -torch.min(surr1, surr2) + 0.5 * v_loss_unclipped - 0.01 * dist_entropy  # final loss of clipped objective PPO
+                loss = pg_loss + v_loss_unclipped - dist_entropy  # final loss of clipped objective PPO
 
                 self.optimizer.zero_grad()  # take gradient step
-                loss.mean().backward()
+                loss.backward()
                 self.optimizer.step()
+
+                # log debug variables
+                writer.add_scalar("debugging/policy_loss", pg_loss, rollout_step)
+                writer.add_scalar("debugging/value_loss", v_loss_unclipped, rollout_step)
+                writer.add_scalar("debugging/entropy_loss", dist_entropy, rollout_step)
 
         self.policy_old.load_state_dict(self.policy.state_dict())  # Copy new weights into old policy
         self.buffer.clear()  # clear buffer
