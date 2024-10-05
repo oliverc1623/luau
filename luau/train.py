@@ -122,7 +122,7 @@ class Trainer:
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
 
-        envs = [self._make_env(self.random_seed + i) for i in range(self.num_envs)]
+        envs = [self._make_env() for _ in range(self.num_envs)]
         env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
         logging.info("Gridworld size: %s", envs[0]().max_steps)
 
