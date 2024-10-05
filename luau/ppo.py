@@ -171,6 +171,7 @@ class PPO:
         horizon: int,
         num_envs: int,
         gae_lambda: float,
+        rng: np.random.Generator,
     ):
         self.gamma = gamma
         self.eps_clip = eps_clip
@@ -186,6 +187,7 @@ class PPO:
         self.horizon = horizon
         self.num_envs = num_envs
         self.gae_lambda = gae_lambda
+        self.rng = rng
 
     def select_action(self, state: dict) -> int:
         """Select an action."""
@@ -239,8 +241,7 @@ class PPO:
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
             # Shuffle the data for each epoch
-            rng = np.random.default_rng()
-            rng.shuffle(b_inds)
+            self.rng.shuffle(b_inds)
 
             # Split data into minibatches
             for i in range(0, batch_size, self.minibatch_size):

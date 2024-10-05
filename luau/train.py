@@ -1,6 +1,7 @@
 # %%
 import argparse
 import logging
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -70,10 +71,7 @@ class Trainer:
         self.num_envs = config["num_envs"]
         self.gae_lambda = config["gae_lambda"]
         # Set the random seed
-        if random_seed is not None:
-            self.random_seed = random_seed
-        else:
-            self.random_seed = config["random_seed"]
+        self.random_seed = random_seed
         torch.manual_seed(self.random_seed)
         self.rng = np.random.default_rng(self.random_seed)
 
@@ -110,12 +108,15 @@ class Trainer:
             return ppo_agent.select_action(state, time_step)
         return ppo_agent.select_action(state)
 
-    def _make_env(self) -> IntrospectiveEnv:
+    def _make_env(self, seed: int) -> IntrospectiveEnv:
         """Create the environment."""
 
         def _init() -> IntrospectiveEnv:
             env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
             env = gym.wrappers.RecordEpisodeStatistics(env)
+            env.reset(seed=seed)
+            env.action_space.seed(seed)
+            env.observation_space.seed(seed)
             return env
 
         return _init
@@ -124,7 +125,11 @@ class Trainer:
         """Train the agent."""
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
-        envs = [self._make_env() for _ in range(self.num_envs)]
+
+        # TRY NOT TO MODIFY: seeding
+        random.seed(self.random_seed)
+        torch.manual_seed(self.random_seed)
+        envs = [self._make_env(self.random_seed + i) for i in range(self.num_envs)]
         env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
         logging.info("Gridworld size: %s", envs[0]().max_steps)
 
@@ -154,6 +159,7 @@ class Trainer:
                 horizon=self.horizon,
                 num_envs=self.num_envs,
                 gae_lambda=self.gae_lambda,
+                rng=self.rng,
             )
         elif self.algorithm == "IAAPPO":
             # TODO: test we're overwriting args
@@ -258,9 +264,8 @@ class Trainer:
         logging.info("Training the agent in the %s environment. Door: %s", self.env_name, self.door_locked)
         logging.info("max training timesteps: %s", self.max_training_timesteps)
         logging.info("max timesteps per episode (M/horizon/rollout): %s", self.horizon)
+        logging.info("seed: %s", self.random_seed)
         logging.info("model saving frequency: %s timesteps", self.save_model_freq)
-        logging.info("log frequency: %s timesteps", self.log_freq)
-        logging.info("printing average reward over episodes in last: %s timesteps", self.print_freq)
         logging.info("--------------------------------------------------------------------------------------------")
         logging.info("Initializing a discrete action space policy")
         logging.info("--------------------------------------------------------------------------------------------")
@@ -270,7 +275,6 @@ class Trainer:
         logging.info("discount factor (gamma): %s", self.gamma)
         logging.info("--------------------------------------------------------------------------------------------")
         logging.info("optimizer learning rate actor: %s", self.lr_actor)
-        logging.info("optimizer learning rate critic: %s", self.lr_critic)
         logging.info("============================================================================================")
 
 
