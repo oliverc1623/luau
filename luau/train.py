@@ -1,7 +1,6 @@
 # %%
 import argparse
 import logging
-import random
 from datetime import datetime
 from pathlib import Path
 
@@ -108,15 +107,12 @@ class Trainer:
             return ppo_agent.select_action(state, time_step)
         return ppo_agent.select_action(state)
 
-    def _make_env(self, seed: int) -> IntrospectiveEnv:
+    def _make_env(self) -> IntrospectiveEnv:
         """Create the environment."""
 
         def _init() -> IntrospectiveEnv:
             env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
             env = gym.wrappers.RecordEpisodeStatistics(env)
-            env.reset(seed=seed)
-            env.action_space.seed(seed)
-            env.observation_space.seed(seed)
             return env
 
         return _init
@@ -126,9 +122,6 @@ class Trainer:
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
 
-        # TRY NOT TO MODIFY: seeding
-        random.seed(self.random_seed)
-        torch.manual_seed(self.random_seed)
         envs = [self._make_env(self.random_seed + i) for i in range(self.num_envs)]
         env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
         logging.info("Gridworld size: %s", envs[0]().max_steps)
@@ -159,7 +152,6 @@ class Trainer:
                 horizon=self.horizon,
                 num_envs=self.num_envs,
                 gae_lambda=self.gae_lambda,
-                rng=self.rng,
             )
         elif self.algorithm == "IAAPPO":
             # TODO: test we're overwriting args

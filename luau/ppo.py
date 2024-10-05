@@ -171,7 +171,6 @@ class PPO:
         horizon: int,
         num_envs: int,
         gae_lambda: float,
-        rng: np.random.Generator,
     ):
         self.gamma = gamma
         self.eps_clip = eps_clip
@@ -187,7 +186,6 @@ class PPO:
         self.horizon = horizon
         self.num_envs = num_envs
         self.gae_lambda = gae_lambda
-        self.rng = rng
 
     def select_action(self, state: dict) -> int:
         """Select an action."""
@@ -238,10 +236,12 @@ class PPO:
 
         batch_size = self.num_envs * self.horizon
         b_inds = np.arange(batch_size)
+        clipfracs = []
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
             # Shuffle the data for each epoch
-            self.rng.shuffle(b_inds)
+            rng = np.random.default_rng()
+            rng.shuffle(b_inds)
 
             # Split data into minibatches
             for i in range(0, batch_size, self.minibatch_size):
@@ -254,6 +254,13 @@ class PPO:
 
                 # policy gradient
                 ratios = torch.exp(logprobs - b_logprobs[mb_inds])  # Finding the ratio (pi_theta / pi_theta__old)
+
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_approx_kl = (-ratios).mean()
+                    approx_kl = ((ratios - 1) - ratios).mean()
+                    clipfracs += [((ratios - 1.0).abs() > self.eps_clip).float().mean().item()]
+
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
                 surr1 = mb_advantages * ratios
@@ -274,6 +281,9 @@ class PPO:
                 writer.add_scalar("debugging/policy_loss", -torch.min(surr1, surr2).mean(), rollout_step)
                 writer.add_scalar("debugging/value_loss", 0.5 * v_loss_unclipped.mean(), rollout_step)
                 writer.add_scalar("debugging/entropy_loss", 0.01 * dist_entropy.mean(), rollout_step)
+                writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), rollout_step)
+                writer.add_scalar("debugging/approx_kl", approx_kl.item(), rollout_step)
+                writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), rollout_step)
 
         self.policy_old.load_state_dict(self.policy.state_dict())  # Copy new weights into old policy
         self.buffer.clear()  # clear buffer
