@@ -202,10 +202,12 @@ class Trainer:
                 ppo_agent.buffer.is_terminals[step] = torch.from_numpy(done)
 
                 # Select actions and store them in the PPO agent's buffer
-                actions, action_logprobs, state_vals = ppo_agent.select_action(obs)  # get action
+                """Select an action."""
+                with torch.no_grad():
+                    actions, action_logprobs, state_vals = ppo_agent.policy(obs)
+                    ppo_agent.buffer.state_values[step] = state_vals
                 ppo_agent.buffer.actions[step] = actions
                 ppo_agent.buffer.logprobs[step] = action_logprobs
-                ppo_agent.buffer.state_values[step] = state_vals
 
                 # Step the environment and store the rewards
                 next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())

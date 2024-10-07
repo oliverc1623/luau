@@ -11,6 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 RGB_CHANNEL = 3
+
 ################################## set device ##################################
 print("============================================================================================")
 # set device to cpu, mps, or cuda
@@ -106,8 +107,7 @@ class ActorCritic(nn.Module):
         direction = direction.view(-1, 1)
         x = torch.cat((x, direction), 1)
         x = f.relu(self.actor_fc1(x))
-        action_probs = f.softmax(self.actor_fc2(x), dim=-1)
-        return action_probs
+        return self.actor_fc2(x)
 
     def _critic_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the critic network."""
@@ -127,9 +127,9 @@ class ActorCritic(nn.Module):
         image = state["image"]
 
         # actor
-        action_probs = self._actor_forward(image, direction)
-        action_probs = action_probs.squeeze(0)  # Remove batch dimension
-        dist = Categorical(action_probs)
+        logits = self._actor_forward(image, direction)
+        logits = logits.squeeze(0)  # Remove batch dimension
+        dist = Categorical(logits=logits)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
 
@@ -144,8 +144,8 @@ class ActorCritic(nn.Module):
         directions = states["direction"]
 
         # actor
-        action_probs = self._actor_forward(images, directions)
-        dist = Categorical(action_probs)
+        logits = self._actor_forward(images, directions)
+        dist = Categorical(logits=logits)
         action_logprobs = dist.log_prob(actions)
         dist_entropy = dist.entropy()
 
@@ -179,19 +179,13 @@ class PPO:
         self.buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
         self.policy = ActorCritic(state_dim, action_dim).to(device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
-        self.policy_old = ActorCritic(state_dim, action_dim).to(device)
-        self.policy_old.load_state_dict(self.policy.state_dict())
         self.MseLoss = nn.MSELoss()
         self.env = env
         self.horizon = horizon
         self.num_envs = num_envs
         self.gae_lambda = gae_lambda
 
-    def select_action(self, state: dict) -> int:
-        """Select an action."""
-        with torch.no_grad():
-            action, action_logprob, state_val = self.policy_old(state)
-            return action, action_logprob, state_val
+        torch.backends.cudnn.deterministic = True
 
     def _calculate_gae(self, next_obs: torch.tensor, next_done: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         # Generalized Advantage Estimation (GAE)
@@ -233,12 +227,14 @@ class PPO:
         b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1)
         b_images = torch.flatten(self.buffer.images, 0, 1)
         b_directions = torch.flatten(self.buffer.directions, 0, 1)
+        b_state_values = torch.flatten(self.buffer.state_values, 0, 1)
 
         batch_size = self.num_envs * self.horizon
         b_inds = np.arange(batch_size)
         clipfracs = []
+
         # Optimize policy for K epochs
-        for _ in range(self.k_epochs):
+        for k in range(self.k_epochs):
             # Shuffle the data for each epoch
             rng = np.random.default_rng()
             rng.shuffle(b_inds)
@@ -253,12 +249,17 @@ class PPO:
                 logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
                 # policy gradient
-                ratios = torch.exp(logprobs - b_logprobs[mb_inds])  # Finding the ratio (pi_theta / pi_theta__old)
+                log_ratio = logprobs - b_logprobs[mb_inds]
+                ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
+
+                if k == 0 and i == 0:
+                    # check if the ratio is close to 1 in the first epoch of the first minibatch
+                    assert torch.allclose(ratios, torch.ones_like(ratios))
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    old_approx_kl = (-ratios).mean()
-                    approx_kl = ((ratios - 1) - ratios).mean()
+                    old_approx_kl = (-log_ratio).mean()
+                    approx_kl = ((ratios - 1) - log_ratio).mean()
                     clipfracs += [((ratios - 1.0).abs() > self.eps_clip).float().mean().item()]
 
                 mb_advantages = b_advantages[mb_inds]
@@ -266,36 +267,36 @@ class PPO:
                 surr1 = mb_advantages * ratios
                 surr2 = mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
 
-                # value function loss
-                v_loss_unclipped = self.MseLoss(state_values, b_rewards[mb_inds])
-                v_loss_unclipped = 0.5 * v_loss_unclipped.mean()
+                # value function loss + clipping
+                v_loss_unclipped = 0.5 * self.MseLoss(state_values, b_rewards[mb_inds])
+                v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
+                v_loss_clipped = 0.5 * self.MseLoss(v_clipped, b_rewards[mb_inds])
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
 
                 # final loss of clipped objective PPO
-                loss = -torch.min(surr1, surr2) + 0.5 * v_loss_unclipped - 0.01 * dist_entropy  # final loss of clipped objective PPO
+                loss = -torch.min(surr1, surr2) + 0.5 * v_loss_max - 0.01 * dist_entropy  # final loss of clipped objective PPO
 
                 self.optimizer.zero_grad()  # take gradient step
                 loss.mean().backward()
                 self.optimizer.step()
 
-                # log debug variables
-                with torch.no_grad():
-                    writer.add_scalar("debugging/policy_loss", -torch.min(surr1, surr2).mean(), rollout_step)
-                    writer.add_scalar("debugging/value_loss", 0.5 * v_loss_unclipped.mean(), rollout_step)
-                    writer.add_scalar("debugging/entropy_loss", 0.01 * dist_entropy.mean(), rollout_step)
-                    writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), rollout_step)
-                    writer.add_scalar("debugging/approx_kl", approx_kl.item(), rollout_step)
-                    writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), rollout_step)
+        # log debug variables
+        with torch.no_grad():
+            writer.add_scalar("debugging/policy_loss", -torch.min(surr1, surr2).mean(), rollout_step)
+            writer.add_scalar("debugging/value_loss", v_loss_max, rollout_step)
+            writer.add_scalar("debugging/entropy_loss", 0.01 * dist_entropy.mean(), rollout_step)
+            writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), rollout_step)
+            writer.add_scalar("debugging/approx_kl", approx_kl.item(), rollout_step)
+            writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), rollout_step)
 
-        self.policy_old.load_state_dict(self.policy.state_dict())  # Copy new weights into old policy
         self.buffer.clear()  # clear buffer
 
     def save(self, checkpoint_path: Path) -> None:
         """Save the model."""
-        torch.save(self.policy_old.state_dict(), checkpoint_path)
+        torch.save(self.policy.state_dict(), checkpoint_path)
 
     def load(self, checkpoint_path: Path) -> None:
         """Load the model."""
-        self.policy_old.load_state_dict(torch.load(checkpoint_path))
         self.policy.load_state_dict(torch.load(checkpoint_path))
 
     def preprocess(self, x: dict) -> torch.tensor:
