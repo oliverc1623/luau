@@ -270,7 +270,7 @@ class PPO:
 
                 # value function loss
                 v_loss_unclipped = self.MseLoss(state_values, b_rewards[mb_inds])
-                v_loss_unclipped = 0.5 * v_loss_unclipped.mean()
+                v_loss_unclipped = 0.5 * v_loss_unclipped
 
                 # final loss of clipped objective PPO
                 loss = -torch.min(surr1, surr2) + 0.5 * v_loss_unclipped - 0.01 * dist_entropy  # final loss of clipped objective PPO
