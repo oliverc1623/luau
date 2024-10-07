@@ -11,6 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 RGB_CHANNEL = 3
+
 ################################## set device ##################################
 print("============================================================================================")
 # set device to cpu, mps, or cuda
@@ -253,12 +254,13 @@ class PPO:
                 logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
                 # policy gradient
-                ratios = torch.exp(logprobs - b_logprobs[mb_inds])  # Finding the ratio (pi_theta / pi_theta__old)
+                log_ratio = logprobs - b_logprobs[mb_inds]
+                ratios = torch.exp(log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    old_approx_kl = (-ratios).mean()
-                    approx_kl = ((ratios - 1) - ratios).mean()
+                    old_approx_kl = (-log_ratio).mean()
+                    approx_kl = ((ratios - 1) - log_ratio).mean()
                     clipfracs += [((ratios - 1.0).abs() > self.eps_clip).float().mean().item()]
 
                 mb_advantages = b_advantages[mb_inds]
