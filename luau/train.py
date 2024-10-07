@@ -152,6 +152,7 @@ class Trainer:
                 horizon=self.horizon,
                 num_envs=self.num_envs,
                 gae_lambda=self.gae_lambda,
+                seed=self.random_seed,
             )
         elif self.algorithm == "IAAPPO":
             # TODO: test we're overwriting args

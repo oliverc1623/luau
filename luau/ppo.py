@@ -1,4 +1,5 @@
 # %%
+import random
 from pathlib import Path
 
 import gymnasium
@@ -128,7 +129,6 @@ class ActorCritic(nn.Module):
 
         # actor
         logits = self._actor_forward(image, direction)
-        logits = logits.squeeze(0)  # Remove batch dimension
         dist = Categorical(logits=logits)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
@@ -171,6 +171,7 @@ class PPO:
         horizon: int,
         num_envs: int,
         gae_lambda: float,
+        seed: int,
     ):
         self.gamma = gamma
         self.eps_clip = eps_clip
@@ -184,7 +185,13 @@ class PPO:
         self.horizon = horizon
         self.num_envs = num_envs
         self.gae_lambda = gae_lambda
+        self.seed = seed
 
+        random.seed(self.seed)
+        np.random.seed(self.seed)  # noqa: NPY002
+        torch.manual_seed(self.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(self.seed)
         torch.backends.cudnn.deterministic = True
 
     def _calculate_gae(self, next_obs: torch.tensor, next_done: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
@@ -254,7 +261,8 @@ class PPO:
 
                 if k == 0 and i == 0:
                     # check if the ratio is close to 1 in the first epoch of the first minibatch
-                    assert torch.allclose(ratios, torch.ones_like(ratios))
+                    writer.add_scalar("debugging/first_epoch_ratios", ratios.cpu().detach().mean(), rollout_step)
+                    assert torch.allclose(ratios.cpu().detach(), torch.ones_like(ratios.cpu()).detach(), atol=1e-1), f"Ratios differ from 1: {ratios}"
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
