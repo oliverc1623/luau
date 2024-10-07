@@ -285,7 +285,7 @@ class PPO:
                 # log debug variables
                 with torch.no_grad():
                     writer.add_scalar("debugging/policy_loss", -torch.min(surr1, surr2).mean(), rollout_step)
-                    writer.add_scalar("debugging/value_loss", 0.5 * v_loss_unclipped.mean(), rollout_step)
+                    writer.add_scalar("debugging/value_loss", v_loss_max, rollout_step)
                     writer.add_scalar("debugging/entropy_loss", 0.01 * dist_entropy.mean(), rollout_step)
                     writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), rollout_step)
                     writer.add_scalar("debugging/approx_kl", approx_kl.item(), rollout_step)
