@@ -5,15 +5,10 @@ import random
 from datetime import datetime
 from pathlib import Path
 
-import gymnasium as gym
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
 from torch.utils.tensorboard import SummaryWriter
-
-from luau.iaa_env import IntrospectiveEnv
-from luau.ppo import IAAPPO, PPO
 
 
 # Configure logging
@@ -27,7 +22,7 @@ root_path = Path(__file__).resolve().parent.parent
 def set_random_seeds(seed: int) -> None:
     """Set random seeds for reproducibility."""
     random.seed(seed)
-    _ = np.random.default_rng(seed)
+    np.random.seed(seed)  # noqa: NPY002
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
@@ -70,6 +65,12 @@ base_random_seed = base_config.get("random_seed", 0)
 
 # Set the initial random seed
 set_random_seeds(base_random_seed)
+
+import gymnasium as gym  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+
+from luau.iaa_env import IntrospectiveEnv  # noqa: E402
+from luau.ppo import IAAPPO, PPO  # noqa: E402
 
 
 # %%
@@ -154,15 +155,15 @@ class Trainer:
             return ppo_agent.select_action(state, time_step)
         return ppo_agent.select_action(state)
 
-    def _make_env(self) -> IntrospectiveEnv:
+    def _make_env(self, seed: int) -> IntrospectiveEnv:
         """Create the environment."""
 
         def _init() -> IntrospectiveEnv:
             env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
             env = gym.wrappers.RecordEpisodeStatistics(env)
-            env.reset(seed=self.random_seed)
-            env.action_space.seed(self.random_seed)
-            env.observation_space.seed(self.random_seed)
+            env.reset(seed=seed)
+            env.action_space.seed(seed)
+            env.observation_space.seed(seed)
             return env
 
         return _init
@@ -172,7 +173,7 @@ class Trainer:
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
 
-        envs = [self._make_env() for _ in range(self.num_envs)]
+        envs = [self._make_env(self.random_seed + i) for i in range(self.num_envs)]
         env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
         logging.info("Gridworld size: %s", envs[0]().max_steps)
 
@@ -202,7 +203,6 @@ class Trainer:
                 horizon=self.horizon,
                 num_envs=self.num_envs,
                 gae_lambda=self.gae_lambda,
-                seed=self.random_seed,
             )
         elif self.algorithm == "IAAPPO":
             teacher_ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
@@ -246,6 +246,9 @@ class Trainer:
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 obs = ppo_agent.preprocess(next_obs)
+                print(obs["image"])  # Env 1 action space
+                print(obs["direction"])  # Env 1 action space
+
                 done = next_dones
                 ppo_agent.buffer.images[step] = obs["image"]
                 ppo_agent.buffer.directions[step] = obs["direction"]

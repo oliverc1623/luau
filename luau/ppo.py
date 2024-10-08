@@ -1,5 +1,4 @@
 # %%
-import random
 from pathlib import Path
 
 import gymnasium
@@ -171,18 +170,7 @@ class PPO:
         horizon: int,
         num_envs: int,
         gae_lambda: float,
-        seed: int,
     ):
-        self.seed = seed
-        random.seed(seed)
-        self.rng = np.random.default_rng(seed)
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-        # Ensure reproducibility in PyTorch
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
@@ -245,7 +233,7 @@ class PPO:
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
             # Shuffle the data for each epoch
-            self.rng.shuffle(b_inds)
+            np.random.shuffle(b_inds)  # noqa: NPY002
 
             # Split data into minibatches
             for i in range(0, batch_size, self.minibatch_size):
