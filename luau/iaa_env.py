@@ -13,7 +13,7 @@ class IntrospectiveEnv(MiniGridEnv):
 
     def __init__(
         self,
-        seed: int = 0,
+        rng: np.random.default_rng,
         size: int = 9,
         agent_start_pos: tuple[int, int] | None = None,
         agent_start_dir: int = 0,
@@ -26,8 +26,7 @@ class IntrospectiveEnv(MiniGridEnv):
         self.agent_start_pos = agent_start_pos
         self.agent_start_dir = agent_start_dir
         self.locked = locked
-        self.seed = seed
-        self.rng = np.random.default_rng(seed)
+        self.rng = rng
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         self.max_steps = max_steps
