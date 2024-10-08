@@ -319,12 +319,12 @@ class IAARolloutBuffer(RolloutBuffer):
 
     def __init__(self):
         super().__init__()
-        self.indicators = []
+        self.indicators = torch.zeros((self.horizon, self.num_envs)).to(device)
 
     def clear(self) -> None:
         """Clear the buffer."""
         super().clear()
-        del self.indicators[:]
+        self.indicators = torch.zeros((self.horizon, self.num_envs)).to(device)
 
 
 class IAAPPO(PPO):
