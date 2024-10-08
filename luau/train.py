@@ -1,6 +1,7 @@
 # %%
 import argparse
 import logging
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -21,9 +22,57 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Get the root path
 root_path = Path(__file__).resolve().parent.parent
 
+
 # %%
+def set_random_seeds(seed: int) -> None:
+    """Set random seeds for reproducibility."""
+    random.seed(seed)
+    _ = np.random.default_rng(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # Ensure deterministic behavior in PyTorch
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
+# Load the base random seed from the config file
+parser = argparse.ArgumentParser(description="Train the agent.")
+parser.add_argument(
+    "--config_path",
+    type=str,
+    default="./hyperparams/ppo-iaa-env-unlocked-config.yaml",
+    help="Path to the config file.",
+)
+parser.add_argument(
+    "--log_dir",
+    type=str,
+    default=None,
+    help="Directory to save logs.",
+)
+parser.add_argument(
+    "--model_dir",
+    type=str,
+    default=None,
+    help="Directory to save models.",
+)
+parser.add_argument(
+    "--num_experiments",
+    type=int,
+    default=1,
+    help="Number of experiments to run.",
+)
+args = parser.parse_args()
+
+with Path(args.config_path).open("r") as file:
+    base_config = yaml.safe_load(file)
+base_random_seed = base_config.get("random_seed", 0)
+
+# Set the initial random seed
+set_random_seeds(base_random_seed)
+
+
+# %%
 class Trainer:
     """A class to train the agent."""
 
@@ -59,7 +108,6 @@ class Trainer:
         if self.algorithm == "IAAPPO":
             self.teacher_model_path = config["teacher_model_path"]
         #####################################################
-        ## Note : print and log frequencies should be > than max_ep_len
         ################ PPO hyperparameters ################
         self.minibatch_size = config["minibatch_size"]
         self.k_epochs = config["k_epochs"]
@@ -69,10 +117,9 @@ class Trainer:
         self.lr_critic = config["lr_critic"]
         self.num_envs = config["num_envs"]
         self.gae_lambda = config["gae_lambda"]
-        # Set the random seed
+
+        # Store the random seed
         self.random_seed = random_seed
-        torch.manual_seed(self.random_seed)
-        self.rng = np.random.default_rng(self.random_seed)
 
         # Store log_dir and model_dir
         self.log_dir = log_dir
@@ -113,6 +160,9 @@ class Trainer:
         def _init() -> IntrospectiveEnv:
             env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
             env = gym.wrappers.RecordEpisodeStatistics(env)
+            env.reset(seed=self.random_seed)
+            env.action_space.seed(self.random_seed)
+            env.observation_space.seed(self.random_seed)
             return env
 
         return _init
@@ -126,7 +176,7 @@ class Trainer:
         env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
         logging.info("Gridworld size: %s", envs[0]().max_steps)
 
-        # make directory
+        # Make directories
         log_dir, model_dir = self.setup_directories()
         log_file = f"{log_dir}/{self.algorithm}_{self.env_name}_run_{self.run_num}_seed_{self.random_seed}_log.csv"
         checkpoint_path = f"{model_dir}/{self.algorithm}_{self.env_name}_run_{self.run_num}_seed_{self.random_seed}.pth"
@@ -135,7 +185,7 @@ class Trainer:
         # Initialize TensorBoard writer
         writer = SummaryWriter(log_dir=str(log_dir))
 
-        # state space dimension
+        # State space dimension
         state_dim = envs[0]().observation_space["image"].shape[2]
         action_dim = envs[0]().action_space.n
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
@@ -155,7 +205,6 @@ class Trainer:
                 seed=self.random_seed,
             )
         elif self.algorithm == "IAAPPO":
-            # TODO: test we're overwriting args
             teacher_ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
             teacher_ppo_agent.load(self.teacher_model_path)
             ppo_agent = IAAPPO(
@@ -171,15 +220,15 @@ class Trainer:
             raise ValueError("Unknown algorithm: %s", self.algorithm)
         self.print_hyperparameters()
 
-        # track total training time
+        # Track total training time
         start_time = datetime.now().astimezone().replace(microsecond=0)
         logging.info("Started training at (GMT): %s", start_time)
         logging.info("============================================================================================")
 
-        # logging file
+        # Logging file
         log_f = Path.open(log_file, "w+")
         log_f.write("episode,timestep,reward,episode_len\n")
-        # logging variables
+        # Logging variables
         time_step = 0
         i_episode = 0
 
@@ -188,7 +237,7 @@ class Trainer:
         next_dones = np.zeros(self.num_envs, dtype=bool)
         time_step = 0
 
-        # training loop
+        # Training loop
         num_updates = self.max_training_timesteps // (self.horizon * self.num_envs)
         for update in range(1, num_updates + 1):
             frac = 1.0 - (update - 1.0) / num_updates
@@ -198,12 +247,11 @@ class Trainer:
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 obs = ppo_agent.preprocess(next_obs)
                 done = next_dones
-                ppo_agent.buffer.images[step] = obs["image"]  # obs
-                ppo_agent.buffer.directions[step] = obs["direction"]  # obs
+                ppo_agent.buffer.images[step] = obs["image"]
+                ppo_agent.buffer.directions[step] = obs["direction"]
                 ppo_agent.buffer.is_terminals[step] = torch.from_numpy(done)
 
                 # Select actions and store them in the PPO agent's buffer
-                """Select an action."""
                 with torch.no_grad():
                     actions, action_logprobs, state_vals = ppo_agent.policy(obs)
                     ppo_agent.buffer.state_values[step] = state_vals
@@ -245,7 +293,7 @@ class Trainer:
         env.close()
         writer.close()
 
-        # print total training time
+        # Print total training time
         logging.info("============================================================================================")
         end_time = datetime.now().astimezone().replace(microsecond=0)
         logging.info("Started training at (GMT): %s", start_time)
@@ -276,43 +324,16 @@ class Trainer:
 # %%
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train the agent.")
-    parser.add_argument(
-        "--config_path",
-        type=str,
-        default="./hyperparams/ppo-iaa-env-unlocked-config.yaml",
-        help="Path to the config file.",
-    )
-    parser.add_argument(
-        "--log_dir",
-        type=str,
-        default=None,
-        help="Directory to save logs.",
-    )
-    parser.add_argument(
-        "--model_dir",
-        type=str,
-        default=None,
-        help="Directory to save models.",
-    )
-    parser.add_argument(
-        "--num_experiments",
-        type=int,
-        default=1,
-        help="Number of experiments to run.",
-    )
-    args = parser.parse_args()
-
-    # Load the base random seed from the config file
-    with Path(args.config_path).open("r") as file:
-        base_config = yaml.safe_load(file)
-    base_random_seed = base_config.get("random_seed", 0)
+    # Argument parsing is already done above
 
     for i in range(args.num_experiments):
         # Generate a unique random seed for each experiment
         random_seed = base_random_seed + i
         run_id = base_config.get("run_num", 0)
         logging.info("Running experiment %s with random seed %s.", i + 1, random_seed)
+
+        # Update the random seeds for each experiment
+        set_random_seeds(random_seed)
 
         trainer = Trainer(
             config_path=args.config_path,
