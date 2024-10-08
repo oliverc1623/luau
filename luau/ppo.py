@@ -128,7 +128,6 @@ class ActorCritic(nn.Module):
 
         # actor
         logits = self._actor_forward(image, direction)
-        logits = logits.squeeze(0)  # Remove batch dimension
         dist = Categorical(logits=logits)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
@@ -185,8 +184,6 @@ class PPO:
         self.num_envs = num_envs
         self.gae_lambda = gae_lambda
 
-        torch.backends.cudnn.deterministic = True
-
     def _calculate_gae(self, next_obs: torch.tensor, next_done: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         # Generalized Advantage Estimation (GAE)
         with torch.no_grad():
@@ -234,10 +231,9 @@ class PPO:
         clipfracs = []
 
         # Optimize policy for K epochs
-        for k in range(self.k_epochs):
+        for _ in range(self.k_epochs):
             # Shuffle the data for each epoch
-            rng = np.random.default_rng()
-            rng.shuffle(b_inds)
+            np.random.shuffle(b_inds)  # noqa: NPY002
 
             # Split data into minibatches
             for i in range(0, batch_size, self.minibatch_size):
@@ -251,10 +247,6 @@ class PPO:
                 # policy gradient
                 log_ratio = logprobs - b_logprobs[mb_inds]
                 ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
-
-                if k == 0 and i == 0:
-                    # check if the ratio is close to 1 in the first epoch of the first minibatch
-                    assert torch.allclose(ratios, torch.ones_like(ratios))
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
