@@ -5,10 +5,15 @@ import random
 from datetime import datetime
 from pathlib import Path
 
+import gymnasium as gym
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
 from torch.utils.tensorboard import SummaryWriter
+
+from luau.iaa_env import IntrospectiveEnv
+from luau.ppo import IAAPPO, PPO
 
 
 # Configure logging
@@ -65,12 +70,6 @@ base_random_seed = base_config.get("random_seed", 0)
 
 # Set the initial random seed
 set_random_seeds(base_random_seed)
-
-import gymnasium as gym  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-
-from luau.iaa_env import IntrospectiveEnv  # noqa: E402
-from luau.ppo import IAAPPO, PPO  # noqa: E402
 
 
 # %%
