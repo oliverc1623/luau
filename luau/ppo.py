@@ -68,26 +68,29 @@ class ActorCritic(nn.Module):
 
         # actor conv layers
         # TODO: should probably turn into a Sequential model
-        self.actor_conv1 = nn.Conv2d(state_dim, 16, 2)
-        self.actor_conv2 = nn.Conv2d(16, 32, 2)
-        self.actor_conv3 = nn.Conv2d(32, 64, 2)
+        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
+        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
+        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
 
         # actor linear layers
-        self.actor_fc1 = nn.Linear(65, 512)
-        self.actor_fc2 = nn.Linear(512, action_dim)
+        self.actor_fc1 = self.layer_init(nn.Linear(65, 512))
+        self.actor_fc2 = self.layer_init(nn.Linear(512, action_dim), std=0.01)
 
         # critic conv layers
         # TODO: should probably turn into a Sequential model
-        self.critic_conv1 = nn.Conv2d(state_dim, 16, 2)
-        self.critic_conv2 = nn.Conv2d(16, 32, 2)
-        self.critic_conv3 = nn.Conv2d(32, 64, 2)
+        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
+        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
+        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
 
         # critic linear layers
-        self.critic_fc1 = nn.Linear(65, 512)  # Add +1 for the scalar input
-        self.critic_fc2 = nn.Linear(512, 1)
+        self.critic_fc1 = self.layer_init(nn.Linear(65, 512))
+        self.critic_fc2 = self.layer_init(nn.Linear(512, 1), std=1.0)
 
-        # Initialize weights orthogonally and biases to a constant value
-        self._initialize_weights()
+    def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
+        """Initialize layer."""
+        nn.init.orthogonal_(layer.weight, std)
+        nn.init.constant_(layer.bias, bias_const)
+        return layer
 
     def _initialize_weights(self) -> None:
         # Orthogonal initialization of conv and linear layers
@@ -135,7 +138,7 @@ class ActorCritic(nn.Module):
         # critic
         state_values = self._critic_forward(image, direction)
 
-        return action.detach(), action_logprob.detach(), state_values.detach()
+        return action, action_logprob, state_values
 
     def evaluate(self, states: dict, actions: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Evaluate the policy."""
@@ -247,36 +250,39 @@ class PPO:
                 # policy gradient
                 log_ratio = logprobs - b_logprobs[mb_inds]
                 ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
-
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-log_ratio).mean()
                     approx_kl = ((ratios - 1) - log_ratio).mean()
                     clipfracs += [((ratios - 1.0).abs() > self.eps_clip).float().mean().item()]
-
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                surr1 = mb_advantages * ratios
-                surr2 = mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                surr1 = -mb_advantages * ratios
+                surr2 = -mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                pg_loss = torch.max(surr1, surr2).mean()
 
                 # value function loss + clipping
-                v_loss_unclipped = 0.5 * self.MseLoss(state_values, b_rewards[mb_inds])
-                v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
-                v_loss_clipped = 0.5 * self.MseLoss(v_clipped, b_rewards[mb_inds])
+                v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
+                v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -2.0, 2.0)
+                v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                v_loss = 0.5 * v_loss_max.mean()
+
+                # entropy loss
+                entropy_loss = dist_entropy.mean()
 
                 # final loss of clipped objective PPO
-                loss = -torch.min(surr1, surr2) + 0.5 * v_loss_max - 0.01 * dist_entropy  # final loss of clipped objective PPO
+                loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
 
                 self.optimizer.zero_grad()  # take gradient step
-                loss.mean().backward()
+                loss.backward()
                 self.optimizer.step()
 
         # log debug variables
         with torch.no_grad():
-            writer.add_scalar("debugging/policy_loss", -torch.min(surr1, surr2).mean(), rollout_step)
-            writer.add_scalar("debugging/value_loss", v_loss_max, rollout_step)
-            writer.add_scalar("debugging/entropy_loss", 0.01 * dist_entropy.mean(), rollout_step)
+            writer.add_scalar("debugging/policy_loss", pg_loss, rollout_step)
+            writer.add_scalar("debugging/value_loss", v_loss, rollout_step)
+            writer.add_scalar("debugging/entropy_loss", entropy_loss, rollout_step)
             writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), rollout_step)
             writer.add_scalar("debugging/approx_kl", approx_kl.item(), rollout_step)
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), rollout_step)
