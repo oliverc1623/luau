@@ -175,7 +175,7 @@ class Trainer:
 
         envs = [self._make_env(self.random_seed + i) for i in range(self.num_envs)]
         env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
-        logging.info("Gridworld size: %s", envs[0]().max_steps)
+        logging.info("Gridworld size: %s", envs[0]().unwrapped.max_steps)
 
         # Make directories
         log_dir, model_dir = self.setup_directories()
