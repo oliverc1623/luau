@@ -159,7 +159,7 @@ class Trainer:
 
         def _init() -> IntrospectiveEnv:
             rng = np.random.default_rng(seed)
-            env = IntrospectiveEnv(rng=rng, size=self.size, locked=self.door_locked)
+            env = IntrospectiveEnv(rng=rng, size=self.size, locked=self.door_locked, render_mode="rgb_array")
             env = gym.wrappers.RecordEpisodeStatistics(env)
             env.reset(seed=seed)
             env.action_space.seed(seed)
@@ -260,31 +260,30 @@ class Trainer:
 
                 # Step the environment and store the rewards
                 next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
-                next_dones = np.array([a or b for a, b in zip(next_dones, truncated, strict=False)])
+                next_dones = np.logical_or(next_dones, truncated)
                 ppo_agent.buffer.rewards[step] = torch.from_numpy(rewards)
 
                 time_step += self.num_envs
-
-                if "final_info" in info:
-                    for e in info["final_info"]:
-                        if e is not None:
-                            episodic_reward = e["episode"]["r"][0]
-                            episodic_length = e["episode"]["l"][0]
-                            writer.add_scalar("charts/Episodic Reward", episodic_reward, time_step)
-                            writer.add_scalar("charts/Episodic Length", episodic_length, time_step)
-                            writer.add_scalar("charts/Rollout Reward", episodic_reward, update)
-                            # Print average reward
-                            logging.info(
-                                "i_episode: %s, Timestep: %s, Average Reward: %s, Episodic length: %s",
-                                update,
-                                time_step,
-                                episodic_reward,
-                                episodic_length,
-                            )
-                            log_f.write(f"{update},{time_step},{episodic_reward},{episodic_length}\n")
-                            log_f.flush()
-                            i_episode += 1
-                        break
+                for k, v in info.items():
+                    if k == "episode":
+                        done_indx = np.argmax(next_dones)
+                        episodic_reward = v["r"][done_indx]
+                        episodic_length = v["l"][done_indx]
+                        writer.add_scalar("charts/Episodic Reward", episodic_reward, time_step)
+                        writer.add_scalar("charts/Episodic Length", episodic_length, time_step)
+                        writer.add_scalar("charts/Rollout Reward", episodic_reward, update)
+                        # Print average reward
+                        logging.info(
+                            "i_episode: %s, Timestep: %s, Average Reward: %s, Episodic length: %s",
+                            update,
+                            time_step,
+                            episodic_reward,
+                            episodic_length,
+                        )
+                        log_f.write(f"{update},{time_step},{episodic_reward},{episodic_length}\n")
+                        log_f.flush()
+                        i_episode += 1
+                    break
 
             # PPO update at the end of the horizon
             ppo_agent.update(next_obs, next_dones, writer, time_step)
