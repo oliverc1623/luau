@@ -263,7 +263,7 @@ class PPO:
 
                 # value function loss + clipping
                 v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
-                v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -2.0, 2.0)
+                v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss = 0.5 * v_loss_max.mean()
