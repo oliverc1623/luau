@@ -327,11 +327,11 @@ if __name__ == "__main__":
 
     for i in range(args.num_experiments):
         # Generate a unique random seed for each experiment
-        random_seed = base_random_seed + i
+        random_seed = base_random_seed + i * base_config.get("num_envs", 0)
         run_id = base_config.get("run_num", 0)
         logging.info("Running experiment %s with random seed %s.", i + 1, random_seed)
 
-        # Update the random seeds for each experiment
+        # # Update the random seeds for each experiment
         set_random_seeds(random_seed)
 
         trainer = Trainer(
