@@ -13,6 +13,7 @@ class IntrospectiveEnv(MiniGridEnv):
 
     def __init__(
         self,
+        seed: int = 0,
         size: int = 9,
         agent_start_pos: tuple[int, int] | None = None,
         agent_start_dir: int = 0,
@@ -25,7 +26,8 @@ class IntrospectiveEnv(MiniGridEnv):
         self.agent_start_pos = agent_start_pos
         self.agent_start_dir = agent_start_dir
         self.locked = locked
-
+        self.seed = seed
+        self.rng = np.random.default_rng(seed)
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         self.max_steps = max_steps
@@ -61,10 +63,9 @@ class IntrospectiveEnv(MiniGridEnv):
         for i in range(width):
             self.grid.set(i, 4, Wall())
 
-        rng = np.random.default_rng()
-        goal_width = rng.integers(1, width - 1)
+        goal_width = self.rng.integers(1, width - 1)
         goal_width = goal_width + 1 if goal_width == 4 else goal_width  # noqa: PLR2004
-        goal_height = rng.integers(height // 2 + 1, height - 1)
+        goal_height = self.rng.integers(height // 2 + 1, height - 1)
         goal_height = goal_height + 1 if goal_height == 4 else goal_height  # noqa: PLR2004
         self.put_obj(Goal(), goal_width, goal_height)
 
@@ -78,21 +79,21 @@ class IntrospectiveEnv(MiniGridEnv):
 
         # Place the key
         if self.locked:
-            key_width = rng.integers(1, width - 1)
+            key_width = self.rng.integers(1, width - 1)
             key_width = key_width + 1 if key_width == 4 else key_width  # noqa: PLR2004
-            key_height = rng.integers(1, height // 2)
+            key_height = self.rng.integers(1, height // 2)
             self.grid.set(key_width, key_height, Key(COLOR_NAMES[4]))
 
         # Place the agent
-        agent_width = rng.integers(1, width - 1)
+        agent_width = self.rng.integers(1, width - 1)
         agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
-        agent_height = rng.integers(1, height // 2)
+        agent_height = self.rng.integers(1, height // 2)
         if self.locked:
             while agent_width == key_width and agent_height == key_height:
-                agent_width = rng.integers(1, width - 1)
+                agent_width = self.rng.integers(1, width - 1)
                 agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
-                agent_height = rng.integers(1, height // 2)
+                agent_height = self.rng.integers(1, height // 2)
         self.agent_pos = (agent_width, agent_height)
-        self.agent_dir = rng.integers(0, 4)
+        self.agent_dir = self.rng.integers(0, 4)
 
         self.mission = "get to the green goal square"
