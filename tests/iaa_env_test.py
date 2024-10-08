@@ -15,11 +15,12 @@ def rng() -> np.random.default_rng:
 def test_initialization(rng: np.random.default_rng) -> None:
     """Test the initialization of the environment."""
     env = IntrospectiveEnv(rng=rng, size=9, agent_start_pos=(1, 1), agent_start_dir=1, locked=True)
-    assert env.size == 9
-    assert env.agent_start_pos == (1, 1)
-    assert env.agent_start_dir == 1
-    assert env.locked is True
-    assert env.max_steps == 4 * 9**2
+    env = gym.wrappers.RecordEpisodeStatistics(env)
+    assert env.unwrapped.size == 9
+    assert env.unwrapped.agent_start_pos == (1, 1)
+    assert env.unwrapped.agent_start_dir == 1
+    assert env.unwrapped.locked is True
+    assert env.unwrapped.max_steps == 4 * 9**2
 
 
 def test_gen_mission() -> None:
