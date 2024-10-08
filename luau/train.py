@@ -159,7 +159,8 @@ class Trainer:
         """Create the environment."""
 
         def _init() -> IntrospectiveEnv:
-            env = IntrospectiveEnv(size=self.size, locked=self.door_locked)
+            rng = np.random.default_rng(seed)
+            env = IntrospectiveEnv(rng=rng, size=self.size, locked=self.door_locked)
             env = gym.wrappers.RecordEpisodeStatistics(env)
             env.reset(seed=seed)
             env.action_space.seed(seed)
@@ -246,9 +247,6 @@ class Trainer:
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 obs = ppo_agent.preprocess(next_obs)
-                print(obs["image"])  # Env 1 action space
-                print(obs["direction"])  # Env 1 action space
-
                 done = next_dones
                 ppo_agent.buffer.images[step] = obs["image"]
                 ppo_agent.buffer.directions[step] = obs["direction"]
