@@ -5,11 +5,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from luau.ppo import IAAPPO, PPO
 from luau.train import Trainer
 
 
 root_path = Path(__file__).resolve().parent.parent
 TEST_CONFIG = Path(f"{root_path}/tests/test_configs/test_config.yaml")
+ALGORITHM_CLASSES = {
+    "PPO": PPO,
+    "IAAPPO": IAAPPO,
+}
 
 # %%
 
@@ -47,3 +52,10 @@ def test_get_vector_env_seeding(trainer: Trainer) -> None:
     for i in range(num_envs):
         for j in range(i + 1, num_envs):
             assert not np.array_equal(obs["image"][i], obs["image"][j]), f"Expected different images for environments {i} and {j}"
+
+
+def test_ppo_agent(trainer: Trainer) -> None:
+    """Test that the PPO agent is created correctly."""
+    env = trainer.get_vector_env(47)
+    ppo_agent = trainer.get_ppo_agent(env)
+    assert isinstance(ppo_agent, ALGORITHM_CLASSES[trainer.algorithm]), "ppo_agent is not an instance of PPO"

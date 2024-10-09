@@ -134,27 +134,13 @@ class Trainer:
         envs = [self._make_env(seed + i) for i in range(self.num_envs)]
         return gym.vector.AsyncVectorEnv(envs, shared_memory=False)
 
-    def train(self) -> None:
-        """Train the agent."""
-        msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
-        logging.info(msg)
-
-        env = self.get_vector_env(self.random_seed)
-        logging.info("Gridworld size: %s", env.env_fns[0]().unwrapped.max_steps)
-
-        # Make directories
-        log_dir, model_dir = self.setup_directories()
-        log_file = f"{log_dir}/{self.algorithm}_{self.env_name}_run_{self.run_id}_seed_{self.random_seed}_log.csv"
-        checkpoint_path = f"{model_dir}/{self.algorithm}_{self.env_name}_run_{self.run_id}_seed_{self.random_seed}.pth"
-        logging.info("Save checkpoint path: %s", checkpoint_path)
-
-        # Initialize TensorBoard writer
-        writer = SummaryWriter(log_dir=str(log_dir))
-
+    def get_ppo_agent(self, env: gym.vector.AsyncVectorEnv) -> PPO:
+        """Get the PPO agent."""
         # State space dimension
         state_dim = env.env_fns[0]().observation_space["image"].shape[2]
         action_dim = env.env_fns[0]().action_space.n
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
+
         ppo_agent = PPO(
             state_dim,
             action_dim,
@@ -185,7 +171,26 @@ class Trainer:
                 eps_clip=self.eps_clip,
                 teacher_ppo_agent=teacher_ppo_agent,
             )
+        return ppo_agent
 
+    def train(self) -> None:
+        """Train the agent."""
+        msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
+        logging.info(msg)
+
+        # Make directories
+        log_dir, model_dir = self.setup_directories()
+        log_file = f"{log_dir}/{self.algorithm}_{self.env_name}_run_{self.run_id}_seed_{self.random_seed}_log.csv"
+        checkpoint_path = f"{model_dir}/{self.algorithm}_{self.env_name}_run_{self.run_id}_seed_{self.random_seed}.pth"
+        logging.info("Save checkpoint path: %s", checkpoint_path)
+
+        # Initialize TensorBoard writer
+        writer = SummaryWriter(log_dir=str(log_dir))
+
+        # Initialize the PPO agent
+        env = self.get_vector_env(self.random_seed)
+        logging.info("Gridworld size: %s", env.env_fns[0]().unwrapped.max_steps)
+        ppo_agent = self.get_ppo_agent(env)
         self.print_hyperparameters()
 
         # Track total training time
