@@ -1,5 +1,6 @@
 # %%
 import argparse
+import copy
 import logging
 import random
 from datetime import datetime
@@ -15,6 +16,11 @@ from torch.utils.tensorboard import SummaryWriter
 from luau.iaa_env import IntrospectiveEnv
 from luau.ppo import IAAPPO, PPO
 
+
+ALGORITHM_CLASSES = {
+    "PPO": PPO,
+    "IAAPPO": IAAPPO,
+}
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -34,42 +40,6 @@ def set_random_seeds(seed: int) -> None:
     # Ensure deterministic behavior in PyTorch
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-
-# Load the base random seed from the config file
-parser = argparse.ArgumentParser(description="Train the agent.")
-parser.add_argument(
-    "--config_path",
-    type=str,
-    default="./hyperparams/ppo-iaa-env-unlocked-config.yaml",
-    help="Path to the config file.",
-)
-parser.add_argument(
-    "--log_dir",
-    type=str,
-    default=None,
-    help="Directory to save logs.",
-)
-parser.add_argument(
-    "--model_dir",
-    type=str,
-    default=None,
-    help="Directory to save models.",
-)
-parser.add_argument(
-    "--num_experiments",
-    type=int,
-    default=1,
-    help="Number of experiments to run.",
-)
-args = parser.parse_args()
-
-with Path(args.config_path).open("r") as file:
-    base_config = yaml.safe_load(file)
-base_random_seed = base_config.get("random_seed", 0)
-
-# Set the initial random seed
-set_random_seeds(base_random_seed)
 
 
 # %%
@@ -96,25 +66,16 @@ class Trainer:
         self.save_frames = config["save_frames"]
         self.horizon = config["horizon"]
         self.max_training_timesteps = config["max_training_timesteps"]
-        self.print_freq = config["print_freq"]
-        self.log_freq = config["log_freq"]
         self.save_model_freq = config["save_model_freq"]
-        self.action_std = config["action_std"]
-        self.action_std_decay_rate = config["action_std_decay_rate"]
-        self.min_action_std = config["min_action_std"]
-        self.action_std_decay_freq = config["action_std_decay_freq"]
         self.image_observation = config["image_observation"]
-        self.run_num = config["run_num"]
         if self.algorithm == "IAAPPO":
             self.teacher_model_path = config["teacher_model_path"]
-        #####################################################
         ################ PPO hyperparameters ################
         self.minibatch_size = config["minibatch_size"]
         self.k_epochs = config["k_epochs"]
         self.eps_clip = config["eps_clip"]
         self.gamma = config["gamma"]
         self.lr_actor = config["lr_actor"]
-        self.lr_critic = config["lr_critic"]
         self.num_envs = config["num_envs"]
         self.gae_lambda = config["gae_lambda"]
 
@@ -168,46 +129,54 @@ class Trainer:
 
         return _init
 
+    def get_vector_env(self, seed: int) -> gym.vector.AsyncVectorEnv:
+        """Create the vectorized environment."""
+        envs = [self._make_env(seed + i) for i in range(self.num_envs)]
+        return gym.vector.AsyncVectorEnv(envs, shared_memory=False)
+
     def train(self) -> None:
         """Train the agent."""
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
 
-        envs = [self._make_env(self.random_seed + i) for i in range(self.num_envs)]
-        env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
-        logging.info("Gridworld size: %s", envs[0]().unwrapped.max_steps)
+        env = self.get_vector_env(self.random_seed)
+        logging.info("Gridworld size: %s", env.env_fns[0]().unwrapped.max_steps)
 
         # Make directories
         log_dir, model_dir = self.setup_directories()
-        log_file = f"{log_dir}/{self.algorithm}_{self.env_name}_run_{self.run_num}_seed_{self.random_seed}_log.csv"
-        checkpoint_path = f"{model_dir}/{self.algorithm}_{self.env_name}_run_{self.run_num}_seed_{self.random_seed}.pth"
+        log_file = f"{log_dir}/{self.algorithm}_{self.env_name}_run_{self.run_id}_seed_{self.random_seed}_log.csv"
+        checkpoint_path = f"{model_dir}/{self.algorithm}_{self.env_name}_run_{self.run_id}_seed_{self.random_seed}.pth"
         logging.info("Save checkpoint path: %s", checkpoint_path)
 
         # Initialize TensorBoard writer
         writer = SummaryWriter(log_dir=str(log_dir))
 
         # State space dimension
-        state_dim = envs[0]().observation_space["image"].shape[2]
-        action_dim = envs[0]().action_space.n
+        state_dim = env.env_fns[0]().observation_space["image"].shape[2]
+        action_dim = env.env_fns[0]().action_space.n
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
-        if self.algorithm == "PPO":
-            ppo_agent = PPO(
-                state_dim,
-                action_dim,
-                self.lr_actor,
-                self.gamma,
-                self.k_epochs,
-                self.eps_clip,
-                self.minibatch_size,
-                env=env,
-                horizon=self.horizon,
-                num_envs=self.num_envs,
-                gae_lambda=self.gae_lambda,
-            )
-        elif self.algorithm == "IAAPPO":
-            teacher_ppo_agent = PPO(state_dim, action_dim, self.lr_actor, self.gamma, self.k_epochs, self.eps_clip)
+        ppo_agent = PPO(
+            state_dim,
+            action_dim,
+            self.lr_actor,
+            self.gamma,
+            self.k_epochs,
+            self.eps_clip,
+            self.minibatch_size,
+            env=env,
+            horizon=self.horizon,
+            num_envs=self.num_envs,
+            gae_lambda=self.gae_lambda,
+        )
+        # Check if the specified algorithm exists in the mapping
+        if self.algorithm not in ALGORITHM_CLASSES:
+            msg = f"Unknown algorithm: {self.algorithm}"
+            raise ValueError(msg)
+
+        if self.algorithm == "IAAPPO":
+            teacher_ppo_agent = copy.deepcopy(ppo_agent)
             teacher_ppo_agent.load(self.teacher_model_path)
-            ppo_agent = IAAPPO(
+            ppo_agent = ALGORITHM_CLASSES[self.algorithm](
                 state_dim=state_dim,
                 action_dim=action_dim,
                 lr_actor=self.lr_actor,
@@ -216,8 +185,7 @@ class Trainer:
                 eps_clip=self.eps_clip,
                 teacher_ppo_agent=teacher_ppo_agent,
             )
-        else:
-            raise ValueError("Unknown algorithm: %s", self.algorithm)
+
         self.print_hyperparameters()
 
         # Track total training time
@@ -306,7 +274,7 @@ class Trainer:
         logging.info("Training the agent in the %s environment. Door: %s", self.env_name, self.door_locked)
         logging.info("max training timesteps: %s", self.max_training_timesteps)
         logging.info("max timesteps per episode (M/horizon/rollout): %s", self.horizon)
-        logging.info("seed: %s", self.random_seed)
+        logging.info("run num: %s, seed: %s", self.run_id, self.random_seed)
         logging.info("model saving frequency: %s timesteps", self.save_model_freq)
         logging.info("--------------------------------------------------------------------------------------------")
         logging.info("Initializing a discrete action space policy")
@@ -323,13 +291,45 @@ class Trainer:
 # %%
 
 if __name__ == "__main__":
-    # Argument parsing is already done above
+    # Argument parsing
+    parser = argparse.ArgumentParser(description="Train the agent.")
+    parser.add_argument(
+        "--config_path",
+        type=str,
+        required=True,
+        help="Path to the config file.",
+    )
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default=None,
+        help="Directory to save logs.",
+    )
+    parser.add_argument(
+        "--model_dir",
+        type=str,
+        default=None,
+        help="Directory to save models.",
+    )
+    parser.add_argument(
+        "--num_experiments",
+        type=int,
+        default=1,
+        help="Number of experiments to run.",
+    )
+    args = parser.parse_args()
+
+    with Path(args.config_path).open("r") as file:
+        base_config = yaml.safe_load(file)
+    base_random_seed = base_config.get("random_seed", 0)
 
     for i in range(args.num_experiments):
         # Generate a unique random seed for each experiment
         random_seed = base_random_seed + i * base_config.get("num_envs", 0)
         run_id = base_config.get("run_num", 0)
+        logging.info("============================================================================================")
         logging.info("Running experiment %s with random seed %s.", i + 1, random_seed)
+        logging.info("--------------------------------------------------------------------------------------------")
 
         # # Update the random seeds for each experiment
         set_random_seeds(random_seed)
