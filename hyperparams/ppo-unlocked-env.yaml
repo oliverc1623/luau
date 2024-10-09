@@ -5,7 +5,7 @@ door_locked: False                   # is the door locked?
 size: 9                              # gridworld env size
 has_continuous_action_space: False   # continuous action space; else discrete
 save_frames: False                   # save frames?
-save_model_freq: 100_000              # save model frequency (in num timesteps)
+save_model_freq: 400                 # save model frequency (in num update iter - not timesteps)
 image_observation: False             # rgb-images as observations?
 run_num: 3                           # experiment run number for seeding
 ################ PPO hyperparameters ################
