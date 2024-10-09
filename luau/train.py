@@ -203,7 +203,6 @@ class Trainer:
         log_f.write("episode,timestep,reward,episode_len\n")
         # Logging variables
         time_step = 0
-        i_episode = 0
 
         # Reset all environments
         next_obs, _ = env.reset()
@@ -247,7 +246,7 @@ class Trainer:
                         writer.add_scalar("charts/Rollout Reward", episodic_reward, update)
                         # Print average reward
                         logging.info(
-                            "i_episode: %s, Timestep: %s, Average Reward: %s, Episodic length: %s",
+                            "i_update: %s, Timestep: %s, Average Reward: %s, Episodic length: %s",
                             update,
                             time_step,
                             episodic_reward,
@@ -255,11 +254,15 @@ class Trainer:
                         )
                         log_f.write(f"{update},{time_step},{episodic_reward},{episodic_length}\n")
                         log_f.flush()
-                        i_episode += 1
                     break
 
             # PPO update at the end of the horizon
             ppo_agent.update(next_obs, next_dones, writer, time_step)
+            if update % self.save_model_freq == 0:
+                logging.info("--------------------------------------------------------------------------------------------")
+                logging.info("Saving model to: %s", checkpoint_path)
+                logging.info("--------------------------------------------------------------------------------------------")
+                ppo_agent.save(checkpoint_path)
 
         log_f.close()
         env.close()

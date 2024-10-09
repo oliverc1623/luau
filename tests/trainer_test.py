@@ -59,3 +59,9 @@ def test_ppo_agent(trainer: Trainer) -> None:
     env = trainer.get_vector_env(47)
     ppo_agent = trainer.get_ppo_agent(env)
     assert isinstance(ppo_agent, ALGORITHM_CLASSES[trainer.algorithm]), "ppo_agent is not an instance of PPO"
+
+    # Test ppo agent is saved correctly
+    log_dir, model_dir = trainer.setup_directories()
+    checkpoint_path = f"{model_dir}/{trainer.algorithm}_{trainer.env_name}_run_{trainer.run_id}_seed_{trainer.random_seed}.pth"
+    ppo_agent.save(checkpoint_path)
+    assert Path(checkpoint_path).exists(), f"Checkpoint file {checkpoint_path} does not exist"
