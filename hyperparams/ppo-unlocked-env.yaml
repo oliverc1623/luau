@@ -1,19 +1,13 @@
-################ Logging hyperparameters ################
+################ Logging/Environment hyperparameters ################
 algorithm: "PPO"                     # name of the algorithm, enter "PPO" or "IAAPPO"
 env_name: "IntrospectiveEnvUnlocked"         # name of the environment
 door_locked: False                   # is the door locked?
 size: 9                              # gridworld env size
 has_continuous_action_space: False   # continuous action space; else discrete
 save_frames: False                   # save frames?
-print_freq: 640                      # print avg reward in the interval (in num timesteps). 5 * horizon
-log_freq: 256                        # log avg reward in the interval (in num timesteps). 2 * horizon
 save_model_freq: 100_000              # save model frequency (in num timesteps)
-action_std: 0.6                      # starting std for action distribution (Multivariate Normal)
-action_std_decay_rate: 0.05          # linearly decay action_std (action_std = action_std - action_std_decay_rate)
-min_action_std: 0.1                  # minimum action_std (stop decay after action_std <= min_action_std)
-action_std_decay_freq: 250000        # action_std decay frequency (in num timesteps)
 image_observation: False             # rgb-images as observations?
-run_num: 2                           # experiment run number for seeding
+run_num: 3                           # experiment run number for seeding
 ################ PPO hyperparameters ################
 max_training_timesteps: 500_000      # break training loop if timesteps > max_training_timesteps. 1e6
 horizon: 128                         # max timesteps in one update (episode); in other words, M rollout steps
@@ -22,7 +16,6 @@ k_epochs: 4                          # update policy for K epochs
 eps_clip: 0.2                        # clip parameter for PPO
 gamma: 0.99                          # discount factor
 lr_actor: 0.0001                     # learning rate for actor
-lr_critic: 0.001                     # learning rate for critic
 random_seed: 1623                      # random seed value
 num_envs: 2                          # number of parallel environments; batch size = num_envs * horizon = 256
 gae_lambda: 0.8                      # gae lambda
