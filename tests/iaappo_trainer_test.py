@@ -103,4 +103,7 @@ def test_ppo_agent(trainer: Trainer) -> None:
         # introspect is true
         t = 1
         h = ppo_agent.introspect(obs, t)
+        print(h)
         assert h.shape == torch.Size([ppo_agent.num_envs]), f"Expected shape {torch.Size([ppo_agent.num_envs])}, got {h.shape}"
+        ppo_agent.buffer.indicators[t] = h
+        print(ppo_agent.buffer.indicators[t])

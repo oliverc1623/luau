@@ -378,20 +378,20 @@ class IAAPPO(PPO):
         if self.teacher_ppo_agent is None:
             raise ValueError("Teacher agent is None. Please specify pth model.")
 
-    def introspect(self, t: int, obs: dict) -> int:
+    def introspect(self, obs: dict, t: int) -> int:
         """Introspect."""
         probability = self.introspection_decay ** (max(0, t - self.burn_in))
         p = Bernoulli(probability).sample()
         if t > self.burn_in and p == 1:
             _, _, teacher_source_val = self.teacher_ppo_agent.policy(obs)
             _, _, teacher_target_val = self.teacher_target.policy(obs)
-            return int(abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold)
+            return abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold
         return torch.zeros((self.num_envs,)).to(device)
 
     def select_action(self, obs: dict, t: int) -> int:
         """Select an action."""
         with torch.no_grad():
-            h = self.introspect(t, obs)
+            h = self.introspect(obs, t)
             if h:
                 actions, action_logprobs, state_vals = self.teacher_ppo_agent.policy(obs)
             else:
