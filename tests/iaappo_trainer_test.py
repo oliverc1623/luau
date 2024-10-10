@@ -89,10 +89,8 @@ def test_ppo_agent(trainer: Trainer) -> None:
     next_obs, _ = env.reset()
     next_dones = np.zeros(ppo_agent.num_envs, dtype=bool)
     obs = ppo_agent.preprocess(next_obs)
-    print(ppo_agent.buffer.images.shape)
-    print(ppo_agent.buffer.directions.shape)
-    print(obs["image"].shape)
-    print(obs["direction"].shape)
+    assert obs["image"].shape[0] == ppo_agent.num_envs, f"Expected {ppo_agent.num_envs} environments, got {obs['image'].shape[0]}"
+    assert obs["direction"].shape[0] == ppo_agent.num_envs, f"Expected {ppo_agent.num_envs} environments, got {obs['direction'].shape[0]}"
     done = next_dones
     ppo_agent.buffer.images[t] = obs["image"]
     ppo_agent.buffer.directions[t] = obs["direction"]
