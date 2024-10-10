@@ -58,10 +58,19 @@ def test_ppo_agent(trainer: Trainer) -> None:
     """Test that the PPO agent is created correctly."""
     env = trainer.get_vector_env(47)
     ppo_agent = trainer.get_ppo_agent(env)
-    assert isinstance(ppo_agent, ALGORITHM_CLASSES[trainer.algorithm]), "ppo_agent is not an instance of PPO"
+    assert isinstance(ppo_agent, ALGORITHM_CLASSES[trainer.algorithm]), "ppo_agent is not an instance of PPO or IAAPPO"
 
     # Test ppo agent is saved correctly
     log_dir, model_dir = trainer.setup_directories()
     checkpoint_path = f"{model_dir}/{trainer.algorithm}_{trainer.env_name}_run_{trainer.run_id}_seed_{trainer.random_seed}.pth"
     ppo_agent.save(checkpoint_path)
     assert Path(checkpoint_path).exists(), f"Checkpoint file {checkpoint_path} does not exist"
+
+    ppo_policy_weights = ppo_agent.policy.state_dict()
+    teacher_policy_weights = ppo_agent.teacher_ppo_agent.policy.state_dict()
+
+    for key in ppo_policy_weights:
+        assert not np.array_equal(
+            ppo_policy_weights[key].cpu().numpy(),
+            teacher_policy_weights[key].cpu().numpy(),
+        ), f"Expected different weights for key {key} in policy models"

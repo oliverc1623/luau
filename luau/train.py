@@ -1,6 +1,5 @@
 # %%
 import argparse
-import copy
 import logging
 import random
 from datetime import datetime
@@ -62,7 +61,6 @@ class Trainer:
         self.env_name = config["env_name"]
         self.door_locked = config["door_locked"]
         self.size = config["size"]
-        self.has_continuous_action_space = config["has_continuous_action_space"]
         self.save_frames = config["save_frames"]
         self.horizon = config["horizon"]
         self.max_training_timesteps = config["max_training_timesteps"]
@@ -70,6 +68,9 @@ class Trainer:
         self.image_observation = config["image_observation"]
         if self.algorithm == "IAAPPO":
             self.teacher_model_path = config["teacher_model_path"]
+            self.introspection_decay = config["introspection_decay"]
+            self.burn_in = config["burn_in"]
+            self.introspection_threshold = config["introspection_threshold"]
         ################ PPO hyperparameters ################
         self.minibatch_size = config["minibatch_size"]
         self.k_epochs = config["k_epochs"]
@@ -134,7 +135,7 @@ class Trainer:
         envs = [self._make_env(seed + i) for i in range(self.num_envs)]
         return gym.vector.AsyncVectorEnv(envs, shared_memory=False)
 
-    def get_ppo_agent(self, env: gym.vector.AsyncVectorEnv) -> PPO:
+    def get_ppo_agent(self, env: gym.vector.AsyncVectorEnv) -> PPO | IAAPPO:
         """Get the PPO agent."""
         # State space dimension
         state_dim = env.env_fns[0]().observation_space["image"].shape[2]
@@ -160,16 +161,24 @@ class Trainer:
             raise ValueError(msg)
 
         if self.algorithm == "IAAPPO":
-            teacher_ppo_agent = copy.deepcopy(ppo_agent)
+            teacher_ppo_agent = ppo_agent
             teacher_ppo_agent.load(self.teacher_model_path)
             ppo_agent = ALGORITHM_CLASSES[self.algorithm](
-                state_dim=state_dim,
-                action_dim=action_dim,
-                lr_actor=self.lr_actor,
-                gamma=self.gamma,
-                k_epochs=self.k_epochs,
-                eps_clip=self.eps_clip,
+                state_dim,
+                action_dim,
+                self.lr_actor,
+                self.gamma,
+                self.k_epochs,
+                self.eps_clip,
+                self.minibatch_size,
+                env=env,
+                horizon=self.horizon,
+                num_envs=self.num_envs,
+                gae_lambda=self.gae_lambda,
                 teacher_ppo_agent=teacher_ppo_agent,
+                introspection_decay=self.introspection_decay,
+                burn_in=self.burn_in,
+                introspection_threshold=self.introspection_threshold,
             )
         return ppo_agent
 

@@ -317,8 +317,8 @@ class PPO:
 class IAARolloutBuffer(RolloutBuffer):
     """A buffer to store rollout data for Introspective Action Advising (IAA)."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, horizon: int, num_envs: int, state: dict, action_space: gymnasium.Space):
+        super().__init__(horizon, num_envs, state, action_space)
         self.indicators = torch.zeros((self.horizon, self.num_envs)).to(device)
 
     def clear(self) -> None:
@@ -330,13 +330,42 @@ class IAARolloutBuffer(RolloutBuffer):
 class IAAPPO(PPO):
     """PPO agent for the IAA."""
 
-    def __init__(self, teacher_ppo_agent: PPO, *args: dict, **kwargs: dict):
-        super().__init__(*args, **kwargs)
-        self.buffer = IAARolloutBuffer()
-        self.introspection_decay = kwargs.get("introspection_decay", 0.99999)
-        self.burn_in = kwargs.get("burn_in", 0)
-        self.inspection_threshold = kwargs.get("inspection_threshold", 0.9)
+    def __init__(
+        self,
+        state_dim: torch.tensor,
+        action_dim: int,
+        lr_actor: float,
+        gamma: float,
+        k_epochs: int,
+        eps_clip: float,
+        minibatch_size: int,
+        env: gymnasium.Env,
+        horizon: int,
+        num_envs: int,
+        gae_lambda: float,
+        teacher_ppo_agent: PPO,
+        introspection_decay: float = 0.99999,
+        burn_in: int = 0,
+        introspection_threshold: float = 0.9,
+    ):
+        super().__init__(
+            state_dim,
+            action_dim,
+            lr_actor,
+            gamma,
+            k_epochs,
+            eps_clip,
+            minibatch_size,
+            env,
+            horizon,
+            num_envs,
+            gae_lambda,
+        )
+        self.buffer = IAARolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
         self.teacher_ppo_agent = teacher_ppo_agent
+        self.introspection_decay = introspection_decay
+        self.burn_in = burn_in
+        self.introspection_threshold = introspection_threshold
         if self.teacher_ppo_agent is None:
             raise ValueError("Teacher agent is None. Please specify pth model.")
 
@@ -347,7 +376,7 @@ class IAAPPO(PPO):
         if t > self.burn_in and p == 1:
             _, _, teacher_source_val = self.teacher_ppo_agent.policy_old(state)
             _, _, teacher_target_val = self.teacher_ppo_agent.policy(state)
-            return int(abs(teacher_target_val - teacher_source_val) <= self.inspection_threshold)
+            return int(abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold)
         return 0
 
     def select_action(self, state: dict, t: int) -> int:
