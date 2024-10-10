@@ -89,6 +89,10 @@ def test_ppo_agent(trainer: Trainer) -> None:
     next_obs, _ = env.reset()
     next_dones = np.zeros(ppo_agent.num_envs, dtype=bool)
     obs = ppo_agent.preprocess(next_obs)
+    print(ppo_agent.buffer.images.shape)
+    print(ppo_agent.buffer.directions.shape)
+    print(obs["image"].shape)
+    print(obs["direction"].shape)
     done = next_dones
     ppo_agent.buffer.images[t] = obs["image"]
     ppo_agent.buffer.directions[t] = obs["direction"]
@@ -103,7 +107,12 @@ def test_ppo_agent(trainer: Trainer) -> None:
         # introspect is true
         t = 1
         h = ppo_agent.introspect(obs, t)
-        print(h)
         assert h.shape == torch.Size([ppo_agent.num_envs]), f"Expected shape {torch.Size([ppo_agent.num_envs])}, got {h.shape}"
         ppo_agent.buffer.indicators[t] = h
-        print(ppo_agent.buffer.indicators[t])
+
+    actions, action_logprobs, state_vals = ppo_agent.select_action(obs, t)
+    assert actions.shape == torch.Size([ppo_agent.num_envs]), f"Expected shape {torch.Size([ppo_agent.num_envs])}, got {actions.shape}"
+    assert action_logprobs.shape == torch.Size(
+        [ppo_agent.num_envs],
+    ), f"Expected shape {torch.Size([ppo_agent.num_envs])}, got {action_logprobs.shape}"
+    assert state_vals.shape == torch.Size([ppo_agent.num_envs]), f"Expected shape {torch.Size([ppo_agent.num_envs])}, got {state_vals.shape}"

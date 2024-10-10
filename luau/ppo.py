@@ -313,7 +313,7 @@ class PPO:
             image = image.unsqueeze(0).to(device)
         else:
             image = image.permute(0, 3, 1, 2).to(device)
-        direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
+        direction = torch.tensor(direction, dtype=torch.float).to(device)
         x = {"direction": direction, "image": image}
         return x
 
@@ -392,10 +392,16 @@ class IAAPPO(PPO):
         """Select an action."""
         with torch.no_grad():
             h = self.introspect(obs, t)
-            if h:
-                actions, action_logprobs, state_vals = self.teacher_ppo_agent.policy(obs)
-            else:
-                actions, action_logprobs, state_vals = self.policy(obs)
+            actions = torch.zeros((self.num_envs,), dtype=torch.long).to(device)
+            action_logprobs = torch.zeros((self.num_envs,)).to(device)
+            state_vals = torch.zeros((self.num_envs,)).to(device)
+
+            for i in range(self.num_envs):
+                single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
+                if h[i]:
+                    actions[i], action_logprobs[i], state_vals[i] = self.teacher_ppo_agent.policy(single_obs)
+                else:
+                    actions[i], action_logprobs[i], state_vals[i] = self.policy(single_obs)
             self.buffer.indicators[t] = h
         return actions, action_logprobs, state_vals
 
