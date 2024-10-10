@@ -1,4 +1,5 @@
 # %%
+import copy
 from pathlib import Path
 
 import gymnasium
@@ -369,38 +370,34 @@ class IAAPPO(PPO):
         )
         self.buffer = IAARolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
         self.teacher_ppo_agent = teacher_ppo_agent
+        self.teacher_target = self.teacher_ppo_agent
+        self.teacher_target.policy = copy.deepcopy(self.teacher_ppo_agent.policy)
         self.introspection_decay = introspection_decay
         self.burn_in = burn_in
         self.introspection_threshold = introspection_threshold
         if self.teacher_ppo_agent is None:
             raise ValueError("Teacher agent is None. Please specify pth model.")
 
-    def introspect(self, t: int, state: dict) -> int:
+    def introspect(self, t: int, obs: dict) -> int:
         """Introspect."""
         probability = self.introspection_decay ** (max(0, t - self.burn_in))
         p = Bernoulli(probability).sample()
         if t > self.burn_in and p == 1:
-            _, _, teacher_source_val = self.teacher_ppo_agent.policy_old(state)
-            _, _, teacher_target_val = self.teacher_ppo_agent.policy(state)
+            _, _, teacher_source_val = self.teacher_ppo_agent.policy(obs)
+            _, _, teacher_target_val = self.teacher_target.policy(obs)
             return int(abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold)
-        return 0
+        return torch.zeros((self.num_envs,)).to(device)
 
-    def select_action(self, state: dict, t: int) -> int:
+    def select_action(self, obs: dict, t: int) -> int:
         """Select an action."""
-        state = self.preprocess(state)
-        h = self.introspect(t, state)
-        if h:
-            with torch.no_grad():
-                action, action_logprob, state_val = self.teacher_ppo_agent.policy_old(state)
-        else:
-            with torch.no_grad():
-                action, action_logprob, state_val = self.policy_old(state)
-        self.buffer.states.append(state)
-        self.buffer.actions.append(action)
-        self.buffer.logprobs.append(action_logprob)
-        self.buffer.state_values.append(state_val)
-        self.buffer.indicators.append(h)
-        return action.item()
+        with torch.no_grad():
+            h = self.introspect(t, obs)
+            if h:
+                actions, action_logprobs, state_vals = self.teacher_ppo_agent.policy(obs)
+            else:
+                actions, action_logprobs, state_vals = self.policy(obs)
+            self.buffer.indicators[t] = h
+        return actions, action_logprobs, state_vals
 
     def correct(self) -> tuple[torch.tensor, torch.tensor]:
         """Apply off-policy correction."""

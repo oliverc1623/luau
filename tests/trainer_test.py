@@ -55,7 +55,7 @@ def test_get_vector_env_seeding(trainer: Trainer) -> None:
 
 
 def test_ppo_agent(trainer: Trainer) -> None:
-    """Test that the PPO agent is created correctly."""
+    """Test that the PPO/IAAPPO agent is created correctly."""
     env = trainer.get_vector_env(47)
     ppo_agent = trainer.get_ppo_agent(env)
     assert isinstance(ppo_agent, ALGORITHM_CLASSES[trainer.algorithm]), "ppo_agent is not an instance of PPO or IAAPPO"
