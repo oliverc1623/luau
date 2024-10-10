@@ -234,7 +234,10 @@ class Trainer:
 
                 # Select actions and store them in the PPO agent's buffer
                 with torch.no_grad():
-                    actions, action_logprobs, state_vals = ppo_agent.policy(obs)
+                    if self.algorithm == "IAAPPO":
+                        actions, action_logprobs, state_vals = self.select_action(obs, step)
+                    else:
+                        actions, action_logprobs, state_vals = ppo_agent.select_action(obs)
                     ppo_agent.buffer.state_values[step] = state_vals
                 ppo_agent.buffer.actions[step] = actions
                 ppo_agent.buffer.logprobs[step] = action_logprobs

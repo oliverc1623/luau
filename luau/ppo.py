@@ -187,6 +187,12 @@ class PPO:
         self.num_envs = num_envs
         self.gae_lambda = gae_lambda
 
+    def select_action(self, obs: dict) -> int:
+        """Select an action."""
+        with torch.no_grad():
+            action, action_logprob, state_val = self.policy(obs)
+            return action, action_logprob, state_val
+
     def _calculate_gae(self, next_obs: torch.tensor, next_done: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         # Generalized Advantage Estimation (GAE)
         with torch.no_grad():
