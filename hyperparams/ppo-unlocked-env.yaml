@@ -3,7 +3,6 @@ algorithm: "PPO"                     # name of the algorithm, enter "PPO" or "IA
 env_name: "IntrospectiveEnvUnlocked"         # name of the environment
 door_locked: False                   # is the door locked?
 size: 9                              # gridworld env size
-has_continuous_action_space: False   # continuous action space; else discrete
 save_frames: False                   # save frames?
 save_model_freq: 279                 # save model frequency (in num update iter - not timesteps)
 image_observation: False             # rgb-images as observations?

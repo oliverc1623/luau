@@ -1,4 +1,5 @@
 # %%
+import copy
 from pathlib import Path
 
 import gymnasium
@@ -187,6 +188,12 @@ class PPO:
         self.num_envs = num_envs
         self.gae_lambda = gae_lambda
 
+    def select_action(self, obs: dict) -> int:
+        """Select an action."""
+        with torch.no_grad():
+            action, action_logprob, state_val = self.policy(obs)
+            return action, action_logprob, state_val
+
     def _calculate_gae(self, next_obs: torch.tensor, next_done: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         # Generalized Advantage Estimation (GAE)
         with torch.no_grad():
@@ -306,7 +313,7 @@ class PPO:
             image = image.unsqueeze(0).to(device)
         else:
             image = image.permute(0, 3, 1, 2).to(device)
-        direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
+        direction = torch.tensor(direction, dtype=torch.float).to(device)
         x = {"direction": direction, "image": image}
         return x
 
@@ -317,8 +324,8 @@ class PPO:
 class IAARolloutBuffer(RolloutBuffer):
     """A buffer to store rollout data for Introspective Action Advising (IAA)."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, horizon: int, num_envs: int, state: dict, action_space: gymnasium.Space):
+        super().__init__(horizon, num_envs, state, action_space)
         self.indicators = torch.zeros((self.horizon, self.num_envs)).to(device)
 
     def clear(self) -> None:
@@ -330,42 +337,73 @@ class IAARolloutBuffer(RolloutBuffer):
 class IAAPPO(PPO):
     """PPO agent for the IAA."""
 
-    def __init__(self, teacher_ppo_agent: PPO, *args: dict, **kwargs: dict):
-        super().__init__(*args, **kwargs)
-        self.buffer = IAARolloutBuffer()
-        self.introspection_decay = kwargs.get("introspection_decay", 0.99999)
-        self.burn_in = kwargs.get("burn_in", 0)
-        self.inspection_threshold = kwargs.get("inspection_threshold", 0.9)
+    def __init__(
+        self,
+        state_dim: torch.tensor,
+        action_dim: int,
+        lr_actor: float,
+        gamma: float,
+        k_epochs: int,
+        eps_clip: float,
+        minibatch_size: int,
+        env: gymnasium.Env,
+        horizon: int,
+        num_envs: int,
+        gae_lambda: float,
+        teacher_ppo_agent: PPO,
+        introspection_decay: float = 0.99999,
+        burn_in: int = 0,
+        introspection_threshold: float = 0.9,
+    ):
+        super().__init__(
+            state_dim,
+            action_dim,
+            lr_actor,
+            gamma,
+            k_epochs,
+            eps_clip,
+            minibatch_size,
+            env,
+            horizon,
+            num_envs,
+            gae_lambda,
+        )
+        self.buffer = IAARolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
         self.teacher_ppo_agent = teacher_ppo_agent
+        self.teacher_target = self.teacher_ppo_agent
+        self.teacher_target.policy = copy.deepcopy(self.teacher_ppo_agent.policy)
+        self.introspection_decay = introspection_decay
+        self.burn_in = burn_in
+        self.introspection_threshold = introspection_threshold
         if self.teacher_ppo_agent is None:
             raise ValueError("Teacher agent is None. Please specify pth model.")
 
-    def introspect(self, t: int, state: dict) -> int:
+    def introspect(self, obs: dict, t: int) -> int:
         """Introspect."""
         probability = self.introspection_decay ** (max(0, t - self.burn_in))
         p = Bernoulli(probability).sample()
         if t > self.burn_in and p == 1:
-            _, _, teacher_source_val = self.teacher_ppo_agent.policy_old(state)
-            _, _, teacher_target_val = self.teacher_ppo_agent.policy(state)
-            return int(abs(teacher_target_val - teacher_source_val) <= self.inspection_threshold)
-        return 0
+            _, _, teacher_source_val = self.teacher_ppo_agent.policy(obs)
+            _, _, teacher_target_val = self.teacher_target.policy(obs)
+            return abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold
+        return torch.zeros((self.num_envs,)).to(device)
 
-    def select_action(self, state: dict, t: int) -> int:
+    def select_action(self, obs: dict, t: int) -> int:
         """Select an action."""
-        state = self.preprocess(state)
-        h = self.introspect(t, state)
-        if h:
-            with torch.no_grad():
-                action, action_logprob, state_val = self.teacher_ppo_agent.policy_old(state)
-        else:
-            with torch.no_grad():
-                action, action_logprob, state_val = self.policy_old(state)
-        self.buffer.states.append(state)
-        self.buffer.actions.append(action)
-        self.buffer.logprobs.append(action_logprob)
-        self.buffer.state_values.append(state_val)
-        self.buffer.indicators.append(h)
-        return action.item()
+        with torch.no_grad():
+            h = self.introspect(obs, t)
+            actions = torch.zeros((self.num_envs,), dtype=torch.long).to(device)
+            action_logprobs = torch.zeros((self.num_envs,)).to(device)
+            state_vals = torch.zeros((self.num_envs,)).to(device)
+
+            for i in range(self.num_envs):
+                single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
+                if h[i]:
+                    actions[i], action_logprobs[i], state_vals[i] = self.teacher_ppo_agent.policy(single_obs)
+                else:
+                    actions[i], action_logprobs[i], state_vals[i] = self.policy(single_obs)
+            self.buffer.indicators[t] = h
+        return actions, action_logprobs, state_vals
 
     def correct(self) -> tuple[torch.tensor, torch.tensor]:
         """Apply off-policy correction."""
