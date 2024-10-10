@@ -396,12 +396,33 @@ class IAAPPO(PPO):
             action_logprobs = torch.zeros((self.num_envs,)).to(device)
             state_vals = torch.zeros((self.num_envs,)).to(device)
 
-            for i in range(self.num_envs):
-                single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
-                if h[i]:
-                    actions[i], action_logprobs[i], state_vals[i] = self.teacher_ppo_agent.policy(single_obs)
-                else:
-                    actions[i], action_logprobs[i], state_vals[i] = self.policy(single_obs)
+            # Create boolean masks for teacher and student policies
+            mask_teacher = h
+            mask_student = ~h
+
+            # Process teacher policy
+            if mask_teacher.any():
+                obs_teacher = {
+                    "image": obs["image"][mask_teacher],
+                    "direction": obs["direction"][mask_teacher],
+                }
+                print(obs["image"][mask_teacher].shape)
+                actions_teacher, action_logprobs_teacher, state_vals_teacher = self.teacher_ppo_agent.policy(obs_teacher)
+                actions[mask_teacher] = actions_teacher
+                action_logprobs[mask_teacher] = action_logprobs_teacher
+                state_vals[mask_teacher] = state_vals_teacher
+
+            # Process student policy
+            if mask_student.any():
+                obs_student = {
+                    "image": obs["image"][mask_student],
+                    "direction": obs["direction"][mask_student],
+                }
+                actions_student, action_logprobs_student, state_vals_student = self.policy(obs_student)
+                actions[mask_student] = actions_student
+                action_logprobs[mask_student] = action_logprobs_student
+                state_vals[mask_student] = state_vals_student
+
             self.buffer.indicators[t] = h
         return actions, action_logprobs, state_vals
 
