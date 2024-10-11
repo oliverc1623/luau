@@ -131,7 +131,7 @@ class ActorCritic(nn.Module):
         image = state["image"]
 
         # actor
-        logits = self._actor_forward(image, direction).detach()
+        logits = self._actor_forward(image, direction)
         dist = Categorical(logits=logits)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
@@ -139,7 +139,7 @@ class ActorCritic(nn.Module):
         # critic
         state_values = self._critic_forward(image, direction)
 
-        return action, action_logprob, state_values
+        return action.detach(), action_logprob.detach(), state_values.detach()
 
     def evaluate(self, states: dict, actions: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Evaluate the policy."""
@@ -356,7 +356,7 @@ class IAAPPO(PPO):
         horizon: int,
         num_envs: int,
         gae_lambda: float,
-        teacher_ppo_agent: PPO,
+        teacher_source: PPO,
         introspection_decay: float = 0.99999,
         burn_in: int = 0,
         introspection_threshold: float = 0.9,
@@ -387,13 +387,13 @@ class IAAPPO(PPO):
         self.gae_lambda = gae_lambda
 
         self.buffer = IAARolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
-        self.teacher_ppo_agent = teacher_ppo_agent
-        self.teacher_target = self.teacher_ppo_agent
-        self.teacher_target.policy = copy.deepcopy(self.teacher_ppo_agent.policy)
+        self.teacher_source = teacher_source
+        self.teacher_target = self.teacher_source
+        self.teacher_target.policy = copy.deepcopy(self.teacher_source.policy)
         self.introspection_decay = introspection_decay
         self.burn_in = burn_in
         self.introspection_threshold = introspection_threshold
-        if self.teacher_ppo_agent is None:
+        if self.teacher_source is None:
             raise ValueError("Teacher agent is None. Please specify pth model.")
 
     def introspect(self, obs: dict, t: int) -> int:
@@ -401,7 +401,7 @@ class IAAPPO(PPO):
         probability = self.introspection_decay ** (max(0, t - self.burn_in))
         p = Bernoulli(probability).sample()
         if t > self.burn_in and p == 1:
-            _, _, teacher_source_val = self.teacher_ppo_agent.policy(obs)
+            _, _, teacher_source_val = self.teacher_source.policy(obs)
             _, _, teacher_target_val = self.teacher_target.policy(obs)
             return abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold
         return torch.zeros((self.num_envs,)).to(device)
@@ -416,7 +416,7 @@ class IAAPPO(PPO):
             for i in range(self.num_envs):
                 single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
                 if h[i]:
-                    actions[i], action_logprobs[i], state_vals[i] = self.teacher_target.policy(single_obs)
+                    actions[i], action_logprobs[i], state_vals[i] = self.teacher_source.policy(single_obs)
                 else:
                     actions[i], action_logprobs[i], state_vals[i] = self.policy(single_obs)
             self.buffer.indicators[t] = h
@@ -475,7 +475,7 @@ class IAAPPO(PPO):
                 "direction": teacher_directions,
             }
             # Compute importance sampling ratios
-            _, teacher_action_logprob, _ = self.teacher_ppo_agent.policy(teacher_states)
+            _, teacher_action_logprob, _ = self.teacher_source.policy(teacher_states)
             ratio = teacher_action_logprob / teacher_logprobs
             ratio_clamped = torch.clamp(ratio, -0.2, 0.2)
             teacher_ratios_flat[mask_student] = ratio_clamped
@@ -551,7 +551,7 @@ class IAAPPO(PPO):
                 v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped) * b_student_correction[mb_inds]
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)  # * b_student_correction[mb_inds]
                 v_loss = 0.5 * v_loss_max.mean()
 
                 # entropy loss
@@ -561,7 +561,7 @@ class IAAPPO(PPO):
                 loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
                 self.optimizer.zero_grad()  # take gradient step
                 loss.backward()
-                self.optimizer.step()  #
+                self.optimizer.step()
 
         # log debug variables
         with torch.no_grad():
@@ -608,7 +608,7 @@ class IAAPPO(PPO):
 
                 states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 # Evaluating old actions and values
-                _, state_values, _ = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
+                _, state_values, _ = self.teacher_target.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
                 # value function loss + clipping
                 v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2

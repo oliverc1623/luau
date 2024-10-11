@@ -169,7 +169,7 @@ class Trainer:
                 horizon=self.horizon,
                 num_envs=self.num_envs,
                 gae_lambda=self.gae_lambda,
-                teacher_ppo_agent=teacher_ppo_agent,
+                teacher_source=teacher_ppo_agent,
                 introspection_decay=self.introspection_decay,
                 burn_in=self.burn_in,
                 introspection_threshold=self.introspection_threshold,
