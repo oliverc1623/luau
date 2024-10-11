@@ -114,3 +114,17 @@ def test_ppo_agent(trainer: Trainer) -> None:
         [ppo_agent.num_envs],
     ), f"Expected shape {torch.Size([ppo_agent.num_envs])}, got {action_logprobs.shape}"
     assert state_vals.shape == torch.Size([ppo_agent.num_envs]), f"Expected shape {torch.Size([ppo_agent.num_envs])}, got {state_vals.shape}"
+
+    teacher_correction, student_correction = ppo_agent.correct()
+    assert teacher_correction.shape == torch.Size(
+        [
+            ppo_agent.horizon,
+            ppo_agent.num_envs,
+        ],
+    ), f"Expected shape {torch.Size([ppo_agent.horizon, ppo_agent.num_envs])}, got {teacher_correction.shape}"
+    assert student_correction.shape == torch.Size(
+        [
+            ppo_agent.horizon,
+            ppo_agent.num_envs,
+        ],
+    ), f"Expected shape {torch.Size([ppo_agent.horizon, ppo_agent.num_envs])}, got {student_correction.shape}"

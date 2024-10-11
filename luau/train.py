@@ -110,12 +110,6 @@ class Trainer:
             img = env.render()
             plt.imsave(f"frames/frame_{time_step:06}.png", img)
 
-    def select_action(self, ppo_agent: PPO, state: dict, time_step: int) -> int:
-        """Select an action based on the algorithm."""
-        if self.algorithm == "IAAPPO":
-            return ppo_agent.select_action(state, time_step)
-        return ppo_agent.select_action(state)
-
     def _make_env(self, seed: int) -> IntrospectiveEnv:
         """Create the environment."""
 
@@ -235,7 +229,7 @@ class Trainer:
                 # Select actions and store them in the PPO agent's buffer
                 with torch.no_grad():
                     if self.algorithm == "IAAPPO":
-                        actions, action_logprobs, state_vals = self.select_action(obs, step)
+                        actions, action_logprobs, state_vals = ppo_agent.select_action(obs, step)
                     else:
                         actions, action_logprobs, state_vals = ppo_agent.select_action(obs)
                     ppo_agent.buffer.state_values[step] = state_vals

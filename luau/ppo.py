@@ -131,7 +131,7 @@ class ActorCritic(nn.Module):
         image = state["image"]
 
         # actor
-        logits = self._actor_forward(image, direction)
+        logits = self._actor_forward(image, direction).detach()
         dist = Categorical(logits=logits)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
@@ -145,6 +145,12 @@ class ActorCritic(nn.Module):
         """Evaluate the policy."""
         images = states["image"]
         directions = states["direction"]
+
+        # Debugging statements
+        if torch.isnan(images).any() or torch.isinf(images).any():
+            raise ValueError("NaN or Inf detected in images.")
+        if torch.isnan(directions).any() or torch.isinf(directions).any():
+            raise ValueError("NaN or Inf detected in directions.")
 
         # actor
         logits = self._actor_forward(images, directions)
@@ -368,6 +374,18 @@ class IAAPPO(PPO):
             num_envs,
             gae_lambda,
         )
+        self.gamma = gamma
+        self.eps_clip = eps_clip
+        self.k_epochs = k_epochs
+        self.minibatch_size = minibatch_size
+        self.policy = ActorCritic(state_dim, action_dim).to(device)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
+        self.MseLoss = nn.MSELoss()
+        self.env = env
+        self.horizon = horizon
+        self.num_envs = num_envs
+        self.gae_lambda = gae_lambda
+
         self.buffer = IAARolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
         self.teacher_ppo_agent = teacher_ppo_agent
         self.teacher_target = self.teacher_ppo_agent
@@ -395,94 +413,218 @@ class IAAPPO(PPO):
             actions = torch.zeros((self.num_envs,), dtype=torch.long).to(device)
             action_logprobs = torch.zeros((self.num_envs,)).to(device)
             state_vals = torch.zeros((self.num_envs,)).to(device)
-
-            # Create boolean masks for teacher and student policies
-            mask_teacher = h
-            mask_student = ~h
-
-            # Process teacher policy
-            if mask_teacher.any():
-                obs_teacher = {
-                    "image": obs["image"][mask_teacher],
-                    "direction": obs["direction"][mask_teacher],
-                }
-                print(obs["image"][mask_teacher].shape)
-                actions_teacher, action_logprobs_teacher, state_vals_teacher = self.teacher_ppo_agent.policy(obs_teacher)
-                actions[mask_teacher] = actions_teacher
-                action_logprobs[mask_teacher] = action_logprobs_teacher
-                state_vals[mask_teacher] = state_vals_teacher
-
-            # Process student policy
-            if mask_student.any():
-                obs_student = {
-                    "image": obs["image"][mask_student],
-                    "direction": obs["direction"][mask_student],
-                }
-                actions_student, action_logprobs_student, state_vals_student = self.policy(obs_student)
-                actions[mask_student] = actions_student
-                action_logprobs[mask_student] = action_logprobs_student
-                state_vals[mask_student] = state_vals_student
-
+            for i in range(self.num_envs):
+                single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
+                if h[i]:
+                    actions[i], action_logprobs[i], state_vals[i] = self.teacher_target.policy(single_obs)
+                else:
+                    actions[i], action_logprobs[i], state_vals[i] = self.policy(single_obs)
             self.buffer.indicators[t] = h
         return actions, action_logprobs, state_vals
 
     def correct(self) -> tuple[torch.tensor, torch.tensor]:
         """Apply off-policy correction."""
-        teacher_ratios = []
-        student_ratios = []
-        for state, indicator, logprob in zip(self.buffer.states, self.buffer.indicators, self.buffer.logprobs, strict=False):
-            if indicator:
-                # compute importance sampling ratio
-                _, student_action_logprob, _ = self.policy_old(state)
-                ratio = student_action_logprob / logprob
-                teacher_ratios.append(1.0)
-                student_ratios.append(torch.clamp(ratio, -2, 2).item())
+        # Assuming self.buffer.states is a dict with 'image' and 'direction' tensors
+        # Each of shape (horizon, num_envs, ...)
+        # self.buffer.indicators: tensor of shape (horizon, num_envs)
+        # self.buffer.logprobs: tensor of shape (horizon, num_envs)
 
-            else:
-                # compute importance sampling ratio
-                _, teacher_action_logprob, _ = self.teacher_ppo_agent.policy_old(state)
-                ratio = teacher_action_logprob / logprob
-                teacher_ratios.append(torch.clamp(ratio, -0.2, 0.2).item())
-                student_ratios.append(1.0)
+        horizon, num_envs = self.buffer.indicators.shape
 
-        teacher_ratios = torch.tensor(teacher_ratios).float()
-        student_ratios = torch.tensor(student_ratios).float()
+        # Flatten tensors to process all time steps and environments at once
+        flat_indicators = self.buffer.indicators.reshape(-1)
+        flat_logprobs = self.buffer.logprobs.reshape(-1)
+
+        flat_images = self.buffer.images.view(-1, *self.buffer.images.shape[2:])
+        flat_directions = self.buffer.directions.view(-1, *self.buffer.directions.shape[2:])
+
+        # Initialize ratio tensors
+        teacher_ratios_flat = torch.ones_like(flat_logprobs)
+        student_ratios_flat = torch.ones_like(flat_logprobs)
+
+        # Create boolean masks
+        mask_teacher = flat_indicators.bool()
+        mask_student = ~mask_teacher
+
+        # Process student policy where indicator is True
+        if mask_teacher.any():
+            student_images = flat_images[mask_teacher]
+            student_directions = flat_directions[mask_teacher]
+            student_logprobs = flat_logprobs[mask_teacher]
+            student_states = {
+                "image": student_images,
+                "direction": student_directions,
+            }
+            student_logprobs = flat_logprobs[mask_teacher]
+
+            # Compute importance sampling ratios
+            _, student_action_logprob, _ = self.policy(student_states)
+            ratio = student_action_logprob / student_logprobs
+            ratio_clamped = torch.clamp(ratio, -2, 2)
+            student_ratios_flat[mask_teacher] = ratio_clamped
+            teacher_ratios_flat[mask_teacher] = 1.0
+
+        # Process teacher policy where indicator is False
+        if mask_student.any():
+            teacher_images = flat_images[mask_student]
+            teacher_directions = flat_directions[mask_student]
+            teacher_logprobs = flat_logprobs[mask_student]
+
+            teacher_states = {
+                "image": teacher_images,
+                "direction": teacher_directions,
+            }
+            # Compute importance sampling ratios
+            _, teacher_action_logprob, _ = self.teacher_ppo_agent.policy(teacher_states)
+            ratio = teacher_action_logprob / teacher_logprobs
+            ratio_clamped = torch.clamp(ratio, -0.2, 0.2)
+            teacher_ratios_flat[mask_student] = ratio_clamped
+            student_ratios_flat[mask_student] = 1.0
+
+        # Reshape the flat ratios back to (horizon, num_envs)
+        teacher_ratios = teacher_ratios_flat.view(horizon, num_envs)
+        student_ratios = student_ratios_flat.view(horizon, num_envs)
+
         return teacher_ratios, student_ratios
 
-    def update(self) -> None:
+    def update(self, next_obs: torch.tensor, next_done: torch.tensor, writer: SummaryWriter, rollout_step: int) -> None:
         """Update the policy with student correction."""
         teacher_correction, student_correction = self.correct()
-        self._common_update(teacher_correction, student_correction)
-        self._common_update(teacher_correction)
-        self.buffer.clear()
+        self.update_student(next_obs, next_done, writer, rollout_step, student_correction)
+        self.update_teacher_value(next_obs, next_done, writer, rollout_step, teacher_correction)
 
-    def _common_update(self, teacher_correction: torch.tensor, student_correction: torch.tensor_split = None) -> None:
-        """Update logic for both update and update_critic."""
-        rewards = self._calculate_rewards()
-        old_actions, old_logprobs, old_state_values = self._tensorize_rollout_buffer()
+    def update_student(
+        self,
+        next_obs: torch.tensor,
+        next_done: torch.tensor,
+        writer: SummaryWriter,
+        rollout_step: int,
+        student_correction: torch.tensor,
+    ) -> None:
+        """Update the student policy."""
+        # Calculate rewards and advantages using GAE
+        rewards, advantages = self._calculate_gae(next_obs, next_done)
 
-        # Calculate advantages
-        advantages = rewards.detach() - old_state_values.detach()
+        # Prepare data for minibatch shuffling
+        b_rewards = torch.flatten(rewards, 0, 1)
+        b_advantages = torch.flatten(advantages, 0, 1)
+        b_actions = torch.flatten(self.buffer.actions, 0, 1)
+        b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1)
+        b_images = torch.flatten(self.buffer.images, 0, 1)
+        b_directions = torch.flatten(self.buffer.directions, 0, 1)
+        b_state_values = torch.flatten(self.buffer.state_values, 0, 1)
+        b_student_correction = torch.flatten(student_correction, 0, 1)
+
+        batch_size = self.num_envs * self.horizon
+        b_inds = np.arange(batch_size)
+        clipfracs = []
 
         # Optimize policy for K epochs
         for _ in range(self.k_epochs):
-            logprobs, state_values, dist_entropy = self.policy.evaluate(self.buffer.states, old_actions)
-            state_values = torch.squeeze(state_values)
+            # Shuffle the data for each epoch
+            np.random.shuffle(b_inds)  # noqa: NPY002
 
-            # Determine which correction to apply
-            correction = student_correction if student_correction is not None else teacher_correction
+            # Split data into minibatches
+            for i in range(0, batch_size, self.minibatch_size):
+                end = i + self.minibatch_size
+                mb_inds = b_inds[i:end]
 
-            # Calculate ratios and loss
-            ratios = torch.exp(logprobs - old_logprobs.detach()) * correction.to(device)
-            surr1 = ratios * advantages
-            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-            vf_loss = self.MseLoss(state_values, rewards)
+                states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
+                # Evaluating old actions and values
+                logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
-            # Final loss computation
-            loss = -torch.min(surr1, surr2) + 0.5 * vf_loss - 0.01 * dist_entropy
-            self.optimizer.zero_grad()
-            loss.mean().backward()
-            self.optimizer.step()
+                # policy gradient
+                log_ratio = logprobs - b_logprobs[mb_inds]
+                ratios = log_ratio.exp() * b_student_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_approx_kl = (-log_ratio).mean()
+                    approx_kl = ((ratios - 1) - log_ratio).mean()
+                    clipfracs += [((ratios - 1.0).abs() > self.eps_clip).float().mean().item()]
+                mb_advantages = b_advantages[mb_inds]
+                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                surr1 = -mb_advantages * ratios
+                surr2 = -mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                pg_loss = torch.max(surr1, surr2).mean()
 
-        if student_correction is not None:
-            self.policy_old.load_state_dict(self.policy.state_dict())
+                # value function loss + clipping
+                v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
+                v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
+                v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped) * b_student_correction[mb_inds]
+                v_loss = 0.5 * v_loss_max.mean()
+
+                # entropy loss
+                entropy_loss = dist_entropy.mean()
+
+                # final loss of clipped objective PPO
+                loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
+                self.optimizer.zero_grad()  # take gradient step
+                loss.backward()
+                self.optimizer.step()  #
+
+        # log debug variables
+        with torch.no_grad():
+            writer.add_scalar("debugging/policy_loss", pg_loss, rollout_step)
+            writer.add_scalar("debugging/value_loss", v_loss, rollout_step)
+            writer.add_scalar("debugging/entropy_loss", entropy_loss, rollout_step)
+            writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), rollout_step)
+            writer.add_scalar("debugging/approx_kl", approx_kl.item(), rollout_step)
+            writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), rollout_step)
+
+    # TODO: put update teacher in update student. i.e., be consistent with minibatches
+    def update_teacher_value(
+        self,
+        next_obs: torch.tensor,
+        next_done: torch.tensor,
+        writer: SummaryWriter,
+        rollout_step: int,
+        teacher_correction: torch.tensor,
+    ) -> None:
+        """Update the student policy."""
+        # Calculate rewards and advantages using GAE
+        rewards, _ = self._calculate_gae(next_obs, next_done)
+
+        # Prepare data for minibatch shuffling
+        b_rewards = torch.flatten(rewards, 0, 1)
+        b_actions = torch.flatten(self.buffer.actions, 0, 1)
+        b_images = torch.flatten(self.buffer.images, 0, 1)
+        b_directions = torch.flatten(self.buffer.directions, 0, 1)
+        b_state_values = torch.flatten(self.buffer.state_values, 0, 1)
+        b_teacher_correction = torch.flatten(teacher_correction, 0, 1)
+
+        batch_size = self.num_envs * self.horizon
+        b_inds = np.arange(batch_size)
+
+        # Optimize policy for K epochs
+        for _ in range(self.k_epochs):
+            # Shuffle the data for each epoch
+            np.random.shuffle(b_inds)  # noqa: NPY002
+
+            # Split data into minibatches
+            for i in range(0, batch_size, self.minibatch_size):
+                end = i + self.minibatch_size
+                mb_inds = b_inds[i:end]
+
+                states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
+                # Evaluating old actions and values
+                _, state_values, _ = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
+
+                # value function loss + clipping
+                v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
+                v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
+                v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped) * b_teacher_correction[mb_inds]
+                v_loss = 0.5 * v_loss_max.mean()
+
+                # final loss of clipped objective PPO
+                loss = v_loss * 0.5  # final loss of clipped objective PPO
+                self.teacher_target.optimizer.zero_grad()  # take gradient step
+                loss.backward()
+                self.teacher_target.optimizer.step()
+
+        # log debug variables
+        with torch.no_grad():
+            writer.add_scalar("debugging/teacher_value_loss", v_loss, rollout_step)
+
+        self.buffer.clear()  # clear buffer
