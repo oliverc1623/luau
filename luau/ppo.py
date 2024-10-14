@@ -628,3 +628,20 @@ class IAAPPO(PPO):
             writer.add_scalar("debugging/teacher_value_loss", v_loss, rollout_step)
 
         self.buffer.clear()  # clear buffer
+
+
+# %%
+class InferencePPO(PPO):
+    """Proximal Policy Optimization (PPO) agent."""
+
+    def __init__(
+        self,
+        state_dim: torch.tensor,
+        action_dim: int,
+        env: gymnasium.Env,
+    ):
+        self.env = env
+        self.policy = ActorCritic(state_dim, action_dim).to(device)
+
+
+# %%
