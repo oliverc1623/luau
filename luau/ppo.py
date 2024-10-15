@@ -459,9 +459,8 @@ class IAAPPO(PPO):
 
             # Compute importance sampling ratios
             _, student_action_logprob, _ = self.policy(student_states)
-            ratio = student_action_logprob / student_logprobs
-            ratio_clamped = torch.clamp(ratio, -2, 2)
-            student_ratios_flat[mask_teacher] = ratio_clamped
+            ratio = torch.exp(student_action_logprob - student_logprobs)
+            student_ratios_flat[mask_teacher] = ratio
             teacher_ratios_flat[mask_teacher] = 1.0
 
         # Process teacher policy where indicator is False
@@ -476,15 +475,13 @@ class IAAPPO(PPO):
             }
             # Compute importance sampling ratios
             _, teacher_action_logprob, _ = self.teacher_source.policy(teacher_states)
-            ratio = teacher_action_logprob / teacher_logprobs
-            ratio_clamped = torch.clamp(ratio, -0.2, 0.2)
-            teacher_ratios_flat[mask_student] = ratio_clamped
+            ratio = torch.exp(teacher_action_logprob - teacher_logprobs)
+            teacher_ratios_flat[mask_student] = ratio
             student_ratios_flat[mask_student] = 1.0
 
         # Reshape the flat ratios back to (horizon, num_envs)
         teacher_ratios = teacher_ratios_flat.view(horizon, num_envs)
         student_ratios = student_ratios_flat.view(horizon, num_envs)
-
         return teacher_ratios, student_ratios
 
     def update(self, next_obs: torch.tensor, next_done: torch.tensor, writer: SummaryWriter, rollout_step: int) -> None:
@@ -535,7 +532,7 @@ class IAAPPO(PPO):
 
                 # policy gradient
                 log_ratio = logprobs - b_logprobs[mb_inds]
-                ratios = log_ratio.exp() * b_student_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
+                ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-log_ratio).mean()
@@ -559,6 +556,7 @@ class IAAPPO(PPO):
 
                 # final loss of clipped objective PPO
                 loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
+                loss = torch.mean(loss * b_student_correction[mb_inds])
                 self.optimizer.zero_grad()  # take gradient step
                 loss.backward()
                 self.optimizer.step()
@@ -583,11 +581,13 @@ class IAAPPO(PPO):
     ) -> None:
         """Update the student policy."""
         # Calculate rewards and advantages using GAE
-        rewards, _ = self._calculate_gae(next_obs, next_done)
+        rewards, advantages = self._calculate_gae(next_obs, next_done)
 
         # Prepare data for minibatch shuffling
         b_rewards = torch.flatten(rewards, 0, 1)
+        b_advantages = torch.flatten(advantages, 0, 1)
         b_actions = torch.flatten(self.buffer.actions, 0, 1)
+        b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1)
         b_images = torch.flatten(self.buffer.images, 0, 1)
         b_directions = torch.flatten(self.buffer.directions, 0, 1)
         b_state_values = torch.flatten(self.buffer.state_values, 0, 1)
@@ -608,23 +608,38 @@ class IAAPPO(PPO):
 
                 states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 # Evaluating old actions and values
-                _, state_values, _ = self.teacher_target.policy.evaluate(states_mb, b_actions.long()[mb_inds])
+                logprobs, state_values, dist_entropy = self.teacher_target.policy.evaluate(states_mb, b_actions.long()[mb_inds])
+
+                # policy gradient
+                log_ratio = logprobs - b_logprobs[mb_inds]
+                ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
+
+                mb_advantages = b_advantages[mb_inds]
+                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                surr1 = -mb_advantages * ratios
+                surr2 = -mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                pg_loss = torch.max(surr1, surr2).mean()
 
                 # value function loss + clipping
                 v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped) * b_teacher_correction[mb_inds]
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss = 0.5 * v_loss_max.mean()
 
+                # entropy loss
+                entropy_loss = dist_entropy.mean()
+
                 # final loss of clipped objective PPO
-                loss = v_loss * 0.5  # final loss of clipped objective PPO
+                loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
+                loss = torch.mean(loss * b_teacher_correction[mb_inds])
+
                 self.teacher_target.optimizer.zero_grad()  # take gradient step
                 loss.backward()
                 self.teacher_target.optimizer.step()
 
         # log debug variables
         with torch.no_grad():
-            writer.add_scalar("debugging/teacher_value_loss", v_loss, rollout_step)
+            writer.add_scalar("debugging/teacher_value_loss", loss, rollout_step)
 
         self.buffer.clear()  # clear buffer
