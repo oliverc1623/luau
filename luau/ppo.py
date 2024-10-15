@@ -385,9 +385,9 @@ class IAAPPO(PPO):
         self.horizon = horizon
         self.num_envs = num_envs
         self.gae_lambda = gae_lambda
-
         self.buffer = IAARolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
         self.teacher_source = teacher_source
+        self.teacher_source.policy.eval()
         self.teacher_target = self.teacher_source
         self.teacher_target.policy = copy.deepcopy(self.teacher_source.policy)
         self.introspection_decay = introspection_decay
@@ -398,18 +398,23 @@ class IAAPPO(PPO):
 
     def introspect(self, obs: dict, t: int) -> int:
         """Introspect."""
+        h = torch.zeros((self.num_envs,), dtype=torch.bool).to(device)
         probability = self.introspection_decay ** (max(0, t - self.burn_in))
-        p = Bernoulli(probability).sample()
-        if t > self.burn_in and p == 1:
-            _, _, teacher_source_val = self.teacher_source.policy(obs)
-            _, _, teacher_target_val = self.teacher_target.policy(obs)
-            return abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold
-        return torch.zeros((self.num_envs,)).to(device)
+        p = Bernoulli(probability).sample([self.num_envs])
+        for i in range(self.num_envs):
+            if t > self.burn_in and p[i] == 1:
+                single_obs = {"image": obs["image"][i].unsqueeze(0).detach(), "direction": obs["direction"][i].unsqueeze(0).detach()}
+                with torch.no_grad():
+                    _, _, teacher_source_val = self.teacher_source.policy(single_obs)
+                    _, _, teacher_target_val = self.teacher_target.policy(single_obs)
+                    h[i] = abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold
+        return h
 
     def select_action(self, obs: dict, t: int) -> int:
         """Select an action."""
         with torch.no_grad():
             h = self.introspect(obs, t)
+            print(f"h: {h}")
             actions = torch.zeros((self.num_envs,), dtype=torch.long).to(device)
             action_logprobs = torch.zeros((self.num_envs,)).to(device)
             state_vals = torch.zeros((self.num_envs,)).to(device)
@@ -417,78 +422,57 @@ class IAAPPO(PPO):
                 single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
                 if h[i]:
                     actions[i], action_logprobs[i], state_vals[i] = self.teacher_source.policy(single_obs)
+                    print(f"teacher log prob: {action_logprobs[i]}")
                 else:
                     actions[i], action_logprobs[i], state_vals[i] = self.policy(single_obs)
+                    print(f"student log prob: {action_logprobs[i]}")
             self.buffer.indicators[t] = h
         return actions, action_logprobs, state_vals
 
     def correct(self) -> tuple[torch.tensor, torch.tensor]:
         """Apply off-policy correction."""
         # Assuming self.buffer.states is a dict with 'image' and 'direction' tensors
-        # Each of shape (horizon, num_envs, ...)
-        # self.buffer.indicators: tensor of shape (horizon, num_envs)
-        # self.buffer.logprobs: tensor of shape (horizon, num_envs)
+        num_horizon, num_envs = self.buffer.horizon, self.buffer.num_envs
 
-        horizon, num_envs = self.buffer.indicators.shape
+        # Initialize rho_T and rho_S as empty tensors
+        rho_t = torch.empty((0, num_envs), dtype=torch.float32, device=device)
+        rho_s = torch.empty((0, num_envs), dtype=torch.float32, device=device)
 
-        # Flatten tensors to process all time steps and environments at once
-        flat_indicators = self.buffer.indicators.reshape(-1)
-        flat_logprobs = self.buffer.logprobs.reshape(-1)
+        # Iterate through each step in the rollout buffer
+        for i in range(num_horizon):
+            images = self.buffer.images[i, :]  # Extract images for this step
+            directions = self.buffer.directions[i, :]  # Extract directions for this step
+            indicators = self.buffer.indicators[i, :]  # Extract horizon indicators for this step
+            log_probs = self.buffer.logprobs[i, :]  # Extract log probabilities for this step
+            print(f"logprobs: {log_probs}")
+            # Get probabilities of actions under both policies
+            states = {"image": images, "direction": directions}
+            _, pi_s_probs, _ = self.policy(states)  # Student policy probabilities
+            _, pi_t_probs, _ = self.teacher_source.policy(states)  # Teacher policy probabilities
 
-        flat_images = self.buffer.images.view(-1, *self.buffer.images.shape[2:])
-        flat_directions = self.buffer.directions.view(-1, *self.buffer.directions.shape[2:])
+            # Calculate rho_T and rho_S for each environment
+            rho_t_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i = 1
+            rho_s_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i != 1
 
-        # Initialize ratio tensors
-        teacher_ratios_flat = torch.ones_like(flat_logprobs)
-        student_ratios_flat = torch.ones_like(flat_logprobs)
+            for j in range(num_envs):
+                if indicators[j] == 1:
+                    rho_s_step[j] = pi_s_probs[j] / log_probs[j]  # Compute for \rho^S when h_i = 1
+                else:
+                    rho_t_step[j] = pi_t_probs[j] / log_probs[j]  # Compute for \rho^T when h_i != 1
 
-        # Create boolean masks
-        mask_teacher = flat_indicators.bool()
-        mask_student = ~mask_teacher
+            # Append the new values to rho_T and rho_S
+            rho_t = torch.cat((rho_t, rho_t_step.unsqueeze(0)), dim=0)
+            print(f"rho t: {rho_t}")
+            rho_s = torch.cat((rho_s, rho_s_step.unsqueeze(0)), dim=0)
+            print(f"rho s: {rho_s}")
 
-        # Process student policy where indicator is True
-        if mask_teacher.any():
-            student_images = flat_images[mask_teacher]
-            student_directions = flat_directions[mask_teacher]
-            student_logprobs = flat_logprobs[mask_teacher]
-            student_states = {
-                "image": student_images,
-                "direction": student_directions,
-            }
-            student_logprobs = flat_logprobs[mask_teacher]
-
-            # Compute importance sampling ratios
-            _, student_action_logprob, _ = self.policy(student_states)
-            ratio = torch.exp(student_action_logprob - student_logprobs)
-            student_ratios_flat[mask_teacher] = ratio
-            teacher_ratios_flat[mask_teacher] = 1.0
-
-        # Process teacher policy where indicator is False
-        if mask_student.any():
-            teacher_images = flat_images[mask_student]
-            teacher_directions = flat_directions[mask_student]
-            teacher_logprobs = flat_logprobs[mask_student]
-
-            teacher_states = {
-                "image": teacher_images,
-                "direction": teacher_directions,
-            }
-            # Compute importance sampling ratios
-            _, teacher_action_logprob, _ = self.teacher_source.policy(teacher_states)
-            ratio = torch.exp(teacher_action_logprob - teacher_logprobs)
-            teacher_ratios_flat[mask_student] = ratio
-            student_ratios_flat[mask_student] = 1.0
-
-        # Reshape the flat ratios back to (horizon, num_envs)
-        teacher_ratios = teacher_ratios_flat.view(horizon, num_envs)
-        student_ratios = student_ratios_flat.view(horizon, num_envs)
-        return teacher_ratios, student_ratios
+        return rho_t, rho_s
 
     def update(self, next_obs: torch.tensor, next_done: torch.tensor, writer: SummaryWriter, rollout_step: int) -> None:
         """Update the policy with student correction."""
         teacher_correction, student_correction = self.correct()
-        self.update_student(next_obs, next_done, writer, rollout_step, student_correction)
         self.update_teacher_value(next_obs, next_done, writer, rollout_step, teacher_correction)
+        self.update_student(next_obs, next_done, writer, rollout_step, student_correction)
 
     def update_student(
         self,
@@ -532,7 +516,7 @@ class IAAPPO(PPO):
 
                 # policy gradient
                 log_ratio = logprobs - b_logprobs[mb_inds]
-                ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
+                ratios = log_ratio.exp() * b_student_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-log_ratio).mean()
@@ -548,7 +532,7 @@ class IAAPPO(PPO):
                 v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)  # * b_student_correction[mb_inds]
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped) * b_student_correction[mb_inds]
                 v_loss = 0.5 * v_loss_max.mean()
 
                 # entropy loss
@@ -556,7 +540,6 @@ class IAAPPO(PPO):
 
                 # final loss of clipped objective PPO
                 loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
-                loss = torch.mean(loss * b_student_correction[mb_inds])
                 self.optimizer.zero_grad()  # take gradient step
                 loss.backward()
                 self.optimizer.step()
@@ -569,6 +552,8 @@ class IAAPPO(PPO):
             writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), rollout_step)
             writer.add_scalar("debugging/approx_kl", approx_kl.item(), rollout_step)
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), rollout_step)
+
+        self.buffer.clear()  # clear buffer
 
     # TODO: put update teacher in update student. i.e., be consistent with minibatches
     def update_teacher_value(
@@ -612,7 +597,7 @@ class IAAPPO(PPO):
 
                 # policy gradient
                 log_ratio = logprobs - b_logprobs[mb_inds]
-                ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
+                ratios = log_ratio.exp() * b_teacher_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
 
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
@@ -624,7 +609,7 @@ class IAAPPO(PPO):
                 v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped) * b_teacher_correction[mb_inds]
                 v_loss = 0.5 * v_loss_max.mean()
 
                 # entropy loss
@@ -632,7 +617,6 @@ class IAAPPO(PPO):
 
                 # final loss of clipped objective PPO
                 loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
-                loss = torch.mean(loss * b_teacher_correction[mb_inds])
 
                 self.teacher_target.optimizer.zero_grad()  # take gradient step
                 loss.backward()
@@ -641,5 +625,3 @@ class IAAPPO(PPO):
         # log debug variables
         with torch.no_grad():
             writer.add_scalar("debugging/teacher_value_loss", loss, rollout_step)
-
-        self.buffer.clear()  # clear buffer

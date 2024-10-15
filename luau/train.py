@@ -155,7 +155,19 @@ class Trainer:
             raise ValueError(msg)
 
         if self.algorithm == "IAAPPO":
-            teacher_ppo_agent = ppo_agent
+            teacher_ppo_agent = PPO(
+                state_dim,
+                action_dim,
+                self.lr_actor,
+                self.gamma,
+                self.k_epochs,
+                self.eps_clip,
+                self.minibatch_size,
+                env=env,
+                horizon=self.horizon,
+                num_envs=self.num_envs,
+                gae_lambda=self.gae_lambda,
+            )
             teacher_ppo_agent.load(self.teacher_model_path)
             ppo_agent = ALGORITHM_CLASSES[self.algorithm](
                 state_dim,
@@ -235,6 +247,8 @@ class Trainer:
                     ppo_agent.buffer.state_values[step] = state_vals
                 ppo_agent.buffer.actions[step] = actions
                 ppo_agent.buffer.logprobs[step] = action_logprobs
+                print(f"action log probs: {action_logprobs}")
+                print(f"step: {step}")
 
                 # Step the environment and store the rewards
                 next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
