@@ -1,7 +1,7 @@
 # %%
 from pathlib import Path
 
-import gymnasium
+import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn.functional as f
@@ -30,7 +30,7 @@ print("=========================================================================
 class RolloutBuffer:
     """A buffer to store rollout data for reinforcement learning agents and supports the generation of minibatches for training."""
 
-    def __init__(self, horizon: int, num_envs: int, state: dict, action_space: gymnasium.Space):
+    def __init__(self, horizon: int, num_envs: int, state: dict, action_space: gym.Space):
         # Storage setup
         self.horizon = horizon
         self.num_envs = num_envs
@@ -162,29 +162,27 @@ class PPO:
 
     def __init__(
         self,
-        state_dim: torch.tensor,
-        action_dim: int,
+        env: gym.Env,
         lr_actor: float,
         gamma: float,
         k_epochs: int,
         eps_clip: float,
         minibatch_size: int,
-        env: gymnasium.Env,
         horizon: int,
-        num_envs: int,
         gae_lambda: float,
     ):
+        self.env = env
+        state_dim = self.env.single_observation_space["image"].shape[-1]
+        self.num_envs = len(self.env.env_fns)
+        self.lr_actor = lr_actor
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
         self.minibatch_size = minibatch_size
-        self.buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
-        self.policy = ActorCritic(state_dim, action_dim).to(device)
+        self.buffer = RolloutBuffer(horizon, self.num_envs, self.env.single_observation_space, self.env.single_action_space)
+        self.policy = ActorCritic(state_dim, self.env.single_action_space.n).to(device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
-        self.MseLoss = nn.MSELoss()
-        self.env = env
         self.horizon = horizon
-        self.num_envs = num_envs
         self.gae_lambda = gae_lambda
 
     def _calculate_gae(self, next_obs: torch.tensor, next_done: torch.tensor) -> tuple[torch.tensor, torch.tensor]:

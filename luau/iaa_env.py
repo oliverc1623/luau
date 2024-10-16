@@ -1,4 +1,5 @@
 # %%
+import gymnasium as gym
 import numpy as np
 from minigrid.core.constants import COLOR_NAMES
 from minigrid.core.grid import Grid
@@ -96,3 +97,26 @@ class IntrospectiveEnv(MiniGridEnv):
         self.agent_dir = self.rng.integers(0, 4)
 
         self.mission = "get to the green goal square"
+
+
+# %%
+def _make_env(seed: int) -> IntrospectiveEnv:
+    """Create the environment."""
+
+    def _init() -> IntrospectiveEnv:
+        rng = np.random.default_rng(seed)
+        env = IntrospectiveEnv(rng=rng, size=9, locked=False, render_mode="rgb_array")
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        env.reset(seed=seed)
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
+        return env
+
+    return _init
+
+
+def get_env(seed: int, num_envs: int) -> IntrospectiveEnv:
+    """Get the environment."""
+    envs = [_make_env(seed + i) for i in range(num_envs)]  # Different seed per env
+    envs = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
+    return envs
