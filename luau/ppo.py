@@ -169,29 +169,36 @@ class PPO:
 
     def __init__(
         self,
-        state_dim: torch.tensor,
-        action_dim: int,
+        env: gymnasium.Env,
         lr_actor: float,
         gamma: float,
         k_epochs: int,
         eps_clip: float,
         minibatch_size: int,
-        env: gymnasium.Env,
         horizon: int,
-        num_envs: int,
         gae_lambda: float,
     ):
+        self.env = env
+        if isinstance(self.env, gymnasium.vector.AsyncVectorEnv):
+            self.obs_space = self.env.single_observation_space
+            state_dim = self.env.env_fns[0]().observation_space["image"].shape[2]
+            self.action_space = self.env.single_action_space.n
+            self.num_envs = len(self.env.env_fns)
+        else:
+            self.obs_space = self.env.observation_space
+            state_dim = self.env.observation_space["image"].shape[-1]
+            self.action_space = self.env.action_space.n
+            self.num_envs = 1
+        self.lr_actor = lr_actor
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
         self.minibatch_size = minibatch_size
-        self.buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
-        self.policy = ActorCritic(state_dim, action_dim).to(device)
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
+        self.buffer = RolloutBuffer(horizon, self.num_envs, self.obs_space, self.action_space)
+        self.policy = ActorCritic(state_dim, self.action_space).to(device)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.lr_actor, eps=1e-5)
         self.MseLoss = nn.MSELoss()
-        self.env = env
         self.horizon = horizon
-        self.num_envs = num_envs
         self.gae_lambda = gae_lambda
 
     def select_action(self, obs: dict) -> int:
@@ -405,8 +412,8 @@ class IAAPPO(PPO):
             if t > self.burn_in and p[i] == 1:
                 single_obs = {"image": obs["image"][i].unsqueeze(0).detach(), "direction": obs["direction"][i].unsqueeze(0).detach()}
                 with torch.no_grad():
-                    _, _, teacher_source_val = self.teacher_source.policy(single_obs)
-                    _, _, teacher_target_val = self.teacher_target.policy(single_obs)
+                    _, teacher_source_logprobs, teacher_source_val = self.teacher_source.policy(single_obs)
+                    _, teacher_target_logprobs, teacher_target_val = self.teacher_target.policy(single_obs)
                     h[i] = abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold
         return h
 
@@ -414,7 +421,6 @@ class IAAPPO(PPO):
         """Select an action."""
         with torch.no_grad():
             h = self.introspect(obs, t)
-            print(f"h: {h}")
             actions = torch.zeros((self.num_envs,), dtype=torch.long).to(device)
             action_logprobs = torch.zeros((self.num_envs,)).to(device)
             state_vals = torch.zeros((self.num_envs,)).to(device)
@@ -422,10 +428,8 @@ class IAAPPO(PPO):
                 single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
                 if h[i]:
                     actions[i], action_logprobs[i], state_vals[i] = self.teacher_source.policy(single_obs)
-                    print(f"teacher log prob: {action_logprobs[i]}")
                 else:
                     actions[i], action_logprobs[i], state_vals[i] = self.policy(single_obs)
-                    print(f"student log prob: {action_logprobs[i]}")
             self.buffer.indicators[t] = h
         return actions, action_logprobs, state_vals
 
@@ -444,7 +448,6 @@ class IAAPPO(PPO):
             directions = self.buffer.directions[i, :]  # Extract directions for this step
             indicators = self.buffer.indicators[i, :]  # Extract horizon indicators for this step
             log_probs = self.buffer.logprobs[i, :]  # Extract log probabilities for this step
-            print(f"logprobs: {log_probs}")
             # Get probabilities of actions under both policies
             states = {"image": images, "direction": directions}
             _, pi_s_probs, _ = self.policy(states)  # Student policy probabilities
@@ -462,9 +465,7 @@ class IAAPPO(PPO):
 
             # Append the new values to rho_T and rho_S
             rho_t = torch.cat((rho_t, rho_t_step.unsqueeze(0)), dim=0)
-            print(f"rho t: {rho_t}")
             rho_s = torch.cat((rho_s, rho_s_step.unsqueeze(0)), dim=0)
-            print(f"rho s: {rho_s}")
 
         return rho_t, rho_s
 

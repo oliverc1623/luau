@@ -137,16 +137,13 @@ class Trainer:
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
 
         ppo_agent = PPO(
-            state_dim,
-            action_dim,
-            self.lr_actor,
-            self.gamma,
-            self.k_epochs,
-            self.eps_clip,
-            self.minibatch_size,
             env=env,
+            lr_actor=self.lr_actor,
+            gamma=self.gamma,
+            k_epochs=self.k_epochs,
+            eps_clip=self.eps_clip,
+            minibatch_size=self.minibatch_size,
             horizon=self.horizon,
-            num_envs=self.num_envs,
             gae_lambda=self.gae_lambda,
         )
         # Check if the specified algorithm exists in the mapping
@@ -156,16 +153,13 @@ class Trainer:
 
         if self.algorithm == "IAAPPO":
             teacher_ppo_agent = PPO(
-                state_dim,
-                action_dim,
-                self.lr_actor,
-                self.gamma,
-                self.k_epochs,
-                self.eps_clip,
-                self.minibatch_size,
                 env=env,
+                lr_actor=self.lr_actor,
+                gamma=self.gamma,
+                k_epochs=self.k_epochs,
+                eps_clip=self.eps_clip,
+                minibatch_size=self.minibatch_size,
                 horizon=self.horizon,
-                num_envs=self.num_envs,
                 gae_lambda=self.gae_lambda,
             )
             teacher_ppo_agent.load(self.teacher_model_path)
@@ -247,8 +241,6 @@ class Trainer:
                     ppo_agent.buffer.state_values[step] = state_vals
                 ppo_agent.buffer.actions[step] = actions
                 ppo_agent.buffer.logprobs[step] = action_logprobs
-                print(f"action log probs: {action_logprobs}")
-                print(f"step: {step}")
 
                 # Step the environment and store the rewards
                 next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
