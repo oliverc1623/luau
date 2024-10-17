@@ -301,12 +301,44 @@ class PPO:
         image = x["image"]
         image = torch.from_numpy(image).float()
         if len(image.shape) == RGB_CHANNEL:
-            image = image.unsqueeze(0).to(device)
+            image = image.unsqueeze(0).permute(0, 3, 1, 2).to(device)
         else:
             image = image.permute(0, 3, 1, 2).to(device)
         direction = torch.tensor(direction, dtype=torch.float).unsqueeze(0).to(device)
         x = {"direction": direction, "image": image}
         return x
+
+
+# %% ################################## Single Env PPO ##################################
+
+
+class SingleEnvPPO(PPO):
+    """PPO agent for a single environment."""
+
+    def __init__(
+        self,
+        env: gym.Env,
+        lr_actor: float,
+        gamma: float,
+        eps_clip: float,
+        k_epochs: int,
+        minibatch_size: int,
+        horizon: int,
+        gae_lambda: float,
+    ):
+        self.env = env
+        state_dim = self.env.observation_space["image"].shape[-1]
+        self.num_envs = 1
+        self.lr_actor = lr_actor
+        self.gamma = gamma
+        self.eps_clip = eps_clip
+        self.k_epochs = k_epochs
+        self.minibatch_size = minibatch_size
+        self.buffer = RolloutBuffer(horizon, self.num_envs, self.env.observation_space, self.env.action_space)
+        self.policy = ActorCritic(state_dim, self.env.action_space.n).to(device)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
+        self.horizon = horizon
+        self.gae_lambda = gae_lambda
 
 
 # %% V################################## Introspective PPO ##################################
