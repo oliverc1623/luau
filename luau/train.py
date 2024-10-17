@@ -137,16 +137,13 @@ class Trainer:
         logging.info("state_dim: %s \t action_dim: %s", state_dim, action_dim)
 
         ppo_agent = PPO(
-            state_dim,
-            action_dim,
-            self.lr_actor,
-            self.gamma,
-            self.k_epochs,
-            self.eps_clip,
-            self.minibatch_size,
             env=env,
+            lr_actor=self.lr_actor,
+            gamma=self.gamma,
+            k_epochs=self.k_epochs,
+            eps_clip=self.eps_clip,
+            minibatch_size=self.minibatch_size,
             horizon=self.horizon,
-            num_envs=self.num_envs,
             gae_lambda=self.gae_lambda,
         )
         # Check if the specified algorithm exists in the mapping
