@@ -401,9 +401,12 @@ class IAAPPO(PPO):
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
         self.horizon = horizon
         self.gae_lambda = gae_lambda
+
+        # Teacher agent
         self.teacher_source = teacher_source
         self.teacher_target = PPO(env, lr_actor, gamma, k_epochs, eps_clip, minibatch_size, horizon, gae_lambda)
         self.teacher_target.policy = copy.deepcopy(self.teacher_source.policy)
+        self.teacher_target.optimizer = torch.optim.Adam(self.teacher_target.policy.parameters(), lr=lr_actor, eps=1e-5)
         self.introspection_decay = introspection_decay
         self.burn_in = burn_in
         self.introspection_threshold = introspection_threshold
@@ -625,7 +628,6 @@ class IAAPPO(PPO):
 
                 # final loss of clipped objective PPO
                 loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
-
                 self.teacher_target.optimizer.zero_grad()  # take gradient step
                 loss.backward()
                 self.teacher_target.optimizer.step()
