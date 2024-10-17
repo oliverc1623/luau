@@ -1,25 +1,20 @@
-################ Logging hyperparameters ################
-algorithm: "PPO"                     # name of the algorithm
-env_name: "IntrospectiveEnvLocked"   # name of the environment
+################ Logging/Environment hyperparameters ################
+algorithm: "PPO"                     # name of the algorithm, enter "PPO" or "IAAPPO"
+env_name: "IntrospectiveEnvLocked"         # name of the environment
 door_locked: True                    # is the door locked?
 size: 9                              # gridworld env size
-has_continuous_action_space: False   # continuous action space; else discrete
 save_frames: False                   # save frames?
-max_ep_len: 324                      # max timesteps in one episode. 4 * size**2
-max_training_timesteps: 1000000      # break training loop if timesteps > max_training_timesteps. 1e6
-print_freq: 1620                     # print avg reward in the interval (in num timesteps). 5 * max_ep_len
-log_freq: 648                        # log avg reward in the interval (in num timesteps). 2 * max_ep_len
-save_model_freq: 100000              # save model frequency (in num timesteps)
-action_std: 0.6                      # starting std for action distribution (Multivariate Normal)
-action_std_decay_rate: 0.05          # linearly decay action_std (action_std = action_std - action_std_decay_rate)
-min_action_std: 0.1                  # minimum action_std (stop decay after action_std <= min_action_std)
-action_std_decay_freq: 250000        # action_std decay frequency (in num timesteps)
+save_model_freq: 279                 # save model frequency (in num update iter - not timesteps)
 image_observation: False             # rgb-images as observations?
-run_num: 0                           # experiment run number for seeding
+run_num: 3                           # experiment run number for seeding
 ################ PPO hyperparameters ################
+max_training_timesteps: 500_000      # break training loop if timesteps > max_training_timesteps. 1e6
+horizon: 128                         # max timesteps in one update (episode); in other words, M rollout steps
+minibatch_size: 128                  # mini batch size
 k_epochs: 4                          # update policy for K epochs
 eps_clip: 0.2                        # clip parameter for PPO
 gamma: 0.99                          # discount factor
-lr_actor: 0.0005                     # learning rate for actor
-lr_critic: 0.001                     # learning rate for critic
+lr_actor: 0.0001                     # learning rate for actor
 random_seed: 47                      # random seed value
+num_envs: 2                          # number of parallel environments; batch size = num_envs * horizon = 256
+gae_lambda: 0.8                      # gae lambda
