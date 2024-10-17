@@ -152,7 +152,16 @@ class Trainer:
             raise ValueError(msg)
 
         if self.algorithm == "IAAPPO":
-            teacher_ppo_agent = ppo_agent
+            teacher_ppo_agent = PPO(
+                env=env,
+                lr_actor=self.lr_actor,
+                gamma=self.gamma,
+                k_epochs=self.k_epochs,
+                eps_clip=self.eps_clip,
+                minibatch_size=self.minibatch_size,
+                horizon=self.horizon,
+                gae_lambda=self.gae_lambda,
+            )
             teacher_ppo_agent.load(self.teacher_model_path)
             ppo_agent = ALGORITHM_CLASSES[self.algorithm](
                 state_dim,
