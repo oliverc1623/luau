@@ -375,50 +375,34 @@ class IAAPPO(PPO):
 
     def __init__(
         self,
-        state_dim: torch.tensor,
-        action_dim: int,
+        env: gym.Env,
         lr_actor: float,
         gamma: float,
         k_epochs: int,
         eps_clip: float,
         minibatch_size: int,
-        env: gym.Env,
         horizon: int,
-        num_envs: int,
         gae_lambda: float,
         teacher_source: PPO,
         introspection_decay: float = 0.99999,
         burn_in: int = 0,
         introspection_threshold: float = 0.9,
     ):
-        super().__init__(
-            state_dim,
-            action_dim,
-            lr_actor,
-            gamma,
-            k_epochs,
-            eps_clip,
-            minibatch_size,
-            env,
-            horizon,
-            num_envs,
-            gae_lambda,
-        )
+        self.env = env
+        state_dim = self.env.single_observation_space["image"].shape[-1]
+        self.num_envs = len(self.env.env_fns)
+        self.lr_actor = lr_actor
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
         self.minibatch_size = minibatch_size
-        self.policy = ActorCritic(state_dim, action_dim).to(device)
+        self.buffer = IAARolloutBuffer(horizon, self.num_envs, self.env.single_observation_space, self.env.single_action_space)
+        self.policy = ActorCritic(state_dim, self.env.single_action_space.n).to(device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr_actor, eps=1e-5)
-        self.MseLoss = nn.MSELoss()
-        self.env = env
         self.horizon = horizon
-        self.num_envs = num_envs
         self.gae_lambda = gae_lambda
-        self.buffer = IAARolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
         self.teacher_source = teacher_source
-        self.teacher_source.policy.eval()
-        self.teacher_target = self.teacher_source
+        self.teacher_target = PPO(env, lr_actor, gamma, k_epochs, eps_clip, minibatch_size, horizon, gae_lambda)
         self.teacher_target.policy = copy.deepcopy(self.teacher_source.policy)
         self.introspection_decay = introspection_decay
         self.burn_in = burn_in
