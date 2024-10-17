@@ -164,16 +164,13 @@ class Trainer:
             )
             teacher_ppo_agent.load(self.teacher_model_path)
             ppo_agent = ALGORITHM_CLASSES[self.algorithm](
-                state_dim,
-                action_dim,
-                self.lr_actor,
-                self.gamma,
-                self.k_epochs,
-                self.eps_clip,
-                self.minibatch_size,
                 env=env,
+                lr_actor=self.lr_actor,
+                gamma=self.gamma,
+                k_epochs=self.k_epochs,
+                eps_clip=self.eps_clip,
+                minibatch_size=self.minibatch_size,
                 horizon=self.horizon,
-                num_envs=self.num_envs,
                 gae_lambda=self.gae_lambda,
                 teacher_source=teacher_ppo_agent,
                 introspection_decay=self.introspection_decay,
@@ -224,6 +221,7 @@ class Trainer:
             frac = 1.0 - (update - 1.0) / num_updates
             lrnow = frac * self.lr_actor
             ppo_agent.optimizer.param_groups[0]["lr"] = lrnow
+            ppo_agent.teacher_target.optimizer.param_groups[0]["lr"] = lrnow
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 obs = ppo_agent.preprocess(next_obs)
