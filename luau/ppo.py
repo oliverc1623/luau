@@ -360,7 +360,7 @@ class SingleEnvPPO(PPO):
 class IAARolloutBuffer(RolloutBuffer):
     """A buffer to store rollout data for Introspective Action Advising (IAA)."""
 
-    def __init__(self, horizon: int, num_envs: int, state: dict, action_space: gymnasium.Space):
+    def __init__(self, horizon: int, num_envs: int, state: dict, action_space: gym.Space):
         super().__init__(horizon, num_envs, state, action_space)
         self.indicators = torch.zeros((self.horizon, self.num_envs)).to(device)
 
@@ -382,7 +382,7 @@ class IAAPPO(PPO):
         k_epochs: int,
         eps_clip: float,
         minibatch_size: int,
-        env: gymnasium.Env,
+        env: gym.Env,
         horizon: int,
         num_envs: int,
         gae_lambda: float,
