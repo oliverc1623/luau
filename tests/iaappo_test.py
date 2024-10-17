@@ -37,6 +37,7 @@ def test_iaappo_init(num_envs: int, max_timesteps: int, horizon: int, minibatch_
     teacher_model_path = Path("models/PPO/IntrospectiveEnvUnlocked/run_1_seed_1623/PPO_IntrospectiveEnvUnlocked_run_1_seed_1623.pth")
     assert teacher_model_path.exists(), f"Teacher model path {teacher_model_path} does not exist."
     teacher_ppo.load(teacher_model_path)
+    original_teacher = [param.clone() for param in teacher_ppo.policy.parameters()]
 
     student_ppo = IAAPPO(
         env=env,
@@ -118,6 +119,10 @@ def test_iaappo_init(num_envs: int, max_timesteps: int, horizon: int, minibatch_
 
         # Check if the teacher source model has not changed
         for initial, updated in zip(initial_teacher_source_weights, student_ppo.teacher_source.policy.parameters(), strict=False):
+            assert torch.equal(initial, updated), "Teacher source model weights should not change."
+
+        # Check if the original teacher source model has not changed
+        for initial, updated in zip(original_teacher, student_ppo.teacher_source.policy.parameters(), strict=False):
             assert torch.equal(initial, updated), "Teacher source model weights should not change."
 
         # Check if the teacher target model have changed
