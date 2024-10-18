@@ -234,7 +234,7 @@ class Trainer:
                 # Select actions and store them in the PPO agent's buffer
                 with torch.no_grad():
                     if self.algorithm == "IAAPPO":
-                        actions, action_logprobs, state_vals = ppo_agent.select_action(obs, step)
+                        actions, action_logprobs, state_vals = ppo_agent.select_action(obs, step, time_step)  # obs, step, global timestep
                     else:
                         actions, action_logprobs, state_vals = ppo_agent.select_action(obs)
                     ppo_agent.buffer.state_values[step] = state_vals
@@ -246,7 +246,7 @@ class Trainer:
                 next_dones = np.logical_or(next_dones, truncated)
                 ppo_agent.buffer.rewards[step] = torch.from_numpy(rewards)
 
-                time_step += self.num_envs
+                time_step += 1
                 for k, v in info.items():
                     if k == "episode":
                         done_indx = np.argmax(next_dones)
