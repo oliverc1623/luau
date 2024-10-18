@@ -34,7 +34,9 @@ def test_iaappo_init(num_envs: int, max_timesteps: int, horizon: int, minibatch_
         horizon=horizon,
         gae_lambda=0.8,
     )
-    teacher_model_path = Path("models/PPO/IntrospectiveEnvUnlocked/run_1_seed_1623/PPO_IntrospectiveEnvUnlocked_run_1_seed_1623.pth")
+    teacher_model_path = Path(
+        "/root/../pvcvolume/models/PPO/IntrospectiveEnvUnlocked/run_1_seed_1623/PPO_IntrospectiveEnvUnlocked_run_1_seed_1623.pth",
+    )
     assert teacher_model_path.exists(), f"Teacher model path {teacher_model_path} does not exist."
     teacher_ppo.load(teacher_model_path)
     original_teacher = [param.clone() for param in teacher_ppo.policy.parameters()]

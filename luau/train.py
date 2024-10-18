@@ -221,7 +221,8 @@ class Trainer:
             frac = 1.0 - (update - 1.0) / num_updates
             lrnow = frac * self.lr_actor
             ppo_agent.optimizer.param_groups[0]["lr"] = lrnow
-            ppo_agent.teacher_target.optimizer.param_groups[0]["lr"] = lrnow
+            if self.algorithm == "IAAPPO":
+                ppo_agent.teacher_target.optimizer.param_groups[0]["lr"] = lrnow
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 obs = ppo_agent.preprocess(next_obs)

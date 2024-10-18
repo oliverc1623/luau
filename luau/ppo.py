@@ -459,7 +459,7 @@ class IAAPPO(PPO):
             indicators = self.buffer.indicators[i, :]  # Extract horizon indicators for this step
             log_probs = self.buffer.logprobs[i, :]  # Extract log probabilities for this step
             # Get probabilities of actions under both policies
-            states = {"image": images, "direction": directions}
+            states = {"image": images.detach(), "direction": directions.detach()}
             _, pi_s_probs, _ = self.policy(states)  # Student policy probabilities
             _, pi_t_probs, _ = self.teacher_source.policy(states)  # Teacher policy probabilities
 
@@ -469,9 +469,13 @@ class IAAPPO(PPO):
 
             for j in range(num_envs):
                 if indicators[j] == 1:
-                    rho_s_step[j] = pi_s_probs[j] / log_probs[j]  # Compute for \rho^S when h_i = 1
+                    ratio = pi_s_probs[j] / (log_probs[j] + 1e-8)  # Compute for \rho^S when h_i = 1
+                    ratio = torch.clamp(ratio, -2.0, 2.0).item()
+                    rho_s_step[j] = ratio
                 else:
-                    rho_t_step[j] = pi_t_probs[j] / log_probs[j]  # Compute for \rho^T when h_i != 1
+                    ratio = pi_t_probs[j] / (log_probs[j] + 1e-8)  # Compute for \rho^T when h_i != 1
+                    ratio = torch.clamp(ratio, -0.2, 0.2).item()
+                    rho_t_step[j] = ratio
 
             # Append the new values to rho_T and rho_S
             rho_t = torch.cat((rho_t, rho_t_step.unsqueeze(0)), dim=0)
@@ -526,7 +530,7 @@ class IAAPPO(PPO):
                 logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
                 # policy gradient
-                log_ratio = logprobs - b_logprobs[mb_inds]
+                log_ratio = logprobs - b_logprobs[mb_inds].detach()
                 ratios = log_ratio.exp() * b_student_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
@@ -543,7 +547,7 @@ class IAAPPO(PPO):
                 v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped) * b_student_correction[mb_inds]
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss = 0.5 * v_loss_max.mean()
 
                 # entropy loss
@@ -607,7 +611,7 @@ class IAAPPO(PPO):
                 logprobs, state_values, dist_entropy = self.teacher_target.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
                 # policy gradient
-                log_ratio = logprobs - b_logprobs[mb_inds]
+                log_ratio = logprobs - b_logprobs[mb_inds].detach()
                 ratios = log_ratio.exp() * b_teacher_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
 
                 mb_advantages = b_advantages[mb_inds]
@@ -620,7 +624,7 @@ class IAAPPO(PPO):
                 v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped) * b_teacher_correction[mb_inds]
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss = 0.5 * v_loss_max.mean()
 
                 # entropy loss
