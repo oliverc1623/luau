@@ -15,6 +15,6 @@ k_epochs: 4                          # update policy for K epochs
 eps_clip: 0.2                        # clip parameter for PPO
 gamma: 0.99                          # discount factor
 lr_actor: 0.0001                     # learning rate for actor
-random_seed: 97                      # random seed value
+random_seed: 1623                      # random seed value
 num_envs: 2                          # number of parallel environments; batch size = num_envs * horizon = 256
 gae_lambda: 0.8                      # gae lambda

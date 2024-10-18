@@ -1,6 +1,6 @@
 ################ Logging hyperparameters ################
 algorithm: "IAAPPO"                                          # name of the algorithm
-teacher_model_path: "/root/../pvcvolume/models/PPO/IntrospectiveEnvUnlocked/run_3_seed_47/PPO_IntrospectiveEnvUnlocked_run_3_seed_47.pth"  # path for teacher model 
+teacher_model_path: "/root/../pvcvolume/models/PPO/IntrospectiveEnvUnlocked/run_1_seed_1623/PPO_IntrospectiveEnvUnlocked_run_1_seed_1623.pth"  # path for teacher model 
 introspection_decay: 0.99999 # decay factor for introspection
 burn_in: 0 # burn in period for introspection
 introspection_threshold: 0.9 # threshold for introspection
@@ -10,7 +10,7 @@ size: 9                              # gridworld env size
 save_frames: False                   # save frames?
 save_model_freq: 279                 # save model frequency (in num update iter - not timesteps)
 image_observation: False             # rgb-images as observations?
-run_num: 3                           # experiment run number for seeding
+run_num: 1                           # experiment run number for seeding
 ################ PPO hyperparameters ################
 max_training_timesteps: 500_000      # break training loop if timesteps > max_training_timesteps. 1e6
 horizon: 128                         # max timesteps in one update (episode); in other words, M rollout steps
@@ -19,6 +19,6 @@ k_epochs: 4                          # update policy for K epochs
 eps_clip: 0.2                        # clip parameter for PPO
 gamma: 0.99                          # discount factor
 lr_actor: 0.0001                     # learning rate for actor
-random_seed: 47                      # random seed value
+random_seed: 1623                      # random seed value
 num_envs: 2                          # number of parallel environments; batch size = num_envs * horizon = 256
 gae_lambda: 0.8                      # gae lambda
