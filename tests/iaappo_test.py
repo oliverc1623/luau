@@ -93,12 +93,13 @@ def test_iaappo_init(num_envs: int, max_timesteps: int, horizon: int, minibatch_
             # Select actions and store them in the PPO agent's buffer
             with torch.no_grad():
                 if isinstance(student_ppo, IAAPPO):
-                    actions, action_logprobs, state_vals = student_ppo.select_action(obs, step)
+                    actions, action_logprobs, state_vals = student_ppo.select_action(obs, step, time_step)
                 else:
                     actions, action_logprobs, state_vals = student_ppo.select_action(obs)
                 student_ppo.buffer.state_values[step] = state_vals
             student_ppo.buffer.actions[step] = actions
             student_ppo.buffer.logprobs[step] = action_logprobs
+            time_step += 1
 
             # Step the environment and store the rewards
             next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
