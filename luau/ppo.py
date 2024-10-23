@@ -453,10 +453,12 @@ class IAAPPO(PPO):
             directions = self.buffer.directions[i, :]  # Extract directions for this step
             indicators = self.buffer.indicators[i, :]  # Extract horizon indicators for this step
             log_probs = self.buffer.logprobs[i, :]  # Extract log probabilities for this step
+            actions = self.buffer.actions[i, :]  # Extract actions for this step
+
             # Get probabilities of actions under both policies
             states = {"image": images, "direction": directions}
-            _, pi_s_probs, _ = self.policy(states)  # Student policy probabilities
-            _, pi_t_probs, _ = self.teacher_source.policy(states)  # Teacher policy probabilities
+            pi_s_probs, _, _ = self.policy.evaluate(states, actions)  # Student policy probabilities
+            pi_t_probs, _, _ = self.teacher_source.policy.evaluate(states, actions)  # Teacher policy probabilities
 
             # Calculate rho_T and rho_S for each environment
             rho_t_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i = 1
@@ -511,7 +513,7 @@ class IAAPPO(PPO):
         clipfracs = []
 
         # Optimize policy for K epochs
-        for k in range(self.k_epochs):
+        for _ in range(self.k_epochs):
             # Shuffle the data for each epoch
             np.random.shuffle(b_inds)  # noqa: NPY002
 
@@ -520,18 +522,13 @@ class IAAPPO(PPO):
                 end = i + self.minibatch_size
                 mb_inds = b_inds[i:end]
 
-                states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
+                states_mb = {"image": b_images[mb_inds].detach(), "direction": b_directions[mb_inds].detach()}
                 # Evaluating old actions and values
-                logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds])
+                logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds].detach())
 
                 # policy gradient
                 log_ratio = logprobs - b_logprobs[mb_inds]
-                ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
-
-                if k == 0 and i == 0:
-                    print(f"student new log probs: {logprobs}")
-                    print(f"student buffer log probs: {b_logprobs[mb_inds]}")
-                    print(f"ratios: {ratios}")
+                ratios = log_ratio.exp() * b_student_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
 
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
                 with torch.no_grad():
@@ -558,7 +555,6 @@ class IAAPPO(PPO):
 
                 # final loss of clipped objective PPO
                 loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
-                loss = torch.mean(loss * b_student_correction[mb_inds])
                 self.optimizer.zero_grad()  # take gradient step
                 loss.backward()
                 self.optimizer.step()
@@ -610,7 +606,7 @@ class IAAPPO(PPO):
                 end = i + self.minibatch_size
                 mb_inds = b_inds[i:end]
 
-                states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
+                states_mb = {"image": b_images[mb_inds].detach(), "direction": b_directions[mb_inds].detach()}
                 # Evaluating old actions and values
                 logprobs, state_values, dist_entropy = self.teacher_target.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
@@ -625,7 +621,7 @@ class IAAPPO(PPO):
                 pg_loss = torch.max(surr1, surr2).mean()
 
                 # value function loss + clipping
-                v_loss_unclipped = b_teacher_correction[mb_inds] * (state_values - b_rewards[mb_inds]) ** 2
+                v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
