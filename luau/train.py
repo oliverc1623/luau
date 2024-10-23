@@ -246,7 +246,7 @@ class Trainer:
                 next_dones = np.logical_or(next_dones, truncated)
                 ppo_agent.buffer.rewards[step] = torch.from_numpy(rewards)
 
-                time_step += 1
+                time_step += self.num_envs
                 for k, v in info.items():
                     if k == "episode":
                         done_indx = np.argmax(next_dones)

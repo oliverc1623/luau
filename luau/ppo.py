@@ -423,7 +423,8 @@ class IAAPPO(PPO):
                 single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
                 _, _, teacher_source_val = self.teacher_source.policy(single_obs)
                 _, _, teacher_target_val = self.teacher_target.policy(single_obs)
-                h[i] = abs(teacher_target_val - teacher_source_val) <= self.introspection_threshold
+                difference = torch.abs(teacher_target_val - teacher_source_val)
+                h[i] = (difference <= self.introspection_threshold).item()
         return h
 
     def select_action(self, obs: dict, t: int, global_t: int) -> int:
@@ -444,15 +445,13 @@ class IAAPPO(PPO):
         num_horizon, num_envs = self.buffer.horizon, self.buffer.num_envs
 
         # Initialize rho_T and rho_S as empty tensors
-        rho_t = torch.empty((0, num_envs), dtype=torch.float32, device=device)
-        rho_s = torch.empty((0, num_envs), dtype=torch.float32, device=device)
-
+        rho_t = torch.empty((num_horizon, num_envs), dtype=torch.float32, device=device)
+        rho_s = torch.empty((num_horizon, num_envs), dtype=torch.float32, device=device)
         # Iterate through each step in the rollout buffer
         for i in range(num_horizon):
             images = self.buffer.images[i, :]  # Extract images for this step
             directions = self.buffer.directions[i, :]  # Extract directions for this step
             indicators = self.buffer.indicators[i, :]  # Extract horizon indicators for this step
-            log_probs = self.buffer.logprobs[i, :]  # Extract log probabilities for this step
             actions = self.buffer.actions[i, :]  # Extract actions for this step
 
             # Get probabilities of actions under both policies
@@ -460,23 +459,18 @@ class IAAPPO(PPO):
             pi_s_probs, _, _ = self.policy.evaluate(states, actions)  # Student policy probabilities
             pi_t_probs, _, _ = self.teacher_source.policy.evaluate(states, actions)  # Teacher policy probabilities
 
-            # Calculate rho_T and rho_S for each environment
-            rho_t_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i = 1
-            rho_s_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i != 1
+            # Compute rho_T and rho_S
+            # When indicators == 1 (action taken by teacher)
+            idx_teacher = indicators == 1
+            # rho_T = 1, rho_S = exp(log_pi_s - log_pi_t)
+            rho_s[i, idx_teacher] = torch.exp(pi_s_probs[idx_teacher] - pi_t_probs[idx_teacher])
+            # rho_T[i, idx_teacher] is already 1
 
-            for j in range(num_envs):
-                if indicators[j] == 1:
-                    ratio = pi_s_probs[j] / (log_probs[j] + 1e-8)  # Compute for \rho^S when h_i = 1
-                    ratio = torch.clamp(ratio, -2.0, 2.0).item()
-                    rho_s_step[j] = ratio
-                else:
-                    ratio = pi_t_probs[j] / (log_probs[j] + 1e-8)  # Compute for \rho^T when h_i != 1
-                    ratio = torch.clamp(ratio, -0.2, 0.2).item()
-                    rho_t_step[j] = ratio
-
-            # Append the new values to rho_T and rho_S
-            rho_t = torch.cat((rho_t, rho_t_step.unsqueeze(0)), dim=0)
-            rho_s = torch.cat((rho_s, rho_s_step.unsqueeze(0)), dim=0)
+            # When indicators == 0 (action taken by student)
+            idx_student = ~idx_teacher
+            # rho_S = 1, rho_T = exp(log_pi_t - log_pi_s)
+            rho_t[i, idx_student] = torch.exp(pi_t_probs[idx_student] - pi_s_probs[idx_student])
+            # rho_s[i, idx_student] is already 1
 
         return rho_t, rho_s
 
@@ -499,14 +493,14 @@ class IAAPPO(PPO):
         rewards, advantages = self._calculate_gae(next_obs, next_done)
 
         # Prepare data for minibatch shuffling
-        b_rewards = torch.flatten(rewards, 0, 1)
-        b_advantages = torch.flatten(advantages, 0, 1)
-        b_actions = torch.flatten(self.buffer.actions, 0, 1)
-        b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1)
-        b_images = torch.flatten(self.buffer.images, 0, 1)
-        b_directions = torch.flatten(self.buffer.directions, 0, 1)
-        b_state_values = torch.flatten(self.buffer.state_values, 0, 1)
-        b_student_correction = torch.flatten(student_correction, 0, 1)
+        b_rewards = torch.flatten(rewards, 0, 1).detach()
+        b_advantages = torch.flatten(advantages, 0, 1).detach()
+        b_actions = torch.flatten(self.buffer.actions, 0, 1).detach()
+        b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1).detach()
+        b_images = torch.flatten(self.buffer.images, 0, 1).detach()
+        b_directions = torch.flatten(self.buffer.directions, 0, 1).detach()
+        b_state_values = torch.flatten(self.buffer.state_values, 0, 1).detach()
+        b_student_correction = torch.flatten(student_correction, 0, 1).detach()
 
         batch_size = self.num_envs * self.horizon
         b_inds = np.arange(batch_size)
@@ -522,13 +516,15 @@ class IAAPPO(PPO):
                 end = i + self.minibatch_size
                 mb_inds = b_inds[i:end]
 
-                states_mb = {"image": b_images[mb_inds].detach(), "direction": b_directions[mb_inds].detach()}
+                states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 # Evaluating old actions and values
                 logprobs, state_values, dist_entropy = self.policy.evaluate(states_mb, b_actions.long()[mb_inds].detach())
 
                 # policy gradient
                 log_ratio = logprobs - b_logprobs[mb_inds]
-                ratios = log_ratio.exp() * b_student_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
+                ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
+
+                # if k == 0 and i == 0:
 
                 # calculate approx_kl http://joschu.net/blog/kl-approx.html
                 with torch.no_grad():
@@ -537,16 +533,16 @@ class IAAPPO(PPO):
                     clipfracs += [((ratios - 1.0).abs() > self.eps_clip).float().mean().item()]
 
                 # policy gradient
+                importance_weights = b_student_correction[mb_inds]
                 mb_advantages = b_advantages[mb_inds]
-                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                surr1 = -mb_advantages * ratios
-                surr2 = -mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                surr1 = -importance_weights * mb_advantages * ratios
+                surr2 = -importance_weights * mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
                 pg_loss = torch.max(surr1, surr2).mean()
 
                 # value function loss + clipping
-                v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
+                v_loss_unclipped = importance_weights * (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
-                v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
+                v_loss_clipped = importance_weights * (v_clipped - b_rewards[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss = 0.5 * v_loss_max.mean()
 
@@ -584,14 +580,14 @@ class IAAPPO(PPO):
         rewards, advantages = self._calculate_gae(next_obs, next_done)
 
         # Prepare data for minibatch shuffling
-        b_rewards = torch.flatten(rewards, 0, 1)
-        b_advantages = torch.flatten(advantages, 0, 1)
-        b_actions = torch.flatten(self.buffer.actions, 0, 1)
-        b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1)
-        b_images = torch.flatten(self.buffer.images, 0, 1)
-        b_directions = torch.flatten(self.buffer.directions, 0, 1)
-        b_state_values = torch.flatten(self.buffer.state_values, 0, 1)
-        b_teacher_correction = torch.flatten(teacher_correction, 0, 1)
+        b_rewards = torch.flatten(rewards, 0, 1).detach()
+        b_advantages = torch.flatten(advantages, 0, 1).detach()
+        b_actions = torch.flatten(self.buffer.actions, 0, 1).detach()
+        b_logprobs = torch.flatten(self.buffer.logprobs, 0, 1).detach()
+        b_images = torch.flatten(self.buffer.images, 0, 1).detach()
+        b_directions = torch.flatten(self.buffer.directions, 0, 1).detach()
+        b_state_values = torch.flatten(self.buffer.state_values, 0, 1).detach()
+        b_teacher_correction = torch.flatten(teacher_correction, 0, 1).detach()
 
         batch_size = self.num_envs * self.horizon
         b_inds = np.arange(batch_size)
@@ -606,24 +602,24 @@ class IAAPPO(PPO):
                 end = i + self.minibatch_size
                 mb_inds = b_inds[i:end]
 
-                states_mb = {"image": b_images[mb_inds].detach(), "direction": b_directions[mb_inds].detach()}
+                states_mb = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 # Evaluating old actions and values
                 logprobs, state_values, dist_entropy = self.teacher_target.policy.evaluate(states_mb, b_actions.long()[mb_inds])
 
                 # policy gradient
                 log_ratio = logprobs - b_logprobs[mb_inds]
-                ratios = log_ratio.exp() * b_teacher_correction[mb_inds]  # Finding the ratio (pi_theta / pi_theta__old)
+                ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
 
+                importance_weights = b_teacher_correction[mb_inds]
                 mb_advantages = b_advantages[mb_inds]
-                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                surr1 = -mb_advantages * ratios
-                surr2 = -mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                surr1 = -importance_weights * mb_advantages * ratios
+                surr2 = -importance_weights * mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
                 pg_loss = torch.max(surr1, surr2).mean()
 
                 # value function loss + clipping
-                v_loss_unclipped = (state_values - b_rewards[mb_inds]) ** 2
+                v_loss_unclipped = importance_weights * (state_values - b_rewards[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
-                v_loss_clipped = (v_clipped - b_rewards[mb_inds]) ** 2
+                v_loss_clipped = importance_weights * (v_clipped - b_rewards[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss = 0.5 * v_loss_max.mean()
 
