@@ -144,38 +144,22 @@ class ActorCritic(nn.Module):
         """Forward pass."""
         direction = state["direction"]
         image = state["image"]
-
-        # actor
         logits = self._actor_forward(image, direction)
         dist = Categorical(logits=logits)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
-
-        # critic
         state_values = self._critic_forward(image, direction)
-
         return action, action_logprob, state_values
 
     def evaluate(self, states: dict, actions: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Evaluate the policy."""
         images = states["image"]
         directions = states["direction"]
-
-        # Debugging statements
-        if torch.isnan(images).any() or torch.isinf(images).any():
-            raise ValueError("NaN or Inf detected in images.")
-        if torch.isnan(directions).any() or torch.isinf(directions).any():
-            raise ValueError("NaN or Inf detected in directions.")
-
-        # actor
         logits = self._actor_forward(images, directions)
         dist = Categorical(logits=logits)
         action_logprobs = dist.log_prob(actions)
         dist_entropy = dist.entropy()
-
-        # critic
         state_values = self._critic_forward(images, directions)
-
         return action_logprobs, state_values, dist_entropy
 
 
@@ -321,7 +305,8 @@ class Trainer:
         log_f.write("episode,timestep,reward,episode_len\n")
 
         next_obs, _ = env.reset()
-        next_dones = np.zeros(self.num_envs, dtype=bool)
+        next_obs = self.preprocess(next_obs)
+        next_dones = torch.zeros(self.num_envs)
         global_step = 0
 
         # Training loop
@@ -330,31 +315,29 @@ class Trainer:
             frac = 1.0 - (update - 1.0) / num_updates
             lrnow = frac * self.lr_actor
             optimizer.param_groups[0]["lr"] = lrnow
-
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
-                obs = self.preprocess(next_obs)
-                done = next_dones
-                buffer.images[step] = obs["image"]
-                buffer.directions[step] = obs["direction"]
-                buffer.is_terminals[step] = torch.from_numpy(done)
+                buffer.images[step] = next_obs["image"]
+                buffer.directions[step] = next_obs["direction"]
+                buffer.is_terminals[step] = next_dones
 
                 # Select actions and store them in the PPO agent's buffer
                 with torch.no_grad():
-                    actions, action_logprobs, state_vals = policy(obs)
+                    actions, action_logprobs, state_vals = policy(next_obs)
                     buffer.state_values[step] = state_vals
                 buffer.actions[step] = actions
                 buffer.logprobs[step] = action_logprobs
 
                 # Step the environment and store the rewards
                 next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
-                next_dones = np.logical_or(next_dones, truncated)
-                buffer.rewards[step] = torch.from_numpy(rewards)
+                next_obs = self.preprocess(next_obs)
+                next_dones = torch.tensor(np.logical_or(next_dones, truncated)).to(device)
+                buffer.rewards[step] = torch.tensor(rewards, dtype=torch.float32).to(device).view(-1)
 
                 global_step += 1 * self.num_envs
                 for k, v in info.items():
                     if k == "episode":
-                        done_indx = np.argmax(next_dones)
+                        done_indx = torch.argmax(next_dones)
                         episodic_reward = v["r"][done_indx]
                         episodic_length = v["l"][done_indx]
                         writer.add_scalar("charts/Episodic Reward", episodic_reward, global_step)
@@ -371,17 +354,15 @@ class Trainer:
                         log_f.write(f"{update},{global_step},{episodic_reward},{episodic_length}\n")
                         log_f.flush()
                     break
-
             # PPO update at the end of the horizon
             # Calculate rewards and advantages using GAE
             with torch.no_grad():
-                _, _, next_value = policy(self.preprocess(next_obs))
+                _, _, next_value = policy(next_obs)
                 advantages = torch.zeros_like(buffer.rewards).to(device)
-                next_done = torch.tensor(next_dones).to(device)
                 lastgaelam = 0
                 for t in reversed(range(self.horizon)):
                     if t == self.horizon - 1:
-                        next_non_terminal = 1.0 - next_done.float()
+                        next_non_terminal = 1.0 - next_dones.float()
                         nextvalues = next_value  # Bootstrapping for the last value
                     else:
                         next_non_terminal = 1.0 - buffer.is_terminals[t + 1]
@@ -414,10 +395,10 @@ class Trainer:
                     end = i + self.minibatch_size
                     mb_inds = b_inds[i:end]
                     mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
-                    logprobs, state_values, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
+                    new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
 
                     # policy gradient
-                    log_ratio = logprobs - b_logprobs[mb_inds]
+                    log_ratio = new_logprob - b_logprobs[mb_inds]
                     ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
 
                     with torch.no_grad():
@@ -433,8 +414,9 @@ class Trainer:
                     pg_loss = torch.max(surr1, surr2).mean()
 
                     # value function loss + clipping
-                    v_loss_unclipped = (state_values - b_returns[mb_inds]) ** 2
-                    v_clipped = b_state_values[mb_inds] + torch.clamp(state_values - b_state_values[mb_inds], -10.0, 10.0)
+                    new_value = new_value.view(-1)
+                    v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
+                    v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
                     v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
@@ -445,8 +427,10 @@ class Trainer:
 
                     optimizer.zero_grad()  # take gradient step
                     loss.backward()
+                    nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                     optimizer.step()
 
+            buffer.clear()
             # log debug variables
             with torch.no_grad():
                 writer.add_scalar("debugging/policy_loss", pg_loss, global_step)
