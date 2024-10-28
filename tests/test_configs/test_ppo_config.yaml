@@ -1,9 +1,5 @@
 ################ Logging hyperparameters ################
-algorithm: "IAAPPO"                                          # name of the algorithm
-teacher_model_path: "/root/../pvcvolume/models/PPO/IntrospectiveEnvUnlocked/run_3_seed_1627/PPO_IntrospectiveEnvUnlocked_run_3_seed_1627.pth"  # path for teacher model 
-introspection_decay: 0.99999 # decay factor for introspection
-burn_in: 0 # burn in period for introspection
-introspection_threshold: 0.9 # threshold for introspection
+algorithm: "PPO"                                          # name of the algorithm
 env_name: "IntrospectiveEnvLocked"                                 # name of the environment
 door_locked: True                    # is the door locked?
 size: 9                              # gridworld env size
