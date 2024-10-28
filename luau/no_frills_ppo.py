@@ -27,7 +27,7 @@ root_path = Path(__file__).resolve().parent.parent
 
 # %%
 RGB_CHANNEL = 3
-KL_THRESHOLD = 0.02
+KL_THRESHOLD = 0.01
 
 ################################## set device ##################################
 print("============================================================================================")
@@ -421,7 +421,6 @@ class Trainer:
 
                     optimizer.zero_grad()  # take gradient step
                     loss.backward()
-                    nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                     optimizer.step()
 
                 if approx_kl.item() > KL_THRESHOLD:
