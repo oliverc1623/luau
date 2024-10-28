@@ -27,6 +27,7 @@ root_path = Path(__file__).resolve().parent.parent
 
 # %%
 RGB_CHANNEL = 3
+KL_THRESHOLD = 0.02
 
 ################################## set device ##################################
 print("============================================================================================")
@@ -107,14 +108,6 @@ class ActorCritic(nn.Module):
         nn.init.orthogonal_(layer.weight, std)
         nn.init.constant_(layer.bias, bias_const)
         return layer
-
-    def _initialize_weights(self) -> None:
-        # Orthogonal initialization of conv and linear layers
-        for layer in self.modules():
-            if isinstance(layer, nn.Conv2d | nn.Linear):
-                nn.init.orthogonal_(layer.weight)
-                if layer.bias is not None:
-                    nn.init.constant_(layer.bias, 0.0)  # Set bias to 0, or any constant value you prefer
 
     def _actor_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
@@ -245,7 +238,8 @@ class Trainer:
         """Create the environment."""
 
         def _init() -> IntrospectiveEnv:
-            env = IntrospectiveEnv(rng=self.rng, size=self.size, locked=self.door_locked, render_mode="rgb_array")
+            rng = np.random.default_rng(seed)
+            env = IntrospectiveEnv(rng=rng, size=self.size, locked=self.door_locked, render_mode="rgb_array")
             env = gym.wrappers.RecordEpisodeStatistics(env)
             env.reset(seed=seed)
             env.action_space.seed(seed)
@@ -337,7 +331,7 @@ class Trainer:
                 global_step += 1 * self.num_envs
                 for k, v in info.items():
                     if k == "episode":
-                        done_indx = torch.argmax(next_dones)
+                        done_indx = torch.argmax(next_dones.int())
                         episodic_reward = v["r"][done_indx]
                         episodic_length = v["l"][done_indx]
                         writer.add_scalar("charts/Episodic Reward", episodic_reward, global_step)
@@ -430,12 +424,16 @@ class Trainer:
                     nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                     optimizer.step()
 
+                if approx_kl.item() > KL_THRESHOLD:
+                    break
+
             buffer.clear()
+
             # log debug variables
             with torch.no_grad():
-                writer.add_scalar("debugging/policy_loss", pg_loss, global_step)
-                writer.add_scalar("debugging/value_loss", v_loss, global_step)
-                writer.add_scalar("debugging/entropy_loss", entropy_loss, global_step)
+                writer.add_scalar("debugging/policy_loss", pg_loss.item(), global_step)
+                writer.add_scalar("debugging/value_loss", v_loss.item(), global_step)
+                writer.add_scalar("debugging/entropy_loss", entropy_loss.item(), global_step)
                 writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
                 writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
                 writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
