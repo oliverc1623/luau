@@ -288,7 +288,7 @@ class Trainer:
                 h[i] = (difference <= self.introspection_threshold).item()
         return h
 
-    def train(self) -> None:  # noqa: PLR0915, PLR0912
+    def train(self) -> None:  # noqa: PLR0915
         """Train the agent."""
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
         logging.info(msg)
@@ -406,38 +406,39 @@ class Trainer:
                 returns = advantages + buffer.state_values
 
             # Flatten the buffer
-            b_returns = returns.reshape(-1)
-            b_advantages = advantages.reshape(-1)
-            b_actions = torch.flatten(buffer.actions, 0, 1)
-            b_logprobs = torch.flatten(buffer.logprobs, 0, 1)
-            b_images = torch.flatten(buffer.images, 0, 1)
-            b_directions = torch.flatten(buffer.directions, 0, 1)
-            b_state_values = torch.flatten(buffer.state_values, 0, 1)
+            b_returns = returns.reshape(-1).detach()
+            b_advantages = advantages.reshape(-1).detach()
+            b_actions = torch.flatten(buffer.actions, 0, 1).detach()
+            b_logprobs = torch.flatten(buffer.logprobs, 0, 1).detach()
+            b_images = torch.flatten(buffer.images, 0, 1).detach()
+            b_directions = torch.flatten(buffer.directions, 0, 1).detach()
+            b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
 
             batch_size = self.num_envs * self.horizon
             b_inds = np.arange(batch_size)
             clipfracs = []
 
-        """Apply off-policy correction."""
-        # Assuming self.buffer.states is a dict with 'image' and 'direction' tensors
-        num_horizon, num_envs = self.horizon, self.num_envs
+            with torch.no_grad():
+                """Apply off-policy correction."""
+                # Assuming self.buffer.states is a dict with 'image' and 'direction' tensors
+                num_horizon, num_envs = self.horizon, self.num_envs
 
-        # Initialize rho_T and rho_S as empty tensors
-        rho_t = torch.empty((num_horizon, num_envs), dtype=torch.float32, device=device)
-        rho_s = torch.empty((num_horizon, num_envs), dtype=torch.float32, device=device)
-        # Iterate through each step in the rollout buffer
-        for i in range(num_horizon):
-            images = buffer.images[i, :]  # Extract images for this step
-            directions = buffer.directions[i, :]  # Extract directions for this step
-            indicators = buffer.indicators[i, :]  # Extract horizon indicators for this step
-            actions = buffer.actions[i, :]  # Extract actions for this step
-            states = {"image": images, "direction": directions}
-            pi_s_probs, _, _ = policy.evaluate(states, actions)  # Student policy probabilities
-            pi_t_probs, _, _ = teacher_source_agent.evaluate(states, actions)  # Teacher policy probabilities
-            idx_teacher = indicators == 1
-            rho_s[i, idx_teacher] = torch.exp(pi_s_probs[idx_teacher] - pi_t_probs[idx_teacher])
-            idx_student = ~idx_teacher
-            rho_t[i, idx_student] = torch.exp(pi_t_probs[idx_student] - pi_s_probs[idx_student])
+                # Initialize rho_T and rho_S as empty tensors
+                rho_t = torch.empty((num_horizon, num_envs), dtype=torch.float32, device=device)
+                rho_s = torch.empty((num_horizon, num_envs), dtype=torch.float32, device=device)
+                # Iterate through each step in the rollout buffer
+                for i in range(num_horizon):
+                    images = buffer.images[i, :]  # Extract images for this step
+                    directions = buffer.directions[i, :]  # Extract directions for this step
+                    indicators = buffer.indicators[i, :]  # Extract horizon indicators for this step
+                    actions = buffer.actions[i, :]  # Extract actions for this step
+                    states = {"image": images, "direction": directions}
+                    pi_s_probs, _, _ = policy.evaluate(states, actions)  # Student policy probabilities
+                    pi_t_probs, _, _ = teacher_source_agent.evaluate(states, actions)  # Teacher policy probabilities
+                    idx_teacher = indicators == 1
+                    idx_student = ~idx_teacher
+                    rho_s[i, idx_teacher] = torch.exp(pi_s_probs[idx_teacher] - pi_t_probs[idx_teacher])
+                    rho_t[i, idx_student] = torch.exp(pi_t_probs[idx_student] - pi_s_probs[idx_student])
 
             # Optimize policy for K epochs
             for _ in range(self.k_epochs):
@@ -451,7 +452,7 @@ class Trainer:
                     new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
 
                     # policy gradient
-                    log_ratio = new_logprob - b_logprobs[mb_inds]
+                    log_ratio = new_logprob - b_logprobs[mb_inds].detach()
                     ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
 
                     with torch.no_grad():
@@ -464,7 +465,7 @@ class Trainer:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
                     surr1 = -mb_advantages * ratios
                     surr2 = -mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
-                    pg_loss = torch.max(surr1, surr2).mean()
+                    pg_loss_student = torch.max(surr1, surr2).mean()
 
                     # value function loss + clipping
                     new_value = new_value.view(-1)
@@ -472,77 +473,55 @@ class Trainer:
                     v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
                     v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
+                    v_loss_student = 0.5 * v_loss_max.mean()
 
                     # entropy loss
-                    entropy_loss = dist_entropy.mean()
-                    loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
-                    loss = torch.mean(loss * rho_s)
+                    entropy_loss_student = dist_entropy.mean()
+                    student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
+                    student_loss = torch.mean(student_loss * rho_s)
+
+                    teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
+                    # policy gradient
+                    teacher_log_ratio = teacher_new_logprob - b_logprobs[mb_inds].detach()
+                    teacher_ratios = teacher_log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
+                    teacher_surr1 = -mb_advantages * teacher_ratios
+                    teacher_surr2 = -mb_advantages * torch.clamp(teacher_ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                    pg_loss_teacher = torch.max(teacher_surr1, teacher_surr2).mean()
+
+                    # value function loss + clipping
+                    teacher_new_value = teacher_new_value.view(-1)
+                    v_loss_unclipped = (teacher_new_value - b_returns[mb_inds]) ** 2
+                    v_clipped = b_state_values[mb_inds] + torch.clamp(teacher_new_value - b_state_values[mb_inds], -10.0, 10.0)
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                    v_loss_teacher = 0.5 * v_loss_max.mean()
+
+                    # entropy loss
+                    entropy_loss_teacher = teacher_dist_entropy.mean()
+                    teacher_loss = pg_loss_teacher - 0.01 * entropy_loss_teacher + v_loss_teacher * 0.5  # final loss of clipped objective PPO
+                    teacher_loss = torch.mean(teacher_loss * rho_t)
+
+                    teacher_optimizer.zero_grad()  # take gradient step
+                    teacher_loss.backward()
+                    teacher_optimizer.step()
 
                     optimizer.zero_grad()  # take gradient step
-                    loss.backward()
+                    student_loss.backward()
                     optimizer.step()
 
                 if approx_kl.item() > KL_THRESHOLD:
                     break
 
-            # Teacher update
-            for _ in range(self.k_epochs):
-                self.rng.shuffle(b_inds)
-
-                # Split data into minibatches
-                for i in range(0, batch_size, self.minibatch_size):
-                    end = i + self.minibatch_size
-                    mb_inds = b_inds[i:end]
-                    mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
-                    new_logprob, new_value, dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
-
-                    # policy gradient
-                    log_ratio = new_logprob - b_logprobs[mb_inds]
-                    ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
-
-                    with torch.no_grad():
-                        # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                        old_approx_kl = (-log_ratio).mean()
-                        approx_kl = ((ratios - 1) - log_ratio).mean()
-                        clipfracs += [((ratios - 1.0).abs() > self.eps_clip).float().mean().item()]
-
-                    mb_advantages = b_advantages[mb_inds]
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                    surr1 = -mb_advantages * ratios
-                    surr2 = -mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
-                    pg_loss = torch.max(surr1, surr2).mean()
-
-                    # value function loss + clipping
-                    new_value = new_value.view(-1)
-                    v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
-                    v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
-
-                    # entropy loss
-                    entropy_loss = dist_entropy.mean()
-                    loss = pg_loss - 0.01 * entropy_loss + v_loss * 0.5  # final loss of clipped objective PPO
-                    loss = torch.mean(loss * rho_t)
-
-                    teacher_optimizer.zero_grad()  # take gradient step
-                    loss.backward()
-                    teacher_optimizer.step()
-
-                if approx_kl.item() > KL_THRESHOLD:
-                    break
-
-            buffer.clear()
-
             # log debug variables
             with torch.no_grad():
-                writer.add_scalar("debugging/policy_loss", pg_loss.item(), global_step)
-                writer.add_scalar("debugging/value_loss", v_loss.item(), global_step)
-                writer.add_scalar("debugging/entropy_loss", entropy_loss.item(), global_step)
+                writer.add_scalar("debugging/policy_loss", pg_loss_student.item(), global_step)
+                writer.add_scalar("debugging/value_loss", v_loss_student.item(), global_step)
+                writer.add_scalar("debugging/entropy_loss", entropy_loss_student.item(), global_step)
                 writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
                 writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
                 writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
+
+            buffer.clear()
 
             if update % self.save_model_freq == 0:
                 logging.info("--------------------------------------------------------------------------------------------")
