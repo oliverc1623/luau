@@ -319,6 +319,7 @@ class Trainer:
         next_obs, _ = env.reset()
         next_obs = self.preprocess(next_obs)
         next_dones = torch.zeros(self.num_envs)
+        advice_issued = 0
         global_step = 0
 
         # Training loop
@@ -354,8 +355,9 @@ class Trainer:
 
                         # Apply introspection condition in a vectorized manner
                         h_t = (p == 1) & (differences <= self.introspection_threshold)
-
+                        print(h_t)
                     buffer.indicators[step] = h_t
+                    advice_issued += torch.mean(h_t.float()).item()
                     teacher_actions, teacher_action_logprobs, teacher_state_vals = teacher_source_agent(next_obs)
                     student_actions, student_action_logprobs, student_state_vals = policy(next_obs)
                     # Use h_t to select the outputs
@@ -381,13 +383,15 @@ class Trainer:
                         writer.add_scalar("charts/Episodic Reward", episodic_reward, global_step)
                         writer.add_scalar("charts/Episodic Length", episodic_length, global_step)
                         writer.add_scalar("charts/Rollout Reward", episodic_reward, update)
+                        writer.add_scalar("charts/Advice Issued", advice_issued, global_step)
                         # Print average reward
                         logging.info(
-                            "i_update: %s, Timestep: %s, Average Reward: %s, Episodic length: %s",
+                            "i_update: %s, \t Timestep: %s, \t Average Reward: %s, \t Episodic length: %s, \t Advice Issued: %s",
                             update,
                             global_step,
                             episodic_reward,
                             episodic_length,
+                            advice_issued,
                         )
                         log_f.write(f"{update},{global_step},{episodic_reward},{episodic_length}\n")
                         log_f.flush()
@@ -445,9 +449,9 @@ class Trainer:
                         mb_rho_s = torch.ones(self.minibatch_size).to(device)
                         for j, h_i in enumerate(b_indicators[mb_inds]):
                             if h_i.item() == 1:
-                                mb_rho_s[j] = torch.clamp(student_new_logprob[j] / b_logprobs[mb_inds][j], -0.2, 0.2).item()
+                                mb_rho_s[j] = torch.clamp(student_new_logprob[j] / b_logprobs[mb_inds][j], -2, 2).item()
                             else:
-                                mb_rho_t[j] = torch.clamp(teacher_source_new_logprob[j] / b_logprobs[mb_inds][j], -0.2, 0.2).item()
+                                mb_rho_t[j] = torch.clamp(teacher_source_new_logprob[j] / b_logprobs[mb_inds][j], -2, 2).item()
 
                     # policy gradient
                     log_ratio = new_logprob - b_logprobs[mb_inds].detach()
@@ -519,6 +523,7 @@ class Trainer:
                 writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
 
             buffer.clear()
+            advice_issued = 0
 
             if update % self.save_model_freq == 0:
                 logging.info("--------------------------------------------------------------------------------------------")
