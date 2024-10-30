@@ -319,7 +319,7 @@ class Trainer:
         next_obs, _ = env.reset()
         next_obs = self.preprocess(next_obs)
         next_dones = torch.zeros(self.num_envs)
-        advice_issued = 0
+        advice_issued = torch.zeros(self.num_envs).to(device)
         global_step = 0
 
         # Training loop
@@ -355,9 +355,8 @@ class Trainer:
 
                         # Apply introspection condition in a vectorized manner
                         h_t = (p == 1) & (differences <= self.introspection_threshold)
-                        print(h_t)
                     buffer.indicators[step] = h_t
-                    advice_issued += torch.mean(h_t.float()).item()
+                    advice_issued += h_t.float()
                     teacher_actions, teacher_action_logprobs, teacher_state_vals = teacher_source_agent(next_obs)
                     student_actions, student_action_logprobs, student_state_vals = policy(next_obs)
                     # Use h_t to select the outputs
@@ -383,18 +382,21 @@ class Trainer:
                         writer.add_scalar("charts/Episodic Reward", episodic_reward, global_step)
                         writer.add_scalar("charts/Episodic Length", episodic_length, global_step)
                         writer.add_scalar("charts/Rollout Reward", episodic_reward, update)
-                        writer.add_scalar("charts/Advice Issued", advice_issued, global_step)
+                        writer.add_scalar("charts/Advice Issued", advice_issued.mean(), global_step)
                         # Print average reward
                         logging.info(
-                            "i_update: %s, \t Timestep: %s, \t Average Reward: %s, \t Episodic length: %s, \t Advice Issued: %s",
+                            "i_update: %s, \t Timestep: %s, \t Average Reward: %s, \t Episodic length: %s, \t Advice Issued env 0: %s, \
+                                \t Advice Issued env 1: %s",
                             update,
                             global_step,
                             episodic_reward,
                             episodic_length,
-                            advice_issued,
+                            advice_issued[0].item(),
+                            advice_issued[1].item(),
                         )
                         log_f.write(f"{update},{global_step},{episodic_reward},{episodic_length}\n")
                         log_f.flush()
+                        advice_issued = torch.zeros(self.num_envs).to(device)
                     break
 
             # Calculate rewards and advantages using GAE
@@ -523,7 +525,6 @@ class Trainer:
                 writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
 
             buffer.clear()
-            advice_issued = 0
 
             if update % self.save_model_freq == 0:
                 logging.info("--------------------------------------------------------------------------------------------")
