@@ -349,11 +349,7 @@ class Trainer:
                         # Get value estimates from both teacher models in batch mode
                         _, _, teacher_source_vals = teacher_source_agent(next_obs)
                         _, _, teacher_target_vals = teacher_target_agent(next_obs)
-
-                        # Compute the absolute difference between the source and target values
                         differences = torch.abs(teacher_target_vals - teacher_source_vals)
-
-                        # Apply introspection condition in a vectorized manner
                         h_t = (p == 1) & (differences <= self.introspection_threshold)
                     buffer.indicators[step] = h_t
                     advice_issued += h_t.float()
@@ -364,6 +360,7 @@ class Trainer:
                     log_probs = torch.where(h_t, teacher_action_logprobs, student_action_logprobs)
                     state_values = torch.where(h_t, teacher_state_vals, student_state_vals)
                     buffer.state_values[step] = state_values
+
                 buffer.actions[step] = actions
                 buffer.logprobs[step] = log_probs
 
