@@ -10,7 +10,7 @@ size: 9                              # gridworld env size
 save_frames: False                   # save frames?
 save_model_freq: 279                 # save model frequency (in num update iter - not timesteps)
 image_observation: False             # rgb-images as observations?
-run_num: 2                           # experiment run number for seeding
+run_num: 1                           # experiment run number for seeding
 ################ PPO hyperparameters ################
 max_training_timesteps: 500_000      # break training loop if timesteps > max_training_timesteps. 1e6
 horizon: 128                         # max timesteps in one update (episode); in other words, M rollout steps

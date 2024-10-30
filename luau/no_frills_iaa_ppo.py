@@ -274,19 +274,6 @@ class Trainer:
         x = {"direction": direction, "image": image}
         return x
 
-    def introspect(self, obs: dict, t: int, teacher_source: ActorCritic, teacher_target: ActorCritic) -> int:
-        """Introspect."""
-        h = torch.zeros((self.num_envs,), dtype=torch.bool).to(device)
-        probability = self.introspection_decay ** (max(0, t - self.burn_in))
-        p = Bernoulli(probability).sample([self.num_envs])
-        for i in range(self.num_envs):
-            if t > self.burn_in and p[i] == 1:
-                single_obs = {"image": obs["image"][i].unsqueeze(0), "direction": obs["direction"][i].unsqueeze(0)}
-                _, _, teacher_source_val = teacher_source(single_obs)
-                _, _, teacher_target_val = teacher_target(single_obs)
-                difference = torch.abs(teacher_target_val - teacher_source_val)
-                h[i] = (difference <= self.introspection_threshold).item()
-        return h
 
     def train(self) -> None:  # noqa: PLR0915, PLR0912
         """Train the agent."""
@@ -349,16 +336,35 @@ class Trainer:
 
                 # Select actions and store them in the PPO agent's buffer
                 with torch.no_grad():
-                    h = self.introspect(next_obs, global_step, teacher_source_agent, teacher_target_agent)
-                    buffer.indicators[step] = h
+                    # Initialize h_t as a tensor of zeros (h_t <- 0)
+                    h_t = torch.zeros((self.num_envs,), dtype=torch.bool).to(device)
+
+                    # Calculate introspection probability
+                    probability = self.introspection_decay ** max(0, global_step - self.burn_in)
+                    p = Bernoulli(probability).sample([self.num_envs]).to(device)  # Bernoulli sampling for all envs
+
+                    # Only proceed if t > burn_in
+                    if global_step > self.burn_in:
+                        # Get value estimates from both teacher models in batch mode
+                        _, _, teacher_source_vals = teacher_source_agent(next_obs)
+                        _, _, teacher_target_vals = teacher_target_agent(next_obs)
+
+                        # Compute the absolute difference between the source and target values
+                        differences = torch.abs(teacher_target_vals - teacher_source_vals)
+
+                        # Apply introspection condition in a vectorized manner
+                        h_t = (p == 1) & (differences <= self.introspection_threshold)
+
+                    buffer.indicators[step] = h_t
                     teacher_actions, teacher_action_logprobs, teacher_state_vals = teacher_source_agent(next_obs)
                     student_actions, student_action_logprobs, student_state_vals = policy(next_obs)
-                    actions = h * teacher_actions + (~h) * student_actions
-                    action_logprobs = h * teacher_action_logprobs + (~h) * student_action_logprobs
-                    state_vals = h * teacher_state_vals + (~h) * student_state_vals
-                    buffer.state_values[step] = state_vals
+                    # Use h_t to select the outputs
+                    actions = torch.where(h_t, teacher_actions, student_actions)
+                    log_probs = torch.where(h_t, teacher_action_logprobs, student_action_logprobs)
+                    state_values = torch.where(h_t, teacher_state_vals, student_state_vals)
+                    buffer.state_values[step] = state_values
                 buffer.actions[step] = actions
-                buffer.logprobs[step] = action_logprobs
+                buffer.logprobs[step] = log_probs
 
                 # Step the environment and store the rewards
                 next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
@@ -405,28 +411,6 @@ class Trainer:
                     advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * next_non_terminal * lastgaelam
                 returns = advantages + buffer.state_values
 
-            with torch.no_grad():
-                """Apply off-policy correction."""
-                # Assuming self.buffer.states is a dict with 'image' and 'direction' tensors
-                num_horizon, num_envs = self.horizon, self.num_envs
-
-                # Initialize rho_T and rho_S as empty tensors
-                rho_t = torch.ones((num_horizon, num_envs), dtype=torch.float32, device=device)
-                rho_s = torch.ones((num_horizon, num_envs), dtype=torch.float32, device=device)
-                # Iterate through each step in the rollout buffer
-                for i in range(num_horizon):
-                    images = buffer.images[i, :]  # Extract images for this step
-                    directions = buffer.directions[i, :]  # Extract directions for this step
-                    indicators = buffer.indicators[i, :]  # Extract horizon indicators for this step
-                    actions = buffer.actions[i, :]  # Extract actions for this step
-                    states = {"image": images, "direction": directions}
-                    pi_s_probs, _, _ = policy.evaluate(states, actions)  # Student policy probabilities
-                    pi_t_probs, _, _ = teacher_source_agent.evaluate(states, actions)  # Teacher policy probabilities
-                    idx_teacher = indicators == 1
-                    idx_student = ~idx_teacher
-                    rho_t[i, idx_student] = torch.exp(pi_s_probs[idx_teacher] - pi_t_probs[idx_teacher])
-                    rho_s[i, idx_teacher] = torch.exp(pi_t_probs[idx_student] - pi_s_probs[idx_student])
-
             # Flatten the buffer
             b_returns = returns.reshape(-1).detach()
             b_advantages = advantages.reshape(-1).detach()
@@ -435,6 +419,7 @@ class Trainer:
             b_images = torch.flatten(buffer.images, 0, 1).detach()
             b_directions = torch.flatten(buffer.directions, 0, 1).detach()
             b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
+            b_indicators = torch.flatten(buffer.indicators, 0, 1).detach()
 
             batch_size = self.num_envs * self.horizon
             b_inds = np.arange(batch_size)
@@ -450,19 +435,23 @@ class Trainer:
                     mb_inds = b_inds[i:end]
                     mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                     new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
-                    mb_rho_t = torch.ones(size=(len(mb_inds),), device=device)
-                    mb_rho_s = torch.ones(size=(len(mb_inds),), device=device)
-                    for indx, a_i, indi_i in enumerate(zip(b_actions[mb_inds], buffer.indicators[mb_inds], strict=False)):
-                        if indi_i == 1:
-                            mb_rho_t[indx] = rho_t[indx]
-                            mb_rho_s[indx]
-                        else:
-                            mb_rho_s[a_i] = rho_s[mb_inds]
+                    teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states,
+                                                                                                                b_actions.long()[mb_inds])
+
+                    with torch.no_grad():
+                        _, teacher_source_new_logprob, _ = teacher_source_agent(mb_states)
+                        _, student_new_logprob, _ = policy(mb_states)
+                        mb_rho_t = torch.ones(self.minibatch_size).to(device)
+                        mb_rho_s = torch.ones(self.minibatch_size).to(device)
+                        for j, h_i in enumerate(b_indicators[mb_inds]):
+                            if h_i.item() == 1:
+                                mb_rho_s[j] = torch.clamp(student_new_logprob[j] / b_logprobs[mb_inds][j], -0.2, 0.2).item()
+                            else:
+                                mb_rho_t[j] = torch.clamp(teacher_source_new_logprob[j] / b_logprobs[mb_inds][j], -0.2, 0.2).item()
 
                     # policy gradient
-                    print(f"b_ logprobs: {b_logprobs[mb_inds]}")
                     log_ratio = new_logprob - b_logprobs[mb_inds].detach()
-                    ratios = log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
+                    ratios = torch.exp(log_ratio) * mb_rho_s  # Finding the ratio (pi_theta / pi_theta__old)
 
                     with torch.no_grad():
                         # calculate approx_kl http://joschu.net/blog/kl-approx.html
@@ -472,15 +461,15 @@ class Trainer:
 
                     mb_advantages = b_advantages[mb_inds]
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                    surr1 = -mb_advantages * mb_rho_s * ratios
-                    surr2 = -mb_advantages * mb_rho_s * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                    surr1 = -mb_advantages * ratios
+                    surr2 = -mb_advantages * torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip)
                     pg_loss_student = torch.max(surr1, surr2).mean()
 
                     # value function loss + clipping
                     new_value = new_value.view(-1)
-                    v_loss_unclipped = mb_rho_s * (new_value - b_returns[mb_inds]) ** 2
+                    v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
                     v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
-                    v_loss_clipped = mb_rho_s * (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss_student = 0.5 * v_loss_max.mean()
 
@@ -488,19 +477,18 @@ class Trainer:
                     entropy_loss_student = dist_entropy.mean()
                     student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
 
-                    teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
                     # policy gradient
                     teacher_log_ratio = teacher_new_logprob - b_logprobs[mb_inds].detach()
-                    teacher_ratios = teacher_log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
-                    teacher_surr1 = -mb_advantages * mb_rho_t * teacher_ratios
-                    teacher_surr2 = -mb_advantages * mb_rho_t * torch.clamp(teacher_ratios, 1 - self.eps_clip, 1 + self.eps_clip)
+                    teacher_ratios = teacher_log_ratio.exp() * mb_rho_t  # Finding the ratio (pi_theta / pi_theta__old)
+                    teacher_surr1 = -mb_advantages * teacher_ratios
+                    teacher_surr2 = -mb_advantages * torch.clamp(teacher_ratios, 1 - self.eps_clip, 1 + self.eps_clip)
                     pg_loss_teacher = torch.max(teacher_surr1, teacher_surr2).mean()
 
                     # value function loss + clipping
                     teacher_new_value = teacher_new_value.view(-1)
-                    v_loss_unclipped = mb_rho_t * (teacher_new_value - b_returns[mb_inds]) ** 2
+                    v_loss_unclipped = (teacher_new_value - b_returns[mb_inds]) ** 2
                     v_clipped = b_state_values[mb_inds] + torch.clamp(teacher_new_value - b_state_values[mb_inds], -10.0, 10.0)
-                    v_loss_clipped = mb_rho_t * (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss_teacher = 0.5 * v_loss_max.mean()
 
@@ -510,10 +498,12 @@ class Trainer:
 
                     teacher_optimizer.zero_grad()  # take gradient step
                     teacher_loss.backward()
+                    nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), 0.5)
                     teacher_optimizer.step()
 
                     optimizer.zero_grad()  # take gradient step
                     student_loss.backward()
+                    nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                     optimizer.step()
 
                 if approx_kl.item() > KL_THRESHOLD:
