@@ -274,7 +274,6 @@ class Trainer:
         x = {"direction": direction, "image": image}
         return x
 
-
     def train(self) -> None:  # noqa: PLR0915, PLR0912
         """Train the agent."""
         msg = f"Training the {self.algorithm} agent in the {self.env_name} environment."
@@ -325,10 +324,6 @@ class Trainer:
         # Training loop
         num_updates = self.max_training_timesteps // (self.horizon * self.num_envs)
         for update in range(1, num_updates + 1):
-            frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * self.lr_actor
-            optimizer.param_groups[0]["lr"] = lrnow
-            teacher_optimizer.param_groups[0]["lr"] = lrnow
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 buffer.images[step] = next_obs["image"]
@@ -336,21 +331,22 @@ class Trainer:
                 buffer.is_terminals[step] = next_dones
 
                 # Select actions and store them in the PPO agent's buffer
+                # Initialize h_t as a tensor of zeros (h_t <- 0)
+                h_t = torch.zeros((self.num_envs,), dtype=torch.bool).to(device)
+
+                # Calculate introspection probability
+                probability = self.introspection_decay ** max(0, global_step - self.burn_in)
+                p = Bernoulli(probability).sample([self.num_envs]).to(device)  # Bernoulli sampling for all envs
+
+                # Only proceed if t > burn_in
+                if global_step > self.burn_in:
+                    # Get value estimates from both teacher models in batch mode
+                    _, _, teacher_source_vals = teacher_source_agent(next_obs)
+                    _, _, teacher_target_vals = teacher_target_agent(next_obs)
+                    differences = torch.abs(teacher_target_vals - teacher_source_vals)
+                    h_t = (p == 1) & (differences <= self.introspection_threshold)
+
                 with torch.no_grad():
-                    # Initialize h_t as a tensor of zeros (h_t <- 0)
-                    h_t = torch.zeros((self.num_envs,), dtype=torch.bool).to(device)
-
-                    # Calculate introspection probability
-                    probability = self.introspection_decay ** max(0, global_step - self.burn_in)
-                    p = Bernoulli(probability).sample([self.num_envs]).to(device)  # Bernoulli sampling for all envs
-
-                    # Only proceed if t > burn_in
-                    if global_step > self.burn_in:
-                        # Get value estimates from both teacher models in batch mode
-                        _, _, teacher_source_vals = teacher_source_agent(next_obs)
-                        _, _, teacher_target_vals = teacher_target_agent(next_obs)
-                        differences = torch.abs(teacher_target_vals - teacher_source_vals)
-                        h_t = (p == 1) & (differences <= self.introspection_threshold)
                     buffer.indicators[step] = h_t
                     advice_issued += h_t.float()
                     teacher_actions, teacher_action_logprobs, teacher_state_vals = teacher_source_agent(next_obs)
@@ -382,14 +378,12 @@ class Trainer:
                         writer.add_scalar("charts/Advice Issued", advice_issued.mean(), global_step)
                         # Print average reward
                         logging.info(
-                            "i_update: %s, \t Timestep: %s, \t Average Reward: %s, \t Episodic length: %s, \t Advice Issued env 0: %s, \
-                                \t Advice Issued env 1: %s",
+                            "i_update: %s, \t Timestep: %s, \t Average Reward: %s, \t Episodic length: %s, \t Advice Issued env 0: %s",
                             update,
                             global_step,
                             episodic_reward,
                             episodic_length,
                             advice_issued[0].item(),
-                            advice_issued[1].item(),
                         )
                         log_f.write(f"{update},{global_step},{episodic_reward},{episodic_length}\n")
                         log_f.flush()
@@ -399,6 +393,7 @@ class Trainer:
             # Calculate rewards and advantages using GAE
             with torch.no_grad():
                 _, _, next_value = policy(next_obs)
+                # TODO: Calculate advantages for teacher value function
                 advantages = torch.zeros_like(buffer.rewards).to(device)
                 lastgaelam = 0
                 for t in reversed(range(self.horizon)):
@@ -438,8 +433,7 @@ class Trainer:
                     mb_inds = b_inds[i:end]
                     mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                     new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
-                    teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states,
-                                                                                                                b_actions.long()[mb_inds])
+                    teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
 
                     with torch.no_grad():
                         _, teacher_source_new_logprob, _ = teacher_source_agent(mb_states)
