@@ -1,5 +1,6 @@
 # %%
 import logging
+import random
 from pathlib import Path
 
 import gymnasium as gym
@@ -10,7 +11,7 @@ from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import IntrospectiveEnv
+from luau.iaa_env import SmallIntrospectiveEnv
 
 
 # Configure logging
@@ -160,7 +161,7 @@ def preprocess(x: dict) -> torch.tensor:
 # Initialize the PPO agent
 seed = 47
 horizon = 128
-num_envs = 2
+num_envs = 1
 lr_actor = 0.0005
 max_training_timesteps = 500_000
 introspection_decay = 0.99999
@@ -184,8 +185,15 @@ model_dir.mkdir(parents=True, exist_ok=True)
 writer = SummaryWriter(log_dir=str(log_dir))
 checkpoint_path = f"{model_dir}/PPO_IntrospectiveEnvUnlocked_run_{run_num}_seed_{seed}.pth"
 
+random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+# Ensure deterministic behavior in PyTorch
+torch.backends.cudnn.deterministic = True
+
 rng = np.random.default_rng(seed)
-env = IntrospectiveEnv(rng=rng, size=9, locked=door_locked, render_mode="rgb_array")
+env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
 env.reset(seed=seed)
 env.action_space.seed(seed)
 env.observation_space.seed(seed)
