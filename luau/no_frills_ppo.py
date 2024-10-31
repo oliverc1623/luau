@@ -161,9 +161,9 @@ def preprocess(x: dict) -> torch.tensor:
 # Initialize the PPO agent
 seed = 47
 horizon = 128
-num_envs = 1
+num_envs = 2
 lr_actor = 0.0005
-max_training_timesteps = 500_000
+max_training_timesteps = 100_000
 introspection_decay = 0.99999
 burn_in = 0
 introspection_threshold = 0.9
@@ -172,8 +172,8 @@ gae_lambda = 0.8
 eps_clip = 0.2
 minibatch_size = 128
 k_epochs = 4
-save_model_freq = 279
-run_num = 1
+save_model_freq = 100
+run_num = 3
 door_locked = False
 
 # Initialize TensorBoard writer
@@ -193,14 +193,31 @@ if torch.cuda.is_available():
 torch.backends.cudnn.deterministic = True
 
 rng = np.random.default_rng(seed)
-env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
+
+
+def make_env(seed: int) -> SmallIntrospectiveEnv:
+    """Create the environment."""
+
+    def _init() -> SmallIntrospectiveEnv:
+        rng = np.random.default_rng(seed)
+        env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
+        env.reset(seed=seed)
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
+        return env
+
+    return _init
+
+
+envs = [make_env(seed + i) for i in range(num_envs)]
+env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
 env.reset(seed=seed)
 env.action_space.seed(seed)
 env.observation_space.seed(seed)
 
-buffer = RolloutBuffer(horizon, num_envs, env.observation_space, env.action_space)
-state_dim = env.observation_space["image"].shape[-1]
-policy = ActorCritic(state_dim, env.action_space.n).to(device)
+buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
+state_dim = env.single_observation_space["image"].shape[-1]
+policy = ActorCritic(state_dim, env.single_action_space.n).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
 next_obs, _ = env.reset()
@@ -224,17 +241,16 @@ for update in range(1, num_updates + 1):
         buffer.logprobs[step] = log_probs
 
         # Step the environment and store the rewards
-        next_obs, rewards, next_dones, truncated, info = env.step(actions.item())
+        next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
         next_obs = preprocess(next_obs)
-        next_dones = torch.tensor(np.logical_or(next_dones, truncated)).to(device)
+        next_dones = torch.tensor(next_dones).to(device)
         buffer.rewards[step] = torch.tensor(rewards, dtype=torch.float32).to(device).view(-1)
 
         global_step += 1 * num_envs
-        if next_dones:
-            writer.add_scalar("charts/Episodic Reward", rewards, global_step)
-            logging.info("i_update: %s, \t Timestep: %s, \t Reward: %s", update, global_step, rewards)
-            next_obs, _ = env.reset()
-            next_obs = preprocess(next_obs)
+        if next_dones.any():
+            done_indx = torch.argmax(next_dones.int())
+            writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
+            logging.info("i_update: %s, \t Timestep: %s, \t Reward: %s", update, global_step, rewards[done_indx])
 
     # Calculate rewards and advantages using GAE
     with torch.no_grad():
