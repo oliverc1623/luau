@@ -235,7 +235,6 @@ for update in range(1, num_updates + 1):
             logging.info("i_update: %s, \t Timestep: %s, \t Reward: %s", update, global_step, rewards)
             next_obs, _ = env.reset()
             next_obs = preprocess(next_obs)
-            next_dones = torch.zeros(num_envs).to(device)
 
     # Calculate rewards and advantages using GAE
     with torch.no_grad():
