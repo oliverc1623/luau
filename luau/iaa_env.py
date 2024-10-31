@@ -99,6 +99,79 @@ class IntrospectiveEnv(MiniGridEnv):
         self.mission = "get to the green goal square"
 
 
+class SmallIntrospectiveEnv(MiniGridEnv):
+    """Small Introspective Env."""
+
+    def __init__(
+        self,
+        rng: np.random.default_rng,
+        size: int = 6,
+        agent_start_pos: tuple[int, int] | None = None,
+        agent_start_dir: int = 0,
+        max_steps: int | None = None,
+        *,
+        locked: bool = False,
+        **kwargs: str,
+    ):
+        self.rng = rng
+        self.agent_start_pos = agent_start_pos
+        self.agent_start_dir = agent_start_dir
+        self.locked = locked
+
+        mission_space = MissionSpace(mission_func=self._gen_mission)
+
+        if max_steps is None:
+            max_steps = 4 * size**2
+
+        super().__init__(
+            mission_space=mission_space,
+            grid_size=size,
+            # Set this to True for maximum speed
+            see_through_walls=True,
+            max_steps=max_steps,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _gen_mission() -> str:
+        return "get to the green goal square"
+
+    def _gen_grid(self, width: int, height: int) -> None:
+        # Create an empty grid
+        self.grid = Grid(width, height)
+
+        # Generate the surrounding walls
+        self.grid.wall_rect(0, 0, width, height)
+
+        vertical_wall = self.rng.integers(2, 4)
+        gap = self.rng.integers(1, 5)
+        # Generate verical separation wall
+        for i in range(height):
+            if i != gap:
+                self.grid.set(vertical_wall, i, Wall())
+
+        # Place the door and key
+        self.grid.set(vertical_wall, gap, Door("yellow", is_locked=self.locked))
+
+        # Place a goal square in the bottom-right corner
+        self.put_obj(Goal(), width - 2, height - 2)
+
+        # Place the agent
+        agent_width = self.rng.integers(1, vertical_wall)
+        self.agent_pos = (agent_width, gap)
+        self.agent_dir = self.rng.integers(0, 4)
+
+        if self.locked:
+            # Place the key
+            def reject_right_of_door(self, pos: tuple[int, int]) -> bool:  # noqa: ARG001, ANN001
+                w, h = pos
+                return w > vertical_wall
+
+            self.place_obj(Key("yellow"), reject_fn=reject_right_of_door)
+
+        self.mission = "get to the green goal square"
+
+
 # %%
 def _make_env(seed: int) -> IntrospectiveEnv:
     """Create the environment."""
