@@ -85,29 +85,23 @@ class ActorCritic(nn.Module):
 
         # actor conv layers
         # TODO: should probably turn into a Sequential model
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
-        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.actor_conv1 = nn.Conv2d(state_dim, 16, 2)
+        self.actor_conv2 = nn.Conv2d(16, 32, 2)
+        self.actor_conv3 = nn.Conv2d(32, 64, 2)
 
         # actor linear layers
-        self.actor_fc1 = self.layer_init(nn.Linear(65, 512))
-        self.actor_fc2 = self.layer_init(nn.Linear(512, action_dim), std=0.01)
+        self.actor_fc1 = nn.Linear(65, 512)
+        self.actor_fc2 = nn.Linear(512, action_dim)
 
         # critic conv layers
         # TODO: should probably turn into a Sequential model
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
-        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.critic_conv1 = nn.Conv2d(state_dim, 16, 2)
+        self.critic_conv2 = nn.Conv2d(16, 32, 2)
+        self.critic_conv3 = nn.Conv2d(32, 64, 2)
 
         # critic linear layers
-        self.critic_fc1 = self.layer_init(nn.Linear(65, 512))
-        self.critic_fc2 = self.layer_init(nn.Linear(512, 1), std=1.0)
-
-    def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
-        """Initialize layer."""
-        nn.init.orthogonal_(layer.weight, std)
-        nn.init.constant_(layer.bias, bias_const)
-        return layer
+        self.critic_fc1 = nn.Linear(65, 512)
+        self.critic_fc2 = nn.Linear(512, 1)
 
     def _actor_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
@@ -306,9 +300,6 @@ class Trainer:
         # Training loop
         num_updates = self.max_training_timesteps // (self.horizon * self.num_envs)
         for update in range(1, num_updates + 1):
-            frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * self.lr_actor
-            optimizer.param_groups[0]["lr"] = lrnow
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 buffer.images[step] = next_obs["image"]
@@ -348,7 +339,7 @@ class Trainer:
                         log_f.write(f"{update},{global_step},{episodic_reward},{episodic_length}\n")
                         log_f.flush()
                     break
-            # PPO update at the end of the horizon
+
             # Calculate rewards and advantages using GAE
             with torch.no_grad():
                 _, _, next_value = policy(next_obs)
@@ -422,9 +413,6 @@ class Trainer:
                     optimizer.zero_grad()  # take gradient step
                     loss.backward()
                     optimizer.step()
-
-                if approx_kl.item() > KL_THRESHOLD:
-                    break
 
             buffer.clear()
 
