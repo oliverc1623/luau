@@ -159,7 +159,7 @@ def preprocess(x: dict) -> torch.tensor:
 
 
 # Initialize the PPO agent
-seed = 47
+seed = 22
 horizon = 128
 num_envs = 2
 lr_actor = 0.0005
@@ -173,17 +173,16 @@ eps_clip = 0.2
 minibatch_size = 128
 k_epochs = 4
 save_model_freq = 100
-run_num = 3
+run_num = 5
 door_locked = False
 
 # Initialize TensorBoard writer
-log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/IntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
-print(log_dir)
-model_dir = Path(f"../../pvcvolume/models/PPO/IntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
+log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnvUnlocked_2/run_{run_num}_seed_{seed}")
+model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnvUnlocked_2/run_{run_num}_seed_{seed}")
 log_dir.mkdir(parents=True, exist_ok=True)
 model_dir.mkdir(parents=True, exist_ok=True)
 writer = SummaryWriter(log_dir=str(log_dir))
-checkpoint_path = f"{model_dir}/PPO_IntrospectiveEnvUnlocked_run_{run_num}_seed_{seed}.pth"
+checkpoint_path = f"{model_dir}/PPO_SmallIntrospectiveEnvUnlocked_2_run_{run_num}_seed_{seed}.pth"
 
 random.seed(seed)
 torch.manual_seed(seed)
@@ -247,7 +246,7 @@ for update in range(1, num_updates + 1):
         buffer.rewards[step] = torch.tensor(rewards, dtype=torch.float32).to(device).view(-1)
 
         global_step += 1 * num_envs
-        if next_dones.any():
+        if next_dones.any() or truncated.any():
             done_indx = torch.argmax(next_dones.int())
             writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
             logging.info("i_update: %s, \t Timestep: %s, \t Reward: %s", update, global_step, rewards[done_indx])
