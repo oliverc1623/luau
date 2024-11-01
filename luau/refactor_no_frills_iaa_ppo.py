@@ -175,7 +175,7 @@ eps_clip = 0.2
 minibatch_size = 128
 k_epochs = 4
 save_model_freq = 130
-run_num = 1
+run_num = 2
 door_locked = True
 
 # Initialize TensorBoard writer
@@ -336,39 +336,28 @@ for update in range(1, num_updates + 1):
             mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
             new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
             teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
+            source_new_logprob, _, _ = teacher_source_agent.evaluate(mb_states, b_actions.long()[mb_inds])
 
             with torch.no_grad():
-                _, teacher_source_new_logprob, _ = teacher_source_agent(mb_states)
-                _, student_new_logprob, _ = policy(mb_states)
                 mb_rho_t = torch.ones(minibatch_size).to(device)
                 mb_rho_s = torch.ones(minibatch_size).to(device)
                 for j, h_i in enumerate(b_indicators[mb_inds]):
                     if h_i.item() == 1:
-                        mb_rho_s[j] = torch.exp(student_new_logprob[j] - b_logprobs[mb_inds][j]).item()
+                        mb_rho_s[j] = torch.exp(new_logprob[j] - b_logprobs[mb_inds][j]).item()
                     else:
-                        mb_rho_t[j] = torch.exp(teacher_source_new_logprob[j] - b_logprobs[mb_inds][j]).item()
-
-            # policy gradient
-            log_ratio = new_logprob - b_logprobs[mb_inds].detach()
-            ratios = torch.exp(log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
-
-            with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-log_ratio).mean()
-                approx_kl = ((ratios - 1) - log_ratio).mean()
-                clipfracs += [((ratios - 1.0).abs() > eps_clip).float().mean().item()]
+                        mb_rho_t[j] = torch.exp(source_new_logprob[j] - b_logprobs[mb_inds][j]).item()
 
             mb_advantages = b_advantages[mb_inds]
             mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-            surr1 = -mb_advantages * mb_rho_s * ratios
-            surr2 = -mb_advantages * mb_rho_s * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
+            surr1 = -mb_advantages * mb_rho_s
+            surr2 = -mb_advantages * torch.clamp(mb_rho_s, 1 - eps_clip, 1 + eps_clip)
             pg_loss_student = torch.max(surr1, surr2).mean()
 
             # value function loss + clipping
             new_value = new_value.view(-1)
-            v_loss_unclipped = mb_rho_s * (new_value - b_returns[mb_inds]) ** 2
+            v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
             v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
-            v_loss_clipped = mb_rho_s * (v_clipped - b_returns[mb_inds]) ** 2
+            v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
             v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
             v_loss_student = 0.5 * v_loss_max.mean()
 
@@ -377,17 +366,15 @@ for update in range(1, num_updates + 1):
             student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
 
             # teacher policy gradient
-            teacher_log_ratio = teacher_new_logprob - b_logprobs[mb_inds].detach()
-            teacher_ratios = teacher_log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
-            teacher_surr1 = -mb_advantages * mb_rho_t * teacher_ratios
-            teacher_surr2 = -mb_advantages * mb_rho_t * torch.clamp(teacher_ratios, 1 - eps_clip, 1 + eps_clip)
+            teacher_surr1 = -mb_advantages * mb_rho_t
+            teacher_surr2 = -mb_advantages * torch.clamp(mb_rho_t, 1 - eps_clip, 1 + eps_clip)
             pg_loss_teacher = torch.max(teacher_surr1, teacher_surr2).mean()
 
             # value function loss + clipping
             teacher_new_value = teacher_new_value.view(-1)
-            v_loss_unclipped = mb_rho_t * (teacher_new_value - b_returns[mb_inds]) ** 2
+            v_loss_unclipped = (teacher_new_value - b_returns[mb_inds]) ** 2
             v_clipped = b_state_values[mb_inds] + torch.clamp(teacher_new_value - b_state_values[mb_inds], -10.0, 10.0)
-            v_loss_clipped = mb_rho_t * (v_clipped - b_returns[mb_inds]) ** 2
+            v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
             v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
             v_loss_teacher = 0.5 * v_loss_max.mean()
 
@@ -405,16 +392,11 @@ for update in range(1, num_updates + 1):
             nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
             optimizer.step()
 
-        if approx_kl.item() > KL_THRESHOLD:
-            break
-
     # log debug variables
     with torch.no_grad():
         writer.add_scalar("debugging/policy_loss", pg_loss_student.item(), global_step)
         writer.add_scalar("debugging/value_loss", v_loss_student.item(), global_step)
         writer.add_scalar("debugging/entropy_loss", entropy_loss_student.item(), global_step)
-        writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
 
     buffer.clear()
