@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as f
 from torch import nn
-from torch.distributions import Categorical
+from torch.distributions import Bernoulli, Categorical
 from torch.utils.tensorboard import SummaryWriter
 
 from luau.iaa_env import SmallIntrospectiveEnv
@@ -60,6 +60,7 @@ class RolloutBuffer:
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.is_terminals = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.state_values = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.indicators = torch.zeros((self.horizon, self.num_envs)).to(device)
 
     def clear(self) -> None:
         """Clear the buffer."""
@@ -70,6 +71,7 @@ class RolloutBuffer:
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.is_terminals = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.state_values = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.indicators = torch.zeros((self.horizon, self.num_envs)).to(device)
 
 
 class ActorCritic(nn.Module):
@@ -177,12 +179,12 @@ run_num = 1
 door_locked = True
 
 # Initialize TensorBoard writer
-log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
-model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
+log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/SmallIntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
+model_dir = Path(f"../../pvcvolume/models/IAAPPO/SmallIntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
 log_dir.mkdir(parents=True, exist_ok=True)
 model_dir.mkdir(parents=True, exist_ok=True)
 writer = SummaryWriter(log_dir=str(log_dir))
-checkpoint_path = f"{model_dir}/PPO_SmallIntrospectiveEnvLocked_run_{run_num}_seed_{seed}.pth"
+checkpoint_path = f"{model_dir}/IAAPPO_SmallIntrospectiveEnvLocked_run_{run_num}_seed_{seed}.pth"
 
 random.seed(seed)
 torch.manual_seed(seed)
@@ -219,9 +221,19 @@ state_dim = env.single_observation_space["image"].shape[-1]
 policy = ActorCritic(state_dim, env.single_action_space.n).to(device)
 optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
+# Initialize teacher model
+teacher_model_path = "../../pvcvolume/models/PPO/SmallIntrospectiveEnvUnlocked/run_1_seed_22/PPO_SmallIntrospectiveEnvUnlocked_run_1_seed_22.pth"
+teacher_source_agent = ActorCritic(state_dim, env.single_action_space.n).to(device)
+teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
+
+teacher_target_agent = ActorCritic(state_dim, env.single_action_space.n).to(device)
+teacher_target_agent.load_state_dict(torch.load(teacher_model_path))
+teacher_optimizer = torch.optim.Adam(teacher_target_agent.parameters(), lr=lr_actor, eps=1e-5)
+
 next_obs, _ = env.reset()
 next_obs = preprocess(next_obs)
 next_dones = torch.zeros(num_envs).to(device)
+advice_counter = torch.zeros(num_envs).to(device)
 global_step = 0
 
 # Training loop
@@ -234,8 +246,26 @@ for update in range(1, num_updates + 1):
         buffer.is_terminals[step] = next_dones
 
         with torch.no_grad():
-            actions, log_probs, state_values = policy(next_obs)
+            # Introspection
+            h_t = torch.zeros((num_envs,), dtype=torch.bool).to(device)
+            probability = introspection_decay ** max(0, global_step - burn_in)
+            p = Bernoulli(probability).sample([num_envs]).to(device)  # Bernoulli sampling for all envs
+            if global_step > burn_in:
+                _, _, teacher_source_vals = teacher_source_agent(next_obs)
+                _, _, teacher_target_vals = teacher_target_agent(next_obs)
+                differences = torch.abs(teacher_target_vals - teacher_source_vals)
+                h_t = (p == 1) & (differences <= introspection_threshold)
+            advice_counter += h_t.int()
+
+            # select action
+            buffer.indicators[step] = h_t
+            teacher_actions, teacher_action_logprobs, teacher_state_vals = teacher_source_agent(next_obs)
+            student_actions, student_action_logprobs, student_state_vals = policy(next_obs)
+            actions = torch.where(h_t, teacher_actions, student_actions)
+            log_probs = torch.where(h_t, teacher_action_logprobs, student_action_logprobs)
+            state_values = torch.where(h_t, teacher_state_vals, student_state_vals)
             buffer.state_values[step] = state_values
+
         buffer.actions[step] = actions
         buffer.logprobs[step] = log_probs
 
@@ -245,11 +275,23 @@ for update in range(1, num_updates + 1):
         next_dones = torch.tensor(next_dones).to(device)
         buffer.rewards[step] = torch.tensor(rewards, dtype=torch.float32).to(device).view(-1)
 
+        # Log the rewards and advice issued
         global_step += 1 * num_envs
         if next_dones.any() or truncated.any():
-            done_indx = torch.argmax(next_dones.int())
-            writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
-            logging.info("i_update: %s, \t Timestep: %s, \t Reward: %s", update, global_step, rewards[done_indx])
+            for env_idx in range(num_envs):
+                if next_dones[env_idx] or truncated[env_idx]:
+                    # Log advice count and reset for the specific environment
+                    writer.add_scalar("charts/Episodic Reward", rewards[env_idx], global_step)
+                    writer.add_scalar("charts/Advice Issued", advice_counter[env_idx], global_step)
+                    logging.info(
+                        "i_update: %s, \t Timestep: %s, \t Reward: %s, \t Advice: %s",
+                        update,
+                        global_step,
+                        rewards[env_idx],
+                        advice_counter[env_idx].item(),
+                    )
+                    # Reset advice counter for this specific environment
+                    advice_counter[env_idx] = 0
 
     # Calculate rewards and advantages using GAE
     with torch.no_grad():
@@ -277,6 +319,7 @@ for update in range(1, num_updates + 1):
     b_images = torch.flatten(buffer.images, 0, 1).detach()
     b_directions = torch.flatten(buffer.directions, 0, 1).detach()
     b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
+    b_indicators = torch.flatten(buffer.indicators, 0, 1).detach()
 
     batch_size = num_envs * horizon
     b_inds = np.arange(batch_size)
@@ -292,6 +335,18 @@ for update in range(1, num_updates + 1):
             mb_inds = b_inds[i:end]
             mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
             new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
+            teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
+
+            with torch.no_grad():
+                _, teacher_source_new_logprob, _ = teacher_source_agent(mb_states)
+                _, student_new_logprob, _ = policy(mb_states)
+                mb_rho_t = torch.ones(minibatch_size).to(device)
+                mb_rho_s = torch.ones(minibatch_size).to(device)
+                for j, h_i in enumerate(b_indicators[mb_inds]):
+                    if h_i.item() == 1:
+                        mb_rho_s[j] = torch.exp(student_new_logprob[j] - b_logprobs[mb_inds][j]).item()
+                    else:
+                        mb_rho_t[j] = torch.exp(teacher_source_new_logprob[j] - b_logprobs[mb_inds][j]).item()
 
             # policy gradient
             log_ratio = new_logprob - b_logprobs[mb_inds].detach()
@@ -305,21 +360,45 @@ for update in range(1, num_updates + 1):
 
             mb_advantages = b_advantages[mb_inds]
             mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-            surr1 = -mb_advantages * ratios
-            surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
+            surr1 = -mb_advantages * mb_rho_s * ratios
+            surr2 = -mb_advantages * mb_rho_s * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
             pg_loss_student = torch.max(surr1, surr2).mean()
 
             # value function loss + clipping
             new_value = new_value.view(-1)
-            v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
+            v_loss_unclipped = mb_rho_s * (new_value - b_returns[mb_inds]) ** 2
             v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
-            v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+            v_loss_clipped = mb_rho_s * (v_clipped - b_returns[mb_inds]) ** 2
             v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
             v_loss_student = 0.5 * v_loss_max.mean()
 
             # entropy loss
             entropy_loss_student = dist_entropy.mean()
             student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
+
+            # teacher policy gradient
+            teacher_log_ratio = teacher_new_logprob - b_logprobs[mb_inds].detach()
+            teacher_ratios = teacher_log_ratio.exp()  # Finding the ratio (pi_theta / pi_theta__old)
+            teacher_surr1 = -mb_advantages * mb_rho_t * teacher_ratios
+            teacher_surr2 = -mb_advantages * mb_rho_t * torch.clamp(teacher_ratios, 1 - eps_clip, 1 + eps_clip)
+            pg_loss_teacher = torch.max(teacher_surr1, teacher_surr2).mean()
+
+            # value function loss + clipping
+            teacher_new_value = teacher_new_value.view(-1)
+            v_loss_unclipped = mb_rho_t * (teacher_new_value - b_returns[mb_inds]) ** 2
+            v_clipped = b_state_values[mb_inds] + torch.clamp(teacher_new_value - b_state_values[mb_inds], -10.0, 10.0)
+            v_loss_clipped = mb_rho_t * (v_clipped - b_returns[mb_inds]) ** 2
+            v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+            v_loss_teacher = 0.5 * v_loss_max.mean()
+
+            # entropy loss
+            entropy_loss_teacher = teacher_dist_entropy.mean()
+            teacher_loss = pg_loss_teacher - 0.01 * entropy_loss_teacher + v_loss_teacher * 0.5  # final loss of clipped objective PPO
+
+            teacher_optimizer.zero_grad()  # take gradient step
+            teacher_loss.backward()
+            nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), 0.5)
+            teacher_optimizer.step()
 
             optimizer.zero_grad()  # take gradient step
             student_loss.backward()
