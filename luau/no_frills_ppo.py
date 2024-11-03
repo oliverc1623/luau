@@ -158,193 +158,191 @@ def preprocess(x: dict) -> torch.tensor:
     return x
 
 
-# Initialize the PPO agent
-seed = 22
-horizon = 128
-num_envs = 2
-lr_actor = 0.0005
-max_training_timesteps = 100_000
-introspection_decay = 0.99999
-burn_in = 0
-introspection_threshold = 0.9
-gamma = 0.99
-gae_lambda = 0.8
-eps_clip = 0.2
-minibatch_size = 128
-k_epochs = 4
-save_model_freq = 130
-run_num = 1
-door_locked = True
+def main() -> None:  # noqa: PLR0915
+    """Run Main function."""
+    # Initialize the PPO agent
+    seed = 22
+    horizon = 128
+    num_envs = 2
+    lr_actor = 0.0005
+    max_training_timesteps = 100_000
+    gamma = 0.99
+    gae_lambda = 0.8
+    eps_clip = 0.2
+    minibatch_size = 128
+    k_epochs = 4
+    save_model_freq = 130
+    run_num = 1
+    door_locked = False
 
-# Initialize TensorBoard writer
-log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
-model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
-log_dir.mkdir(parents=True, exist_ok=True)
-model_dir.mkdir(parents=True, exist_ok=True)
-writer = SummaryWriter(log_dir=str(log_dir))
-checkpoint_path = f"{model_dir}/PPO_SmallIntrospectiveEnvLocked_run_{run_num}_seed_{seed}.pth"
+    # Initialize TensorBoard writer
+    log_dir = Path(f"PPO_logs/PPO/SmallIntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"models/PPO/SmallIntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    writer = SummaryWriter(log_dir=str(log_dir))
+    checkpoint_path = f"{model_dir}/PPO_SmallIntrospectiveEnvUnlocked_run_{run_num}_seed_{seed}.pth"
 
-random.seed(seed)
-torch.manual_seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(seed)
-# Ensure deterministic behavior in PyTorch
-torch.backends.cudnn.deterministic = True
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # Ensure deterministic behavior in PyTorch
+    torch.backends.cudnn.deterministic = True
 
-rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(seed)
 
+    def make_env(seed: int) -> SmallIntrospectiveEnv:
+        """Create the environment."""
 
-def make_env(seed: int) -> SmallIntrospectiveEnv:
-    """Create the environment."""
+        def _init() -> SmallIntrospectiveEnv:
+            rng = np.random.default_rng(seed)
+            env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
+            env.reset(seed=seed)
+            env.action_space.seed(seed)
+            env.observation_space.seed(seed)
+            return env
 
-    def _init() -> SmallIntrospectiveEnv:
-        rng = np.random.default_rng(seed)
-        env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
-        env.reset(seed=seed)
-        env.action_space.seed(seed)
-        env.observation_space.seed(seed)
-        return env
+        return _init
 
-    return _init
+    envs = [make_env(seed + i) for i in range(num_envs)]
+    env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
+    env.reset(seed=seed)
+    env.action_space.seed(seed)
+    env.observation_space.seed(seed)
 
+    buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
+    state_dim = env.single_observation_space["image"].shape[-1]
+    policy = ActorCritic(state_dim, env.single_action_space.n).to(device)
+    optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
-envs = [make_env(seed + i) for i in range(num_envs)]
-env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
-env.reset(seed=seed)
-env.action_space.seed(seed)
-env.observation_space.seed(seed)
+    next_obs, _ = env.reset()
+    next_obs = preprocess(next_obs)
+    next_dones = torch.zeros(num_envs).to(device)
+    global_step = 0
 
-buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
-state_dim = env.single_observation_space["image"].shape[-1]
-policy = ActorCritic(state_dim, env.single_action_space.n).to(device)
-optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
-
-next_obs, _ = env.reset()
-next_obs = preprocess(next_obs)
-next_dones = torch.zeros(num_envs).to(device)
-global_step = 0
-
-# Training loop
-num_updates = max_training_timesteps // (horizon * num_envs)
-for update in range(1, num_updates + 1):
-    for step in range(horizon):
-        # Preprocess the next observation and store relevant data in the PPO agent's buffer
-        buffer.images[step] = next_obs["image"]
-        buffer.directions[step] = next_obs["direction"]
-        buffer.is_terminals[step] = next_dones
-
-        with torch.no_grad():
-            actions, log_probs, state_values = policy(next_obs)
-            buffer.state_values[step] = state_values
-        buffer.actions[step] = actions
-        buffer.logprobs[step] = log_probs
-
-        # Step the environment and store the rewards
-        next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
-        next_obs = preprocess(next_obs)
-        next_dones = torch.tensor(next_dones).to(device)
-        buffer.rewards[step] = torch.tensor(rewards, dtype=torch.float32).to(device).view(-1)
-
-        global_step += 1 * num_envs
-        if next_dones.any() or truncated.any():
-            done_indx = torch.argmax(next_dones.int())
-            writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
-            logging.info("i_update: %s, \t Timestep: %s, \t Reward: %s", update, global_step, rewards[done_indx])
-
-    # Calculate rewards and advantages using GAE
-    with torch.no_grad():
-        _, _, next_value = policy(next_obs)
-        advantages = torch.zeros_like(buffer.rewards).to(device)
-        lastgaelam = 0
-        for t in reversed(range(horizon)):
-            if t == horizon - 1:
-                next_non_terminal = 1.0 - next_dones.float()
-                nextvalues = next_value  # Bootstrapping for the last value
-            else:
-                next_non_terminal = 1.0 - buffer.is_terminals[t + 1]
-                nextvalues = buffer.state_values[t + 1]
-
-            # Temporal difference error
-            delta = buffer.rewards[t] + gamma * nextvalues * next_non_terminal - buffer.state_values[t]
-            advantages[t] = lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
-        returns = advantages + buffer.state_values
-
-    # Flatten the buffer
-    b_returns = returns.reshape(-1).detach()
-    b_advantages = advantages.reshape(-1).detach()
-    b_actions = torch.flatten(buffer.actions, 0, 1).detach()
-    b_logprobs = torch.flatten(buffer.logprobs, 0, 1).detach()
-    b_images = torch.flatten(buffer.images, 0, 1).detach()
-    b_directions = torch.flatten(buffer.directions, 0, 1).detach()
-    b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
-
-    batch_size = num_envs * horizon
-    b_inds = np.arange(batch_size)
-    clipfracs = []
-
-    # Optimize policy for K epochs
-    for _ in range(k_epochs):
-        rng.shuffle(b_inds)
-
-        # Split data into minibatches
-        for i in range(0, batch_size, minibatch_size):
-            end = i + minibatch_size
-            mb_inds = b_inds[i:end]
-            mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
-            new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
-
-            # policy gradient
-            log_ratio = new_logprob - b_logprobs[mb_inds].detach()
-            ratios = torch.exp(log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
+    # Training loop
+    num_updates = max_training_timesteps // (horizon * num_envs)
+    for update in range(1, num_updates + 1):
+        for step in range(horizon):
+            # Preprocess the next observation and store relevant data in the PPO agent's buffer
+            buffer.images[step] = next_obs["image"]
+            buffer.directions[step] = next_obs["direction"]
+            buffer.is_terminals[step] = next_dones
 
             with torch.no_grad():
-                # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                old_approx_kl = (-log_ratio).mean()
-                approx_kl = ((ratios - 1) - log_ratio).mean()
-                clipfracs += [((ratios - 1.0).abs() > eps_clip).float().mean().item()]
+                actions, log_probs, state_values = policy(next_obs)
+                buffer.state_values[step] = state_values
+            buffer.actions[step] = actions
+            buffer.logprobs[step] = log_probs
 
-            mb_advantages = b_advantages[mb_inds]
-            mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-            surr1 = -mb_advantages * ratios
-            surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
-            pg_loss_student = torch.max(surr1, surr2).mean()
+            # Step the environment and store the rewards
+            next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
+            next_obs = preprocess(next_obs)
+            next_dones = torch.tensor(next_dones).to(device)
+            buffer.rewards[step] = torch.tensor(rewards, dtype=torch.float32).to(device).view(-1)
 
-            # value function loss + clipping
-            new_value = new_value.view(-1)
-            v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
-            v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
-            v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-            v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-            v_loss_student = 0.5 * v_loss_max.mean()
+            global_step += 1 * num_envs
+            if next_dones.any() or truncated.any():
+                done_indx = torch.argmax(next_dones.int())
+                writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
+                logging.info("i_update: %s, \t Timestep: %s, \t Reward: %s", update, global_step, rewards[done_indx])
 
-            # entropy loss
-            entropy_loss_student = dist_entropy.mean()
-            student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
+        # Calculate rewards and advantages using GAE
+        with torch.no_grad():
+            _, _, next_value = policy(next_obs)
+            advantages = torch.zeros_like(buffer.rewards).to(device)
+            lastgaelam = 0
+            for t in reversed(range(horizon)):
+                if t == horizon - 1:
+                    next_non_terminal = 1.0 - next_dones.float()
+                    nextvalues = next_value  # Bootstrapping for the last value
+                else:
+                    next_non_terminal = 1.0 - buffer.is_terminals[t + 1]
+                    nextvalues = buffer.state_values[t + 1]
 
-            optimizer.zero_grad()  # take gradient step
-            student_loss.backward()
-            nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
-            optimizer.step()
+                # Temporal difference error
+                delta = buffer.rewards[t] + gamma * nextvalues * next_non_terminal - buffer.state_values[t]
+                advantages[t] = lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
+            returns = advantages + buffer.state_values
 
-        if approx_kl.item() > KL_THRESHOLD:
-            break
+        # Flatten the buffer
+        b_returns = returns.reshape(-1).detach()
+        b_advantages = advantages.reshape(-1).detach()
+        b_actions = torch.flatten(buffer.actions, 0, 1).detach()
+        b_logprobs = torch.flatten(buffer.logprobs, 0, 1).detach()
+        b_images = torch.flatten(buffer.images, 0, 1).detach()
+        b_directions = torch.flatten(buffer.directions, 0, 1).detach()
+        b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
 
-    # log debug variables
-    with torch.no_grad():
-        writer.add_scalar("debugging/policy_loss", pg_loss_student.item(), global_step)
-        writer.add_scalar("debugging/value_loss", v_loss_student.item(), global_step)
-        writer.add_scalar("debugging/entropy_loss", entropy_loss_student.item(), global_step)
-        writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
+        batch_size = num_envs * horizon
+        b_inds = np.arange(batch_size)
+        clipfracs = []
 
-    buffer.clear()
+        # Optimize policy for K epochs
+        for _ in range(k_epochs):
+            rng.shuffle(b_inds)
 
-    if update % save_model_freq == 0:
-        logging.info("--------------------------------------------------------------------------------------------")
-        logging.info("Saving model to: %s", checkpoint_path)
-        logging.info("--------------------------------------------------------------------------------------------")
-        torch.save(policy.state_dict(), checkpoint_path)
+            # Split data into minibatches
+            for i in range(0, batch_size, minibatch_size):
+                end = i + minibatch_size
+                mb_inds = b_inds[i:end]
+                mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
+                new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
 
-env.close()
-writer.close()
+                # policy gradient
+                log_ratio = new_logprob - b_logprobs[mb_inds].detach()
+                ratios = torch.exp(log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
+
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_approx_kl = (-log_ratio).mean()
+                    approx_kl = ((ratios - 1) - log_ratio).mean()
+                    clipfracs += [((ratios - 1.0).abs() > eps_clip).float().mean().item()]
+
+                mb_advantages = b_advantages[mb_inds]
+                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                surr1 = -mb_advantages * ratios
+                surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
+                pg_loss_student = torch.max(surr1, surr2).mean()
+
+                # value function loss + clipping
+                new_value = new_value.view(-1)
+                v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
+                v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
+                v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                v_loss_student = 0.5 * v_loss_max.mean()
+
+                # entropy loss
+                entropy_loss_student = dist_entropy.mean()
+                student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
+
+                optimizer.zero_grad()  # take gradient step
+                student_loss.backward()
+                nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
+                optimizer.step()
+
+        # log debug variables
+        with torch.no_grad():
+            writer.add_scalar("debugging/policy_loss", pg_loss_student.item(), global_step)
+            writer.add_scalar("debugging/value_loss", v_loss_student.item(), global_step)
+            writer.add_scalar("debugging/entropy_loss", entropy_loss_student.item(), global_step)
+            writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
+            writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
+            writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
+
+        buffer.clear()
+
+        if update % save_model_freq == 0:
+            logging.info("--------------------------------------------------------------------------------------------")
+            logging.info("Saving model to: %s", checkpoint_path)
+            logging.info("--------------------------------------------------------------------------------------------")
+            torch.save(policy.state_dict(), checkpoint_path)
+
+    env.close()
+    writer.close()
+
+
+if __name__ == "__main__":
+    main()
