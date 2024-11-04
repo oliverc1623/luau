@@ -11,7 +11,7 @@ from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import SmallIntrospectiveEnv
+from luau.iaa_env import IntrospectiveEnv
 
 
 # Configure logging
@@ -161,27 +161,27 @@ def preprocess(x: dict) -> torch.tensor:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 22
+    seed = 1
     horizon = 128
     num_envs = 2
     lr_actor = 0.0005
-    max_training_timesteps = 100_000
+    max_training_timesteps = 500_000
     gamma = 0.99
     gae_lambda = 0.8
     eps_clip = 0.2
     minibatch_size = 128
     k_epochs = 4
-    save_model_freq = 130
+    save_model_freq = 217
     run_num = 1
-    door_locked = False
+    door_locked = True
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/IntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/IntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/PPO_SmallIntrospectiveEnvUnlocked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/PPO_IntrospectiveEnvLocked_run_{run_num}_seed_{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -192,12 +192,12 @@ def main() -> None:  # noqa: PLR0915
 
     rng = np.random.default_rng(seed)
 
-    def make_env(seed: int) -> SmallIntrospectiveEnv:
+    def make_env(seed: int) -> IntrospectiveEnv:
         """Create the environment."""
 
-        def _init() -> SmallIntrospectiveEnv:
+        def _init() -> IntrospectiveEnv:
             rng = np.random.default_rng(seed)
-            env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
+            env = IntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
             env.reset(seed=seed)
             env.action_space.seed(seed)
             env.observation_space.seed(seed)
@@ -330,6 +330,8 @@ def main() -> None:  # noqa: PLR0915
             writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
             writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
+
+        buffer.clear()
 
         if update % save_model_freq == 0:
             logging.info("--------------------------------------------------------------------------------------------")

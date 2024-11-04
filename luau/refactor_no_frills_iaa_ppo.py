@@ -11,7 +11,7 @@ from torch import nn
 from torch.distributions import Bernoulli, Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import SmallIntrospectiveEnv
+from luau.iaa_env import IntrospectiveEnv
 
 
 # Configure logging
@@ -167,7 +167,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     horizon = 128
     num_envs = 2
     lr_actor = 0.0005
-    max_training_timesteps = 100_000
+    max_training_timesteps = 500_000
     introspection_decay = 0.99999
     burn_in = 0
     introspection_threshold = 0.9
@@ -181,12 +181,12 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     door_locked = True
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"PPO_logs/IAAPPO/SmallIntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"models/IAAPPO/SmallIntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/IntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/IAAPPO/IntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/IAAPPO_SmallIntrospectiveEnvLocked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/IAAPPO_IntrospectiveEnvLocked_run_{run_num}_seed_{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -197,12 +197,12 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
     rng = np.random.default_rng(seed)
 
-    def make_env(seed: int) -> SmallIntrospectiveEnv:
+    def make_env(seed: int) -> IntrospectiveEnv:
         """Create the environment."""
 
-        def _init() -> SmallIntrospectiveEnv:
+        def _init() -> IntrospectiveEnv:
             rng = np.random.default_rng(seed)
-            env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
+            env = IntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
             env.reset(seed=seed)
             env.action_space.seed(seed)
             env.observation_space.seed(seed)
@@ -222,7 +222,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
     # Initialize teacher model
-    teacher_model_path = "models/PPO/SmallIntrospectiveEnvUnlocked/run_1_seed_22/PPO_SmallIntrospectiveEnvUnlocked_run_1_seed_22.pth"
+    teacher_model_path = "../../pvcvolume/models/PPO/IntrospectiveEnvUnlocked/run_1_seed_1/PPO_IntrospectiveEnvUnlocked_run_1_seed_1.pth"
     teacher_source_agent = ActorCritic(state_dim, env.single_action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
 
