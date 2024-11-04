@@ -30,14 +30,11 @@ class IntrospectiveEnv(MiniGridEnv):
         self.rng = rng
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
-        self.max_steps = max_steps
-        if self.max_steps is None:
-            self.max_steps = 4 * size**2
+        self.max_steps = max_steps if max_steps is not None else 4 * size**2
 
         super().__init__(
             mission_space=mission_space,
             grid_size=self.size,
-            # Set this to True for maximum speed
             see_through_walls=True,
             max_steps=self.max_steps,
             **kwargs,
@@ -55,53 +52,45 @@ class IntrospectiveEnv(MiniGridEnv):
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
 
-        # Generate verical separation wall
+        # Generate vertical and horizontal walls in the center
         for i in range(height):
             self.grid.set(4, i, Wall())
-
-        # Generate horizontal separation wall
         for i in range(width):
             self.grid.set(i, 4, Wall())
 
-        goal_width = self.rng.integers(1, width - 1)
-        goal_width = goal_width + 1 if goal_width == 4 else goal_width  # noqa: PLR2004
-        goal_height = self.rng.integers(1, height - 1)
-        goal_height = goal_height + 1 if goal_height == 4 else goal_height  # noqa: PLR2004
-        self.put_obj(Goal(), goal_width, goal_height)
+        # Place the goal
+        goal_pos = self._get_valid_position(width, height)
+        self.put_obj(Goal(), *goal_pos)
 
-        # Place the door
+        # Place the door(s)
         self.grid.set(4, 2, Door(COLOR_NAMES[0], is_locked=False))
         if self.locked:
-            self.grid.set(6, 4, Door(COLOR_NAMES[4], is_locked=self.locked))
+            self.grid.set(6, 4, Door(COLOR_NAMES[4], is_locked=True))
         else:
-            self.grid.set(6, 4, Door(COLOR_NAMES[0], is_locked=self.locked))
+            self.grid.set(6, 4, Door(COLOR_NAMES[0], is_locked=False))
         self.grid.set(4, 6, Door(COLOR_NAMES[0], is_locked=False))
 
-        # Place the key
+        # Place the key if locked
         if self.locked:
-            key_width = self.rng.integers(1, width - 1)
-            key_width = key_width + 1 if key_width == 4 else key_width  # noqa: PLR2004
-            key_height = self.rng.integers(1, height // 2)
-            self.grid.set(key_width, key_height, Key(COLOR_NAMES[4]))
+            key_pos = self._get_valid_position(width, height, exclude=[goal_pos])
+            self.grid.set(*key_pos, Key(COLOR_NAMES[4]))
 
         # Place the agent
-        agent_width = self.rng.integers(1, width - 1)
-        agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
-        agent_height = self.rng.integers(1, height - 1)
-        agent_height = agent_height + 1 if agent_height == 4 else agent_height  # noqa: PLR2004
-        if self.locked:
-            while agent_width == key_width and agent_height == key_height:
-                agent_width = self.rng.integers(1, width - 1)
-                agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
-                agent_height = self.rng.integers(1, height // 2)
-        else:
-            while agent_width == goal_width and agent_height == goal_height:
-                agent_width = self.rng.integers(1, width - 1)
-                agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
-        self.agent_pos = (agent_width, agent_height)
+        agent_pos = self._get_valid_position(width, height, exclude=[goal_pos, key_pos] if self.locked else [goal_pos])
+        self.agent_pos = agent_pos
         self.agent_dir = self.rng.integers(0, 4)
 
         self.mission = "get to the green goal square"
+
+    def _get_valid_position(self, width: int, height: int, exclude=None) -> tuple[int, int]:  # noqa: ANN001
+        """Generate a random valid position, avoiding walls and excluded positions."""
+        exclude = set(exclude or [])
+        while True:
+            x = self.rng.integers(1, width - 1)
+            y = self.rng.integers(1, height - 1)
+            # Skip positions in the central walls and excluded spots
+            if (x, y) != (4, 4) and (x != 4 and y != 4) and (x, y) not in exclude:  # noqa: PLR2004
+                return (x, y)
 
 
 class SmallIntrospectiveEnv(MiniGridEnv):
