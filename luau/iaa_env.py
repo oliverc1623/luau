@@ -65,7 +65,7 @@ class IntrospectiveEnv(MiniGridEnv):
 
         goal_width = self.rng.integers(1, width - 1)
         goal_width = goal_width + 1 if goal_width == 4 else goal_width  # noqa: PLR2004
-        goal_height = self.rng.integers(height // 2 + 1, height - 1)
+        goal_height = self.rng.integers(1, height - 1)
         goal_height = goal_height + 1 if goal_height == 4 else goal_height  # noqa: PLR2004
         self.put_obj(Goal(), goal_width, goal_height)
 
@@ -87,12 +87,17 @@ class IntrospectiveEnv(MiniGridEnv):
         # Place the agent
         agent_width = self.rng.integers(1, width - 1)
         agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
-        agent_height = self.rng.integers(1, height // 2)
+        agent_height = self.rng.integers(1, height - 1)
+        agent_height = agent_height + 1 if agent_height == 4 else agent_height  # noqa: PLR2004
         if self.locked:
             while agent_width == key_width and agent_height == key_height:
                 agent_width = self.rng.integers(1, width - 1)
                 agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
                 agent_height = self.rng.integers(1, height // 2)
+        else:
+            while agent_width == goal_width and agent_height == goal_height:
+                agent_width = self.rng.integers(1, width - 1)
+                agent_width = agent_width + 1 if agent_width == 4 else agent_width  # noqa: PLR2004
         self.agent_pos = (agent_width, agent_height)
         self.agent_dir = self.rng.integers(0, 4)
 
