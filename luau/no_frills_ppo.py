@@ -54,7 +54,7 @@ class RolloutBuffer:
         self.img_shape = permuted_sample.shape
 
         self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
-        self.directions = torch.zeros((self.horizon, self.num_envs, *self.state["direction"].shape)).to(device)
+        self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -64,7 +64,7 @@ class RolloutBuffer:
     def clear(self) -> None:
         """Clear the buffer."""
         self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
-        self.directions = torch.zeros((self.horizon, self.num_envs, *self.state["direction"].shape)).to(device)
+        self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -81,14 +81,14 @@ class ActorCritic(nn.Module):
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
 
-        self.actor_fc1 = self.layer_init(nn.Linear(65, 512))
+        self.actor_fc1 = self.layer_init(nn.Linear(68, 512))
         self.actor_fc2 = self.layer_init(nn.Linear(512, action_dim), std=0.01)
 
         self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
 
-        self.critic_fc1 = self.layer_init(nn.Linear(65, 512))
+        self.critic_fc1 = self.layer_init(nn.Linear(68, 512))
         self.critic_fc2 = self.layer_init(nn.Linear(512, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
@@ -104,7 +104,7 @@ class ActorCritic(nn.Module):
         x = f.relu(self.actor_conv2(x))
         x = f.relu(self.actor_conv3(x))
         x = torch.flatten(x, 1)
-        direction = direction.view(-1, 1)
+        direction = direction.view(-1, 4)
         x = torch.cat((x, direction), 1)
         x = f.relu(self.actor_fc1(x))
         return self.actor_fc2(x)
@@ -116,7 +116,8 @@ class ActorCritic(nn.Module):
         y = f.relu(self.critic_conv2(y))
         y = f.relu(self.critic_conv3(y))
         y = torch.flatten(y, 1)
-        y = torch.cat((y, direction.view(-1, 1)), 1)
+        direction = direction.view(-1, 4)
+        y = torch.cat((y, direction), 1)
         y = f.relu(self.critic_fc1(y))
         state_values = self.critic_fc2(y).squeeze(-1)
         return state_values
@@ -153,7 +154,8 @@ def preprocess(x: dict) -> torch.tensor:
         image = image.unsqueeze(0).permute(0, 3, 1, 2).to(device)
     else:
         image = image.permute(0, 3, 1, 2).to(device)
-    direction = torch.tensor(direction, dtype=torch.float).to(device)
+    direction = torch.tensor(direction, dtype=torch.int64).to(device)
+    direction = f.one_hot(direction, num_classes=4)
     x = {"direction": direction, "image": image}
     return x
 
@@ -172,7 +174,7 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 3
+    run_num = 4
     door_locked = True
 
     # Initialize TensorBoard writer
