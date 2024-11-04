@@ -176,8 +176,8 @@ def main() -> None:  # noqa: PLR0915
     door_locked = False
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"PPO_logs/PPO/SmallIntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"models/PPO/SmallIntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnvUnlocked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
@@ -320,7 +320,6 @@ def main() -> None:  # noqa: PLR0915
 
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
-                nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                 optimizer.step()
 
         # log debug variables
@@ -331,8 +330,6 @@ def main() -> None:  # noqa: PLR0915
             writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
             writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
-
-        buffer.clear()
 
         if update % save_model_freq == 0:
             logging.info("--------------------------------------------------------------------------------------------")
