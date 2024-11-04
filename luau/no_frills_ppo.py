@@ -11,7 +11,7 @@ from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import IntrospectiveEnv
+from luau.iaa_env import SmallIntrospectiveEnv
 
 
 # Configure logging
@@ -172,16 +172,16 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 1
+    run_num = 3
     door_locked = True
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/IntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/IntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/PPO_IntrospectiveEnvLocked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/PPO-DoorKeyEnv-Locked_run_{run_num}_seed_{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -192,12 +192,12 @@ def main() -> None:  # noqa: PLR0915
 
     rng = np.random.default_rng(seed)
 
-    def make_env(seed: int) -> IntrospectiveEnv:
+    def make_env(seed: int) -> SmallIntrospectiveEnv:
         """Create the environment."""
 
-        def _init() -> IntrospectiveEnv:
+        def _init() -> SmallIntrospectiveEnv:
             rng = np.random.default_rng(seed)
-            env = IntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
+            env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
             env.reset(seed=seed)
             env.action_space.seed(seed)
             env.observation_space.seed(seed)
@@ -330,8 +330,6 @@ def main() -> None:  # noqa: PLR0915
             writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
             writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
-
-        buffer.clear()
 
         if update % save_model_freq == 0:
             logging.info("--------------------------------------------------------------------------------------------")
