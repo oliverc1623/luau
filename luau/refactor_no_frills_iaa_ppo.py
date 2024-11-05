@@ -188,7 +188,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/DoorKeyEnv-Locked{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/DoorKeyEnv-Locked_{run_num}_seed_{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -313,41 +313,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 advantages[t] = lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
             returns = advantages + buffer.state_values
 
-        # get student correction ratio
-        rho_t = torch.empty((0, num_envs), dtype=torch.float32, device=device)
-        rho_s = torch.empty((0, num_envs), dtype=torch.float32, device=device)
-
-        # Iterate through each step in the rollout buffer
-        for i in range(horizon):
-            images = buffer.images[i, :]  # Extract images for this step
-            directions = buffer.directions[i, :]  # Extract directions for this step
-            indicators = buffer.indicators[i, :]  # Extract horizon indicators for this step
-            log_probs = buffer.logprobs[i, :]  # Extract log probabilities for this step
-            actions = buffer.actions[i, :]  # Extract actions for this step
-            # Get probabilities of actions under both policies
-            states = {"image": images, "direction": directions}
-            pi_s_probs, _, _ = policy.evaluate(states, actions)  # Student policy probabilities
-            pi_t_probs, _, _ = teacher_source_agent.evaluate(states, actions)  # Teacher policy probabilities
-
-            # Calculate rho_T and rho_S for each environment
-            rho_t_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i = 1
-            rho_s_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i != 1
-
-            for j in range(num_envs):
-                if indicators[j] == 1:
-                    ratio = torch.exp(pi_s_probs[j] - (pi_t_probs[j]))  # Compute for \rho^S when h_i = 1
-                    rho_s_step[j] = ratio
-                    rho_t_step[j] = 1.0
-                else:
-                    ratio = torch.exp(pi_t_probs[j] - (pi_s_probs[j]))  # Compute for \rho^T when h_i != 1
-                    rho_t_step[j] = ratio
-                    rho_s_step[j] = 1.0
-
-            # Append the new values to rho_T and rho_S
-            rho_t = torch.cat((rho_t, rho_t_step.unsqueeze(0)), dim=0)
-            rho_s = torch.cat((rho_s, rho_s_step.unsqueeze(0)), dim=0)
-
-        # Flatten the buffer
         b_returns = returns.reshape(-1).detach()
         b_advantages = advantages.reshape(-1).detach()
         b_actions = torch.flatten(buffer.actions, 0, 1).detach()
@@ -355,8 +320,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
         b_images = torch.flatten(buffer.images, 0, 1).detach()
         b_directions = torch.flatten(buffer.directions, 0, 1).detach()
         b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
-        b_student_correction = torch.flatten(rho_s, 0, 1).detach()
-        b_teacher_correction = torch.flatten(rho_t, 0, 1).detach()
+        b_indicators = torch.flatten(buffer.indicators, 0, 1).detach()
 
         batch_size = num_envs * horizon
         b_inds = np.arange(batch_size)
@@ -373,20 +337,15 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
 
-                # policy gradient
-                log_ratio = new_logprob - b_logprobs[mb_inds].detach()
-                ratios = torch.exp(log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
-
-                with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    old_approx_kl = (-log_ratio).mean()
-                    approx_kl = ((ratios - 1) - log_ratio).mean()
-                    clipfracs += [((ratios - 1.0).abs() > eps_clip).float().mean().item()]
+                mb_rho_s = torch.ones(minibatch_size).to(device)
+                for j, h_i in enumerate(b_indicators[mb_inds]):
+                    if h_i.item() == 1:
+                        mb_rho_s[j] = torch.exp(new_logprob[j] - b_logprobs[mb_inds][j])
 
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                surr1 = -mb_advantages * ratios
-                surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
+                surr1 = -mb_advantages * mb_rho_s
+                surr2 = -mb_advantages * torch.clamp(mb_rho_s, 1 - eps_clip, 1 + eps_clip)
                 pg_loss_student = torch.max(surr1, surr2).mean()
 
                 # value function loss + clipping
@@ -400,9 +359,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 # entropy loss
                 entropy_loss_student = dist_entropy.mean()
                 student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
-                student_loss = b_student_correction[mb_inds] * student_loss
                 optimizer.zero_grad()  # take gradient step
-                student_loss.mean().backward()
+                student_loss.backward()
                 optimizer.step()
 
         # log debug variables
@@ -410,8 +368,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             writer.add_scalar("debugging/policy_loss", pg_loss_student.item(), global_step)
             writer.add_scalar("debugging/value_loss", v_loss_student.item(), global_step)
             writer.add_scalar("debugging/entropy_loss", entropy_loss_student.item(), global_step)
-            writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
-            writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
 
         # Optimize teacher value function for K epochs
@@ -425,6 +381,17 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 new_logprob, new_value, dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
 
+                mb_rho_t = torch.ones(minibatch_size).to(device)
+                for j, h_i in enumerate(b_indicators[mb_inds]):
+                    if h_i.item() == 0:
+                        mb_rho_t[j] = torch.exp(new_logprob[j] - b_logprobs[mb_inds][j])
+
+                mb_advantages = b_advantages[mb_inds]
+                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                surr1 = -mb_advantages * mb_rho_t
+                surr2 = -mb_advantages * torch.clamp(mb_rho_t, 1 - eps_clip, 1 + eps_clip)
+                pg_loss_teacher = torch.max(surr1, surr2).mean()
+
                 # value function loss + clipping
                 new_value = new_value.view(-1)
                 v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
@@ -432,11 +399,12 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss_teacher = 0.5 * v_loss_max.mean()
-                teacher_loss = v_loss_teacher * 0.5  # final loss of clipped objective PPO
-                teacher_loss = b_teacher_correction[mb_inds] * teacher_loss
+
+                entropy_loss_teacher = dist_entropy.mean()
+                teacher_loss = pg_loss_teacher - 0.01 * entropy_loss_teacher + v_loss_teacher * 0.5  # final loss of clipped objective PPO
 
                 teacher_optimizer.zero_grad()  # take gradient step
-                teacher_loss.mean().backward()
+                teacher_loss.backward()
                 teacher_optimizer.step()
 
         if update % save_model_freq == 0:
