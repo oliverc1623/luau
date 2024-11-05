@@ -163,7 +163,7 @@ def preprocess(x: dict) -> torch.tensor:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 1
+    seed = 3
     horizon = 128
     num_envs = 2
     lr_actor = 0.0005
@@ -174,16 +174,16 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 4
-    door_locked = True
+    run_num = 1
+    door_locked = False
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/DoorKeyEnv-Unlocked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/DoorKeyEnv-Unlocked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/PPO-DoorKeyEnv-Locked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/PPO-DoorKeyEnv-Unlocked_run_{run_num}_seed_{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -226,6 +226,9 @@ def main() -> None:  # noqa: PLR0915
     # Training loop
     num_updates = max_training_timesteps // (horizon * num_envs)
     for update in range(1, num_updates + 1):
+        frac = 1.0 - (update - 1.0) / num_updates
+        lrnow = frac * lr_actor
+        optimizer.param_groups[0]["lr"] = lrnow
         for step in range(horizon):
             # Preprocess the next observation and store relevant data in the PPO agent's buffer
             buffer.images[step] = next_obs["image"]

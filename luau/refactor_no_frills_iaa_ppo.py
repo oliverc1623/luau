@@ -11,7 +11,7 @@ from torch import nn
 from torch.distributions import Bernoulli, Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import IntrospectiveEnv
+from luau.iaa_env import SmallIntrospectiveEnv
 
 
 # Configure logging
@@ -54,7 +54,7 @@ class RolloutBuffer:
         self.img_shape = permuted_sample.shape
 
         self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
-        self.directions = torch.zeros((self.horizon, self.num_envs, *self.state["direction"].shape)).to(device)
+        self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -65,7 +65,7 @@ class RolloutBuffer:
     def clear(self) -> None:
         """Clear the buffer."""
         self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
-        self.directions = torch.zeros((self.horizon, self.num_envs, *self.state["direction"].shape)).to(device)
+        self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -83,14 +83,14 @@ class ActorCritic(nn.Module):
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
 
-        self.actor_fc1 = self.layer_init(nn.Linear(65, 512))
+        self.actor_fc1 = self.layer_init(nn.Linear(68, 512))
         self.actor_fc2 = self.layer_init(nn.Linear(512, action_dim), std=0.01)
 
         self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
 
-        self.critic_fc1 = self.layer_init(nn.Linear(65, 512))
+        self.critic_fc1 = self.layer_init(nn.Linear(68, 512))
         self.critic_fc2 = self.layer_init(nn.Linear(512, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
@@ -106,7 +106,7 @@ class ActorCritic(nn.Module):
         x = f.relu(self.actor_conv2(x))
         x = f.relu(self.actor_conv3(x))
         x = torch.flatten(x, 1)
-        direction = direction.view(-1, 1)
+        direction = direction.view(-1, 4)
         x = torch.cat((x, direction), 1)
         x = f.relu(self.actor_fc1(x))
         return self.actor_fc2(x)
@@ -118,7 +118,8 @@ class ActorCritic(nn.Module):
         y = f.relu(self.critic_conv2(y))
         y = f.relu(self.critic_conv3(y))
         y = torch.flatten(y, 1)
-        y = torch.cat((y, direction.view(-1, 1)), 1)
+        direction = direction.view(-1, 4)
+        y = torch.cat((y, direction), 1)
         y = f.relu(self.critic_fc1(y))
         state_values = self.critic_fc2(y).squeeze(-1)
         return state_values
@@ -155,7 +156,8 @@ def preprocess(x: dict) -> torch.tensor:
         image = image.unsqueeze(0).permute(0, 3, 1, 2).to(device)
     else:
         image = image.permute(0, 3, 1, 2).to(device)
-    direction = torch.tensor(direction, dtype=torch.float).to(device)
+    direction = torch.tensor(direction, dtype=torch.int64).to(device)
+    direction = f.one_hot(direction, num_classes=4)
     x = {"direction": direction, "image": image}
     return x
 
@@ -163,7 +165,7 @@ def preprocess(x: dict) -> torch.tensor:
 def main() -> None:  # noqa: C901, PLR0915, PLR0912
     """Run main function."""
     # Initialize the PPO agent
-    seed = 22
+    seed = 3
     horizon = 128
     num_envs = 2
     lr_actor = 0.0005
@@ -177,16 +179,16 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 130
-    run_num = 2
+    run_num = 1
     door_locked = True
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/IntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/IAAPPO/IntrospectiveEnvLocked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/IAAPPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/IAAPPO_IntrospectiveEnvLocked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/DoorKeyEnv-Locked{run_num}_seed_{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -197,12 +199,12 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
     rng = np.random.default_rng(seed)
 
-    def make_env(seed: int) -> IntrospectiveEnv:
+    def make_env(seed: int) -> SmallIntrospectiveEnv:
         """Create the environment."""
 
-        def _init() -> IntrospectiveEnv:
+        def _init() -> SmallIntrospectiveEnv:
             rng = np.random.default_rng(seed)
-            env = IntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
+            env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
             env.reset(seed=seed)
             env.action_space.seed(seed)
             env.observation_space.seed(seed)
@@ -222,7 +224,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
     # Initialize teacher model
-    teacher_model_path = "../../pvcvolume/models/PPO/IntrospectiveEnvUnlocked/run_1_seed_1/PPO_IntrospectiveEnvUnlocked_run_1_seed_1.pth"
+    teacher_model_path = "../../pvcvolume/models/PPO/DoorKeyEnv-Unlocked/run_1_seed_3/PPO-DoorKeyEnv-Unlocked_run_1_seed_3.pth"
     teacher_source_agent = ActorCritic(state_dim, env.single_action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
 
@@ -311,6 +313,40 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 advantages[t] = lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
             returns = advantages + buffer.state_values
 
+        # get student correction ratio
+        rho_t = torch.empty((0, num_envs), dtype=torch.float32, device=device)
+        rho_s = torch.empty((0, num_envs), dtype=torch.float32, device=device)
+
+        # Iterate through each step in the rollout buffer
+        for i in range(horizon):
+            images = buffer.images[i, :]  # Extract images for this step
+            directions = buffer.directions[i, :]  # Extract directions for this step
+            indicators = buffer.indicators[i, :]  # Extract horizon indicators for this step
+            log_probs = buffer.logprobs[i, :]  # Extract log probabilities for this step
+            actions = buffer.actions[i, :]  # Extract actions for this step
+            # Get probabilities of actions under both policies
+            states = {"image": images, "direction": directions}
+            pi_s_probs, _, _ = policy.evaluate(states, actions)  # Student policy probabilities
+            pi_t_probs, _, _ = teacher_source_agent.evaluate(states, actions)  # Teacher policy probabilities
+
+            # Calculate rho_T and rho_S for each environment
+            rho_t_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i = 1
+            rho_s_step = torch.ones(num_envs, device=device)  # Default to 1 for h_i != 1
+
+            for j in range(num_envs):
+                if indicators[j] == 1:
+                    ratio = torch.exp(pi_s_probs[j] - (pi_t_probs[j]))  # Compute for \rho^S when h_i = 1
+                    rho_s_step[j] = ratio
+                    rho_t_step[j] = 1.0
+                else:
+                    ratio = torch.exp(pi_t_probs[j] - (pi_s_probs[j]))  # Compute for \rho^T when h_i != 1
+                    rho_t_step[j] = ratio
+                    rho_s_step[j] = 1.0
+
+            # Append the new values to rho_T and rho_S
+            rho_t = torch.cat((rho_t, rho_t_step.unsqueeze(0)), dim=0)
+            rho_s = torch.cat((rho_s, rho_s_step.unsqueeze(0)), dim=0)
+
         # Flatten the buffer
         b_returns = returns.reshape(-1).detach()
         b_advantages = advantages.reshape(-1).detach()
@@ -319,13 +355,14 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
         b_images = torch.flatten(buffer.images, 0, 1).detach()
         b_directions = torch.flatten(buffer.directions, 0, 1).detach()
         b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
-        b_indicators = torch.flatten(buffer.indicators, 0, 1).detach()
+        b_student_correction = torch.flatten(rho_s, 0, 1).detach()
+        b_teacher_correction = torch.flatten(rho_t, 0, 1).detach()
 
         batch_size = num_envs * horizon
         b_inds = np.arange(batch_size)
         clipfracs = []
 
-        # Optimize policy for K epochs
+        # Optimize student policy for K epochs
         for _ in range(k_epochs):
             rng.shuffle(b_inds)
 
@@ -335,22 +372,21 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
-                teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
-                source_new_logprob, _, _ = teacher_source_agent.evaluate(mb_states, b_actions.long()[mb_inds])
+
+                # policy gradient
+                log_ratio = new_logprob - b_logprobs[mb_inds].detach()
+                ratios = torch.exp(log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
 
                 with torch.no_grad():
-                    mb_rho_t = torch.ones(minibatch_size).to(device)
-                    mb_rho_s = torch.ones(minibatch_size).to(device)
-                    for j, h_i in enumerate(b_indicators[mb_inds]):
-                        if h_i.item() == 1:
-                            mb_rho_s[j] = torch.exp(new_logprob[j] - b_logprobs[mb_inds][j]).item()
-                        else:
-                            mb_rho_t[j] = torch.exp(source_new_logprob[j] - b_logprobs[mb_inds][j]).item()
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_approx_kl = (-log_ratio).mean()
+                    approx_kl = ((ratios - 1) - log_ratio).mean()
+                    clipfracs += [((ratios - 1.0).abs() > eps_clip).float().mean().item()]
 
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                surr1 = -mb_advantages * mb_rho_s
-                surr2 = -mb_advantages * torch.clamp(mb_rho_s, 1 - eps_clip, 1 + eps_clip)
+                surr1 = -mb_advantages * ratios
+                surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
                 pg_loss_student = torch.max(surr1, surr2).mean()
 
                 # value function loss + clipping
@@ -364,32 +400,9 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 # entropy loss
                 entropy_loss_student = dist_entropy.mean()
                 student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
-
-                # teacher policy gradient
-                teacher_surr1 = -mb_advantages * mb_rho_t
-                teacher_surr2 = -mb_advantages * torch.clamp(mb_rho_t, 1 - eps_clip, 1 + eps_clip)
-                pg_loss_teacher = torch.max(teacher_surr1, teacher_surr2).mean()
-
-                # value function loss + clipping
-                teacher_new_value = teacher_new_value.view(-1)
-                v_loss_unclipped = (teacher_new_value - b_returns[mb_inds]) ** 2
-                v_clipped = b_state_values[mb_inds] + torch.clamp(teacher_new_value - b_state_values[mb_inds], -10.0, 10.0)
-                v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_teacher = 0.5 * v_loss_max.mean()
-
-                # entropy loss
-                entropy_loss_teacher = teacher_dist_entropy.mean()
-                teacher_loss = pg_loss_teacher - 0.01 * entropy_loss_teacher + v_loss_teacher * 0.5  # final loss of clipped objective PPO
-
-                teacher_optimizer.zero_grad()  # take gradient step
-                teacher_loss.backward()
-                nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), 0.5)
-                teacher_optimizer.step()
-
+                student_loss = b_student_correction[mb_inds] * student_loss
                 optimizer.zero_grad()  # take gradient step
-                student_loss.backward()
-                nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
+                student_loss.mean().backward()
                 optimizer.step()
 
         # log debug variables
@@ -397,9 +410,34 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             writer.add_scalar("debugging/policy_loss", pg_loss_student.item(), global_step)
             writer.add_scalar("debugging/value_loss", v_loss_student.item(), global_step)
             writer.add_scalar("debugging/entropy_loss", entropy_loss_student.item(), global_step)
+            writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
+            writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
 
-        buffer.clear()
+        # Optimize teacher value function for K epochs
+        for _ in range(k_epochs):
+            rng.shuffle(b_inds)
+
+            # Split data into minibatches
+            for i in range(0, batch_size, minibatch_size):
+                end = i + minibatch_size
+                mb_inds = b_inds[i:end]
+                mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
+                new_logprob, new_value, dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
+
+                # value function loss + clipping
+                new_value = new_value.view(-1)
+                v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
+                v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
+                v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                v_loss_teacher = 0.5 * v_loss_max.mean()
+                teacher_loss = v_loss_teacher * 0.5  # final loss of clipped objective PPO
+                teacher_loss = b_teacher_correction[mb_inds] * teacher_loss
+
+                teacher_optimizer.zero_grad()  # take gradient step
+                teacher_loss.mean().backward()
+                teacher_optimizer.step()
 
         if update % save_model_freq == 0:
             logging.info("--------------------------------------------------------------------------------------------")
