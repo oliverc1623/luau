@@ -7,11 +7,12 @@ import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn.functional as f
+from minigrid.wrappers import FullyObsWrapper
 from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import SmallIntrospectiveEnv
+from luau.iaa_env import IntrospectiveEnv
 
 
 # Configure logging
@@ -53,8 +54,7 @@ class RolloutBuffer:
         permuted_sample = np.transpose(sample, (2, 0, 1))
         self.img_shape = permuted_sample.shape
 
-        self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
-        self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 11, 11)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -63,8 +63,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
-        self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 11, 11)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -80,16 +79,14 @@ class ActorCritic(nn.Module):
         self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
-
-        self.actor_fc1 = self.layer_init(nn.Linear(68, 512))
-        self.actor_fc2 = self.layer_init(nn.Linear(512, action_dim), std=0.01)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.actor_fc1 = self.layer_init(nn.Linear(64 * 3 * 3, action_dim), std=0.01)
 
         self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
 
-        self.critic_fc1 = self.layer_init(nn.Linear(68, 512))
-        self.critic_fc2 = self.layer_init(nn.Linear(512, 1), std=1.0)
+        self.critic_fc1 = self.layer_init(nn.Linear(64 * 3 * 3, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -97,76 +94,75 @@ class ActorCritic(nn.Module):
         nn.init.constant_(layer.bias, bias_const)
         return layer
 
-    def _actor_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
+    def _actor_forward(self, image: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
         x = f.relu(self.actor_conv1(image))
-        x = f.max_pool2d(x, 2)
+        x = self.pool(x)
         x = f.relu(self.actor_conv2(x))
         x = f.relu(self.actor_conv3(x))
-        x = torch.flatten(x, 1)
-        direction = direction.view(-1, 4)
-        x = torch.cat((x, direction), 1)
-        x = f.relu(self.actor_fc1(x))
-        return self.actor_fc2(x)
+        x = x.reshape(x.size(0), -1)  # Flatten the tensor
+        x = self.actor_fc1(x)
+        return x
 
-    def _critic_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
+    def _critic_forward(self, image: torch.tensor) -> torch.tensor:
         """Run common computations for the critic network."""
         y = f.relu(self.critic_conv1(image))
-        y = f.max_pool2d(y, 2)
+        y = self.pool(y)
         y = f.relu(self.critic_conv2(y))
         y = f.relu(self.critic_conv3(y))
-        y = torch.flatten(y, 1)
-        direction = direction.view(-1, 4)
-        y = torch.cat((y, direction), 1)
-        y = f.relu(self.critic_fc1(y))
-        state_values = self.critic_fc2(y).squeeze(-1)
-        return state_values
+        y = y.reshape(y.size(0), -1)  # Flatten the tensor
+        y = self.critic_fc1(y).squeeze(-1)
+        return y
 
     def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Forward pass."""
-        direction = state["direction"]
         image = state["image"]
-        logits = self._actor_forward(image, direction)
+        logits = self._actor_forward(image)
         dist = Categorical(logits=logits)
         action = dist.sample()
         action_logprob = dist.log_prob(action)
-        state_values = self._critic_forward(image, direction)
+        state_values = self._critic_forward(image)
         return action, action_logprob, state_values
 
     def evaluate(self, states: dict, actions: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Evaluate the policy."""
         images = states["image"]
-        directions = states["direction"]
-        logits = self._actor_forward(images, directions)
+        logits = self._actor_forward(images)
         dist = Categorical(logits=logits)
         action_logprobs = dist.log_prob(actions)
         dist_entropy = dist.entropy()
-        state_values = self._critic_forward(images, directions)
+        state_values = self._critic_forward(images)
         return action_logprobs, state_values, dist_entropy
 
 
 def preprocess(x: dict) -> torch.tensor:
     """Preprocess the input."""
-    direction = x["direction"]
     image = x["image"]
     image = torch.from_numpy(image).float()
-    if len(image.shape) == RGB_CHANNEL:
-        image = image.unsqueeze(0).permute(0, 3, 1, 2).to(device)
-    else:
-        image = image.permute(0, 3, 1, 2).to(device)
-    direction = torch.tensor(direction, dtype=torch.int64).to(device)
-    direction = f.one_hot(direction, num_classes=4)
-    x = {"direction": direction, "image": image}
-    return x
+
+    # Padding to make the image size (11, 11, 3)
+    padding_size = ((11 - image.shape[1]) // 2, (11 - image.shape[2]) // 2)  # (pad_height, pad_width)
+    padding = (padding_size[1], padding_size[1], padding_size[0], padding_size[0])  # (left, right, top, bottom)
+
+    # Ensure image dimensions are padded correctly
+    rgb = 3
+    if image.ndim == rgb and image.shape[2] == rgb:  # Single image case
+        image = f.pad(image.permute(2, 0, 1), padding, mode="constant", value=0).permute(1, 2, 0)
+        image = image.unsqueeze(0).permute(0, 3, 1, 2).to(device)  # Adding batch dimension and changing to (batch, channel, height, width)
+    else:  # Batch case
+        image = image.permute(0, 3, 1, 2)  # Change to (batch, channel, height, width)
+        image = f.pad(image, (padding[1], padding[1], padding[0], padding[0]), mode="constant", value=0).to(device)
+
+    return {"image": image}
 
 
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 1
+    seed = 47
     horizon = 128
     num_envs = 2
-    lr_actor = 0.0003
+    lr_actor = 0.0005
     max_training_timesteps = 500_000
     gamma = 0.99
     gae_lambda = 0.8
@@ -174,17 +170,18 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 9
+    run_num = 2
     door_locked = True
-    target_kl = 0.01
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/IntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/IntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/PPO-DoorKeyEnv-Locked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/IntrospectiveEnv-Locked_run_{run_num}_seed_{seed}.pth"
+    print(f"Logging to: {log_dir}")
+    print(f"Saving to: {checkpoint_path}")
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -195,12 +192,13 @@ def main() -> None:  # noqa: PLR0915
 
     rng = np.random.default_rng(seed)
 
-    def make_env(sub_env_seed: int) -> SmallIntrospectiveEnv:
+    def make_env(sub_env_seed: int) -> IntrospectiveEnv:
         """Create the environment."""
 
-        def _init() -> SmallIntrospectiveEnv:
+        def _init() -> IntrospectiveEnv:
             sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, locked=door_locked, render_mode="rgb_array")
+            env = IntrospectiveEnv(rng=sub_env_rng, locked=door_locked, render_mode="rgb_array")
+            env = FullyObsWrapper(env)
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)
             env.observation_space.seed(sub_env_seed)
@@ -224,13 +222,9 @@ def main() -> None:  # noqa: PLR0915
     # Training loop
     num_updates = max_training_timesteps // (horizon * num_envs)
     for update in range(1, num_updates + 1):
-        frac = 1.0 - (update - 1.0) / num_updates
-        lrnow = frac * lr_actor
-        optimizer.param_groups[0]["lr"] = lrnow
         for step in range(horizon):
             # Preprocess the next observation and store relevant data in the PPO agent's buffer
             buffer.images[step] = next_obs["image"]
-            buffer.directions[step] = next_obs["direction"]
             buffer.is_terminals[step] = next_dones
 
             with torch.no_grad():
@@ -275,7 +269,6 @@ def main() -> None:  # noqa: PLR0915
         b_actions = torch.flatten(buffer.actions, 0, 1).detach()
         b_logprobs = torch.flatten(buffer.logprobs, 0, 1).detach()
         b_images = torch.flatten(buffer.images, 0, 1).detach()
-        b_directions = torch.flatten(buffer.directions, 0, 1).detach()
         b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
 
         batch_size = num_envs * horizon
@@ -290,7 +283,7 @@ def main() -> None:  # noqa: PLR0915
             for i in range(0, batch_size, minibatch_size):
                 end = i + minibatch_size
                 mb_inds = b_inds[i:end]
-                mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
+                mb_states = {"image": b_images[mb_inds]}
                 new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
 
                 # policy gradient
@@ -326,9 +319,6 @@ def main() -> None:  # noqa: PLR0915
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
                 optimizer.step()
-
-            if approx_kl > target_kl:
-                break
 
         # log debug variables
         with torch.no_grad():
