@@ -163,10 +163,10 @@ def preprocess(x: dict) -> torch.tensor:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 3
+    seed = 1
     horizon = 128
     num_envs = 2
-    lr_actor = 0.0005
+    lr_actor = 0.0003
     max_training_timesteps = 500_000
     gamma = 0.99
     gae_lambda = 0.8
@@ -174,8 +174,9 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 2
+    run_num = 9
     door_locked = True
+    target_kl = 0.01
 
     # Initialize TensorBoard writer
     log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
@@ -318,11 +319,16 @@ def main() -> None:  # noqa: PLR0915
 
                 # entropy loss
                 entropy_loss_student = dist_entropy.mean()
-                student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
+
+                # final loss of clipped objective PPO
+                student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student
 
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
                 optimizer.step()
+
+            if approx_kl > target_kl:
+                break
 
         # log debug variables
         with torch.no_grad():
