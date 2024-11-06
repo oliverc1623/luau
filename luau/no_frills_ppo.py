@@ -174,16 +174,16 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 1
-    door_locked = False
+    run_num = 2
+    door_locked = True
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/DoorKeyEnv-Unlocked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/DoorKeyEnv-Unlocked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/PPO-DoorKeyEnv-Unlocked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/PPO-DoorKeyEnv-Locked_run_{run_num}_seed_{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -194,24 +194,21 @@ def main() -> None:  # noqa: PLR0915
 
     rng = np.random.default_rng(seed)
 
-    def make_env(seed: int) -> SmallIntrospectiveEnv:
+    def make_env(sub_env_seed: int) -> SmallIntrospectiveEnv:
         """Create the environment."""
 
         def _init() -> SmallIntrospectiveEnv:
-            rng = np.random.default_rng(seed)
-            env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
-            env.reset(seed=seed)
-            env.action_space.seed(seed)
-            env.observation_space.seed(seed)
+            sub_env_rng = np.random.default_rng(sub_env_seed)
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, locked=door_locked, render_mode="rgb_array")
+            env.reset(seed=sub_env_seed)
+            env.action_space.seed(sub_env_seed)
+            env.observation_space.seed(sub_env_seed)
             return env
 
         return _init
 
     envs = [make_env(seed + i) for i in range(num_envs)]
     env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
-    env.reset(seed=seed)
-    env.action_space.seed(seed)
-    env.observation_space.seed(seed)
 
     buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
     state_dim = env.single_observation_space["image"].shape[-1]
