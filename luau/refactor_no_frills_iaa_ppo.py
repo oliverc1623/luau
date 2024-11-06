@@ -56,6 +56,8 @@ class RolloutBuffer:
         self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
         self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
+        self.student_logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.teacher_logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.is_terminals = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -67,6 +69,8 @@ class RolloutBuffer:
         self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
         self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
+        self.student_logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
+        self.teacher_logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.is_terminals = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -270,6 +274,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
             buffer.actions[step] = actions
             buffer.logprobs[step] = log_probs
+            buffer.student_logprobs[step] = student_action_logprobs
+            buffer.teacher_logprobs[step] = teacher_action_logprobs
 
             # Step the environment and store the rewards
             next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
@@ -317,6 +323,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
         b_advantages = advantages.reshape(-1).detach()
         b_actions = torch.flatten(buffer.actions, 0, 1).detach()
         b_logprobs = torch.flatten(buffer.logprobs, 0, 1).detach()
+        b_student_logprobs = torch.flatten(buffer.student_logprobs, 0, 1).detach()
+        b_teacher_logprobs = torch.flatten(buffer.teacher_logprobs, 0, 1).detach()
         b_images = torch.flatten(buffer.images, 0, 1).detach()
         b_directions = torch.flatten(buffer.directions, 0, 1).detach()
         b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
@@ -335,18 +343,25 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 end = i + minibatch_size
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
+                mb_student_logprobs = b_student_logprobs[mb_inds]
                 new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
 
-                mb_rho_s = torch.ones(minibatch_size).to(device)
-                for j, h_i in enumerate(b_indicators[mb_inds]):
-                    if h_i.item() == 1:
-                        mb_rho_s[j] = torch.exp(new_logprob[j] - b_logprobs[mb_inds][j])
+                with torch.no_grad():
+                    mb_rho_s = torch.ones(minibatch_size).to(device)
+                    for j, h_i in enumerate(b_indicators[mb_inds]):
+                        if h_i.item() == 1:
+                            mb_rho_s[j] = torch.exp(mb_student_logprobs[j] - b_logprobs[mb_inds][j])
 
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                surr1 = -mb_advantages * mb_rho_s
-                surr2 = -mb_advantages * torch.clamp(mb_rho_s, 1 - eps_clip, 1 + eps_clip)
-                pg_loss_student = torch.max(surr1, surr2).mean()
+
+                # policy gradient
+                log_ratio = new_logprob - b_logprobs[mb_inds].detach()
+                ratios = torch.exp(log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
+
+                surr1 = -mb_advantages * ratios
+                surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
+                pg_loss_student = (mb_rho_s * torch.max(surr1, surr2)).mean()
 
                 # value function loss + clipping
                 new_value = new_value.view(-1)
@@ -354,7 +369,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_student = 0.5 * v_loss_max.mean()
+                v_loss_student = 0.5 * (v_loss_max * mb_rho_s).mean()
 
                 # entropy loss
                 entropy_loss_student = dist_entropy.mean()
@@ -371,6 +386,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
 
         # Optimize teacher value function for K epochs
+        ############### Teacher Value Function Update ################
         for _ in range(k_epochs):
             rng.shuffle(b_inds)
 
@@ -379,29 +395,27 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 end = i + minibatch_size
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
-                new_logprob, new_value, dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
+                mb_teacher_logprobs = b_teacher_logprobs[mb_inds]
+                teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
 
-                mb_rho_t = torch.ones(minibatch_size).to(device)
-                for j, h_i in enumerate(b_indicators[mb_inds]):
-                    if h_i.item() == 0:
-                        mb_rho_t[j] = torch.exp(new_logprob[j] - b_logprobs[mb_inds][j])
+                with torch.no_grad():
+                    mb_rho_t = torch.ones(minibatch_size).to(device)
+                    for j, h_i in enumerate(b_indicators[mb_inds]):
+                        if h_i.item() == 0:
+                            mb_rho_t[j] = torch.exp(mb_teacher_logprobs[j] - b_logprobs[mb_inds][j])
 
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                surr1 = -mb_advantages * mb_rho_t
-                surr2 = -mb_advantages * torch.clamp(mb_rho_t, 1 - eps_clip, 1 + eps_clip)
-                pg_loss_teacher = torch.max(surr1, surr2).mean()
 
                 # value function loss + clipping
                 new_value = new_value.view(-1)
-                v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
-                v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
+                v_loss_unclipped = (teacher_new_value - b_returns[mb_inds]) ** 2
+                v_clipped = b_state_values[mb_inds] + torch.clamp(teacher_new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_teacher = 0.5 * v_loss_max.mean()
+                v_loss_teacher = 0.5 * (v_loss_max * mb_rho_t).mean()
 
-                entropy_loss_teacher = dist_entropy.mean()
-                teacher_loss = pg_loss_teacher - 0.01 * entropy_loss_teacher + v_loss_teacher * 0.5  # final loss of clipped objective PPO
+                teacher_loss = v_loss_teacher * 0.5  # final loss of clipped objective PPO
 
                 teacher_optimizer.zero_grad()  # take gradient step
                 teacher_loss.backward()
