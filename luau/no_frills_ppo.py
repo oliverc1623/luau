@@ -7,12 +7,11 @@ import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn.functional as f
-from minigrid.wrappers import FullyObsWrapper
 from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import IntrospectiveEnv
+from luau.iaa_env import SmallIntrospectiveEnv
 
 
 # Configure logging
@@ -58,7 +57,7 @@ class RolloutBuffer:
         permuted_sample = np.transpose(sample, (2, 0, 1))
         self.img_shape = permuted_sample.shape
 
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 9, 9)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
         self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -68,7 +67,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 9, 9)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
         self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -86,13 +85,13 @@ class ActorCritic(nn.Module):
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.actor_fc1 = self.layer_init(nn.Linear(260, action_dim), std=0.01)
+        self.actor_fc1 = self.layer_init(nn.Linear(68, action_dim), std=0.01)
 
         self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
 
-        self.critic_fc1 = nn.Linear(260, 1)
+        self.critic_fc1 = self.layer_init(nn.Linear(68, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -179,16 +178,16 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 1
+    run_num = 2
     door_locked = True
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/IntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/IntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/IntrospectiveEnv-Locked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked_run_{run_num}_seed_{seed}.pth"
     print(f"Logging to: {log_dir}")
     print(f"Saving to: {checkpoint_path}")
 
@@ -201,13 +200,12 @@ def main() -> None:  # noqa: PLR0915
 
     rng = np.random.default_rng(seed)
 
-    def make_env(sub_env_seed: int) -> IntrospectiveEnv:
+    def make_env(sub_env_seed: int) -> SmallIntrospectiveEnv:
         """Create the environment."""
 
-        def _init() -> IntrospectiveEnv:
+        def _init() -> SmallIntrospectiveEnv:
             sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = IntrospectiveEnv(rng=sub_env_rng, locked=door_locked, render_mode="rgb_array")
-            env = FullyObsWrapper(env)
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, locked=door_locked, render_mode="rgb_array")
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)
             env.observation_space.seed(sub_env_seed)
@@ -216,7 +214,7 @@ def main() -> None:  # noqa: PLR0915
         return _init
 
     envs = [make_env(seed + i) for i in range(num_envs)]
-    env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
+    env = gym.vector.SyncVectorEnv(envs)
 
     buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
     state_dim = env.single_observation_space["image"].shape[-1]
