@@ -81,17 +81,17 @@ class ActorCritic(nn.Module):
 
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
-        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 32, 2))
+        self.actor_conv2 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.actor_conv3 = self.layer_init(nn.Conv2d(64, 128, 2))
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.actor_fc1 = self.layer_init(nn.Linear(68, action_dim), std=0.01)
+        self.actor_fc1 = self.layer_init(nn.Linear(132, action_dim), std=0.01)
 
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
-        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 32, 2))
+        self.critic_conv2 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.critic_conv3 = self.layer_init(nn.Conv2d(64, 128, 2))
 
-        self.critic_fc1 = self.layer_init(nn.Linear(68, 1), std=1.0)
+        self.critic_fc1 = self.layer_init(nn.Linear(132, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -167,7 +167,7 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 1
+    seed = 7
     horizon = 128
     num_envs = 2
     lr_actor = 0.0005
@@ -197,6 +197,7 @@ def main() -> None:  # noqa: PLR0915
         torch.cuda.manual_seed_all(seed)
     # Ensure deterministic behavior in PyTorch
     torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     rng = np.random.default_rng(seed)
 
@@ -214,7 +215,7 @@ def main() -> None:  # noqa: PLR0915
         return _init
 
     envs = [make_env(seed + i) for i in range(num_envs)]
-    env = gym.vector.SyncVectorEnv(envs)
+    env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
 
     buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
     state_dim = env.single_observation_space["image"].shape[-1]
@@ -245,6 +246,7 @@ def main() -> None:  # noqa: PLR0915
             next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
             next_obs = preprocess(next_obs)
             next_dones = torch.tensor(next_dones).to(device)
+            truncated = torch.tensor(truncated, dtype=torch.float32).to(device)
             buffer.rewards[step] = torch.tensor(rewards, dtype=torch.float32).to(device).view(-1)
 
             global_step += 1 * num_envs
