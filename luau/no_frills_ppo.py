@@ -7,6 +7,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn.functional as f
+from minigrid.wrappers import FullyObsWrapper
+from PIL import Image
 from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
@@ -81,17 +83,17 @@ class ActorCritic(nn.Module):
 
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 32, 2))
-        self.actor_conv2 = self.layer_init(nn.Conv2d(32, 64, 2))
-        self.actor_conv3 = self.layer_init(nn.Conv2d(64, 128, 2))
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.actor_fc1 = self.layer_init(nn.Linear(132, action_dim), std=0.01)
+        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, (3, 3)))
+        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, (3, 3)))
+        self.actor_fc1 = self.layer_init(nn.Linear(3 * 3 * 32 + 4, 128))
+        self.actor_fc2 = self.layer_init(nn.Linear(128, 64))
+        self.actor_fc3 = self.layer_init(nn.Linear(64, action_dim), std=0.01)
 
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 32, 2))
-        self.critic_conv2 = self.layer_init(nn.Conv2d(32, 64, 2))
-        self.critic_conv3 = self.layer_init(nn.Conv2d(64, 128, 2))
-
-        self.critic_fc1 = self.layer_init(nn.Linear(132, 1), std=1.0)
+        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, (3, 3)))
+        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, (3, 3)))
+        self.critic_fc1 = self.layer_init(nn.Linear(3 * 3 * 32 + 4, 128))
+        self.critic_fc2 = self.layer_init(nn.Linear(128, 64))
+        self.critic_fc3 = self.layer_init(nn.Linear(64, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -102,25 +104,25 @@ class ActorCritic(nn.Module):
     def _actor_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
         x = f.relu(self.actor_conv1(image))
-        x = self.pool(x)
         x = f.relu(self.actor_conv2(x))
-        x = f.relu(self.actor_conv3(x))
         x = x.reshape(x.size(0), -1)  # Flatten the tensor
         direction = direction.view(-1, 4)
         x = torch.cat((x, direction), 1)
-        x = self.actor_fc1(x)
+        x = f.relu(self.actor_fc1(x))
+        x = f.relu(self.actor_fc2(x))
+        x = self.actor_fc3(x)
         return x
 
     def _critic_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the critic network."""
         y = f.relu(self.critic_conv1(image))
-        y = self.pool(y)
         y = f.relu(self.critic_conv2(y))
-        y = f.relu(self.critic_conv3(y))
         y = y.reshape(y.size(0), -1)  # Flatten the tensor
         direction = direction.view(-1, 4)
         y = torch.cat((y, direction), 1)
-        y = self.critic_fc1(y).squeeze(-1)
+        y = f.relu(self.critic_fc1(y))
+        y = f.relu(self.critic_fc2(y))
+        y = self.critic_fc3(y).squeeze(-1)
         return y
 
     def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
@@ -169,7 +171,7 @@ def main() -> None:  # noqa: PLR0915
     # Initialize the PPO agent
     seed = 7
     horizon = 128
-    num_envs = 2
+    num_envs = 5
     lr_actor = 0.0005
     max_training_timesteps = 500_000
     gamma = 0.99
@@ -178,12 +180,13 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 2
+    run_num = 1
     door_locked = True
+    save_frames = False
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"PPO_logs/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"models/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
@@ -206,7 +209,8 @@ def main() -> None:  # noqa: PLR0915
 
         def _init() -> SmallIntrospectiveEnv:
             sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, locked=door_locked, render_mode="rgb_array")
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=7, locked=door_locked, render_mode="rgb_array", max_steps=484)
+            env = FullyObsWrapper(env)
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)
             env.observation_space.seed(sub_env_seed)
@@ -231,6 +235,13 @@ def main() -> None:  # noqa: PLR0915
     num_updates = max_training_timesteps // (horizon * num_envs)
     for update in range(1, num_updates + 1):
         for step in range(horizon):
+            if save_frames:
+                img1, img2, img3, img4, img5 = env.render()
+                concatenated_horizontally = np.concatenate((img1, img2, img3, img4, img5), axis=1)  # Along width
+                array = concatenated_horizontally.astype(np.uint8)
+                image = Image.fromarray(array)
+                image.save(f"frames/{global_step}.png")
+
             # Preprocess the next observation and store relevant data in the PPO agent's buffer
             buffer.images[step] = next_obs["image"]
             buffer.directions[step] = next_obs["direction"]
