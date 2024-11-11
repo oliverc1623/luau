@@ -59,7 +59,7 @@ class RolloutBuffer:
         permuted_sample = np.transpose(sample, (2, 0, 1))
         self.img_shape = permuted_sample.shape
 
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
         self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -69,7 +69,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
         self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -83,17 +83,16 @@ class ActorCritic(nn.Module):
 
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, (3, 3)))
-        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, (3, 3)))
-        self.actor_fc1 = self.layer_init(nn.Linear(3 * 3 * 32 + 4, 128))
-        self.actor_fc2 = self.layer_init(nn.Linear(128, 64))
-        self.actor_fc3 = self.layer_init(nn.Linear(64, action_dim), std=0.01)
+        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 1))
+        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
+        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=1)
+        self.actor_fc1 = self.layer_init(nn.Linear(580, action_dim), std=0.01)
 
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, (3, 3)))
-        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, (3, 3)))
-        self.critic_fc1 = self.layer_init(nn.Linear(3 * 3 * 32 + 4, 128))
-        self.critic_fc2 = self.layer_init(nn.Linear(128, 64))
-        self.critic_fc3 = self.layer_init(nn.Linear(64, 1), std=1.0)
+        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 1))
+        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
+        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.critic_fc1 = self.layer_init(nn.Linear(580, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -104,25 +103,25 @@ class ActorCritic(nn.Module):
     def _actor_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
         x = f.relu(self.actor_conv1(image))
+        x = self.pool(x)
         x = f.relu(self.actor_conv2(x))
+        x = f.relu(self.actor_conv3(x))
         x = x.reshape(x.size(0), -1)  # Flatten the tensor
         direction = direction.view(-1, 4)
         x = torch.cat((x, direction), 1)
-        x = f.relu(self.actor_fc1(x))
-        x = f.relu(self.actor_fc2(x))
-        x = self.actor_fc3(x)
+        x = self.actor_fc1(x)
         return x
 
     def _critic_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the critic network."""
         y = f.relu(self.critic_conv1(image))
+        y = self.pool(y)
         y = f.relu(self.critic_conv2(y))
+        y = f.relu(self.critic_conv3(y))
         y = y.reshape(y.size(0), -1)  # Flatten the tensor
         direction = direction.view(-1, 4)
         y = torch.cat((y, direction), 1)
-        y = f.relu(self.critic_fc1(y))
-        y = f.relu(self.critic_fc2(y))
-        y = self.critic_fc3(y).squeeze(-1)
+        y = self.critic_fc1(y).squeeze(-1)
         return y
 
     def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
@@ -171,7 +170,7 @@ def main() -> None:  # noqa: PLR0915
     # Initialize the PPO agent
     seed = 7
     horizon = 128
-    num_envs = 5
+    num_envs = 10
     lr_actor = 0.0005
     max_training_timesteps = 500_000
     gamma = 0.99
@@ -180,13 +179,13 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 217
-    run_num = 1
+    run_num = 4
     door_locked = True
     save_frames = False
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"PPO_logs/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"models/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
@@ -209,7 +208,7 @@ def main() -> None:  # noqa: PLR0915
 
         def _init() -> SmallIntrospectiveEnv:
             sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=7, locked=door_locked, render_mode="rgb_array", max_steps=484)
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=6, locked=door_locked, render_mode="rgb_array", max_steps=360)
             env = FullyObsWrapper(env)
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)
