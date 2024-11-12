@@ -168,28 +168,28 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 7
+    seed = 37
     horizon = 128
     num_envs = 10
-    lr_actor = 0.0005
+    lr_actor = 0.0001
     max_training_timesteps = 500_000
     gamma = 0.99
     gae_lambda = 0.8
     eps_clip = 0.2
     minibatch_size = 128
     k_epochs = 4
-    save_model_freq = 217
-    run_num = 4
-    door_locked = True
+    save_model_freq = 130
+    run_num = 1
+    door_locked = False
     save_frames = False
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Unlocked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Unlocked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Unlocked_run_{run_num}_seed_{seed}.pth"
     print(f"Logging to: {log_dir}")
     print(f"Saving to: {checkpoint_path}")
 
