@@ -7,6 +7,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn.functional as f
+from minigrid.wrappers import FullyObsWrapper
 from torch import nn
 from torch.distributions import Bernoulli, Categorical
 from torch.utils.tensorboard import SummaryWriter
@@ -83,19 +84,16 @@ class ActorCritic(nn.Module):
 
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
+        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 1))
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=1)
+        self.actor_fc1 = self.layer_init(nn.Linear(580, action_dim), std=0.01)
 
-        self.actor_fc1 = self.layer_init(nn.Linear(68, 512))
-        self.actor_fc2 = self.layer_init(nn.Linear(512, action_dim), std=0.01)
-
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
+        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 1))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
         self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
-
-        self.critic_fc1 = self.layer_init(nn.Linear(68, 512))
-        self.critic_fc2 = self.layer_init(nn.Linear(512, 1), std=1.0)
+        self.critic_fc1 = self.layer_init(nn.Linear(580, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -106,27 +104,26 @@ class ActorCritic(nn.Module):
     def _actor_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
         x = f.relu(self.actor_conv1(image))
-        x = f.max_pool2d(x, 2)
+        x = self.pool(x)
         x = f.relu(self.actor_conv2(x))
         x = f.relu(self.actor_conv3(x))
-        x = torch.flatten(x, 1)
+        x = x.reshape(x.size(0), -1)  # Flatten the tensor
         direction = direction.view(-1, 4)
         x = torch.cat((x, direction), 1)
-        x = f.relu(self.actor_fc1(x))
-        return self.actor_fc2(x)
+        x = self.actor_fc1(x)
+        return x
 
     def _critic_forward(self, image: torch.tensor, direction: torch.tensor) -> torch.tensor:
         """Run common computations for the critic network."""
         y = f.relu(self.critic_conv1(image))
-        y = f.max_pool2d(y, 2)
+        y = self.pool(y)
         y = f.relu(self.critic_conv2(y))
         y = f.relu(self.critic_conv3(y))
-        y = torch.flatten(y, 1)
+        y = y.reshape(y.size(0), -1)  # Flatten the tensor
         direction = direction.view(-1, 4)
         y = torch.cat((y, direction), 1)
-        y = f.relu(self.critic_fc1(y))
-        state_values = self.critic_fc2(y).squeeze(-1)
-        return state_values
+        y = self.critic_fc1(y).squeeze(-1)
+        return y
 
     def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Forward pass."""
@@ -151,28 +148,31 @@ class ActorCritic(nn.Module):
         return action_logprobs, state_values, dist_entropy
 
 
-def preprocess(x: dict) -> torch.tensor:
-    """Preprocess the input."""
+def preprocess(x: dict) -> dict:
+    """Preprocess the input for a grid-based environment, padding it to (12, 12, channels)."""
     direction = x["direction"]
     image = x["image"]
     image = torch.from_numpy(image).float()
-    if len(image.shape) == RGB_CHANNEL:
-        image = image.unsqueeze(0).permute(0, 3, 1, 2).to(device)
-    else:
-        image = image.permute(0, 3, 1, 2).to(device)
+
+    rgb = 3
+    if image.ndim == rgb:  # Single image case with shape (height, width, channels)
+        image = image.permute(2, 0, 1)
+        # Permute back to (batch_size, channels, height, width)
+        image = image.unsqueeze(0).to(device)  # Adding batch dimension
+    else:  # Batch case with shape (batch_size, height, width, channels)
+        image = image.permute(0, 3, 1, 2).to(device)  # Change to (batch, channels, height, width)
     direction = torch.tensor(direction, dtype=torch.int64).to(device)
     direction = f.one_hot(direction, num_classes=4)
-    x = {"direction": direction, "image": image}
-    return x
+    return {"image": image, "direction": direction}
 
 
 def main() -> None:  # noqa: C901, PLR0915, PLR0912
     """Run main function."""
     # Initialize the PPO agent
-    seed = 3
+    seed = 17
     horizon = 128
-    num_envs = 2
-    lr_actor = 0.0005
+    num_envs = 10
+    lr_actor = 0.0001
     max_training_timesteps = 500_000
     introspection_decay = 0.99999
     burn_in = 0
@@ -187,12 +187,12 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     door_locked = True
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/IAAPPO/DoorKeyEnv-Locked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/IAAPPO/SmallIntrospectiveEnv-Locked/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/DoorKeyEnv-Locked_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked_{run_num}_seed_{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -200,15 +200,17 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
         torch.cuda.manual_seed_all(seed)
     # Ensure deterministic behavior in PyTorch
     torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     rng = np.random.default_rng(seed)
 
-    def make_env(seed: int) -> SmallIntrospectiveEnv:
+    def make_env(sub_env_seed: int) -> SmallIntrospectiveEnv:
         """Create the environment."""
 
         def _init() -> SmallIntrospectiveEnv:
-            rng = np.random.default_rng(seed)
-            env = SmallIntrospectiveEnv(rng=rng, locked=door_locked, render_mode="rgb_array")
+            sub_env_rng = np.random.default_rng(sub_env_seed)
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=6, locked=door_locked, render_mode="rgb_array", max_steps=360)
+            env = FullyObsWrapper(env)
             env.reset(seed=seed)
             env.action_space.seed(seed)
             env.observation_space.seed(seed)
@@ -228,7 +230,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
     # Initialize teacher model
-    teacher_model_path = "../../pvcvolume/models/PPO/DoorKeyEnv-Unlocked/run_1_seed_3/PPO-DoorKeyEnv-Unlocked_run_1_seed_3.pth"
+    teacher_model_path = "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Unlocked/run_1_seed_17/SmallIntrospectiveEnv-Unlocked_run_1_seed_17.pth"
     teacher_source_agent = ActorCritic(state_dim, env.single_action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
 
@@ -286,20 +288,17 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             # Log the rewards and advice issued
             global_step += 1 * num_envs
             if next_dones.any() or truncated.any():
-                for env_idx in range(num_envs):
-                    if next_dones[env_idx] or truncated[env_idx]:
-                        # Log advice count and reset for the specific environment
-                        writer.add_scalar("charts/Episodic Reward", rewards[env_idx], global_step)
-                        writer.add_scalar("charts/Advice Issued", advice_counter[env_idx], global_step)
-                        logging.info(
-                            "i_update: %s, \t Timestep: %s, \t Reward: %s, \t Advice: %s",
-                            update,
-                            global_step,
-                            rewards[env_idx],
-                            advice_counter[env_idx].item(),
-                        )
-                        # Reset advice counter for this specific environment
-                        advice_counter[env_idx] = 0
+                done_indx = torch.argmax(next_dones.int())
+                writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
+                writer.add_scalar("charts/Advice Issued", advice_counter[done_indx], global_step)
+                logging.info(
+                    "i_update: %s, \t Timestep: %s, \t Reward: %s, \t Advice: %s",
+                    update,
+                    global_step,
+                    rewards[done_indx],
+                    advice_counter[done_indx].item(),
+                )
+                advice_counter[done_indx] = 0
 
         # Calculate rewards and advantages using GAE
         with torch.no_grad():
