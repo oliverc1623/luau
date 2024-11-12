@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as f
 from minigrid.wrappers import FullyObsWrapper
 from PIL import Image
+from stable_baselines3.common.vec_env import SubprocVecEnv
 from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
@@ -168,7 +169,7 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 37
+    seed = 1
     horizon = 128
     num_envs = 10
     lr_actor = 0.0001
@@ -180,16 +181,16 @@ def main() -> None:  # noqa: PLR0915
     k_epochs = 4
     save_model_freq = 130
     run_num = 1
-    door_locked = False
+    door_locked = True
     save_frames = False
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Unlocked/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Unlocked/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Locked-{door_locked}/run_{run_num}_seed_{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-{door_locked}/run_{run_num}_seed_{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Unlocked_run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked_-{door_locked}-run_{run_num}_seed_{seed}.pth"
     print(f"Logging to: {log_dir}")
     print(f"Saving to: {checkpoint_path}")
 
@@ -218,14 +219,14 @@ def main() -> None:  # noqa: PLR0915
         return _init
 
     envs = [make_env(seed + i) for i in range(num_envs)]
-    env = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
+    env = SubprocVecEnv(envs)
 
-    buffer = RolloutBuffer(horizon, num_envs, env.single_observation_space, env.single_action_space)
-    state_dim = env.single_observation_space["image"].shape[-1]
-    policy = ActorCritic(state_dim, env.single_action_space.n).to(device)
+    buffer = RolloutBuffer(horizon, num_envs, env.observation_space, env.action_space)
+    state_dim = env.observation_space["image"].shape[-1]
+    policy = ActorCritic(state_dim, env.action_space.n).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
-    next_obs, _ = env.reset()
+    next_obs = env.reset()
     next_obs = preprocess(next_obs)
     next_dones = torch.zeros(num_envs).to(device)
     global_step = 0
@@ -253,14 +254,13 @@ def main() -> None:  # noqa: PLR0915
             buffer.logprobs[step] = log_probs
 
             # Step the environment and store the rewards
-            next_obs, rewards, next_dones, truncated, info = env.step(actions.tolist())
+            next_obs, rewards, next_dones, info = env.step(actions.tolist())
             next_obs = preprocess(next_obs)
             next_dones = torch.tensor(next_dones).to(device)
-            truncated = torch.tensor(truncated, dtype=torch.float32).to(device)
             buffer.rewards[step] = torch.tensor(rewards, dtype=torch.float32).to(device).view(-1)
 
             global_step += 1 * num_envs
-            if next_dones.any() or truncated.any():
+            if next_dones.any():
                 done_indx = torch.argmax(next_dones.int())
                 writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
                 logging.info("i_update: %s, \t Timestep: %s, \t Reward: %s", update, global_step, rewards[done_indx])
