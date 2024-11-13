@@ -84,15 +84,15 @@ class ActorCritic(nn.Module):
 
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 1))
+        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 1))
         self.pool = nn.MaxPool2d(kernel_size=2, stride=1)
         self.actor_fc1 = self.layer_init(nn.Linear(580, action_dim), std=0.01)
 
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 1))
+        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 1))
         self.critic_fc1 = self.layer_init(nn.Linear(580, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
@@ -169,9 +169,10 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 1
+    seed = 47
     horizon = 128
-    num_envs = 10
+    num_envs = 5
+    batch_size = num_envs * horizon
     lr_actor = 0.0001
     max_training_timesteps = 500_000
     gamma = 0.99
@@ -179,18 +180,18 @@ def main() -> None:  # noqa: PLR0915
     eps_clip = 0.2
     minibatch_size = 128
     k_epochs = 4
-    save_model_freq = 130
+    save_model_freq = 71
     run_num = 1
     door_locked = True
     save_frames = False
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Locked-{door_locked}/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-{door_locked}/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked_-{door_locked}-run_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked-{door_locked}-run-{run_num}-seed-{seed}.pth"
     print(f"Logging to: {log_dir}")
     print(f"Saving to: {checkpoint_path}")
 
@@ -292,7 +293,6 @@ def main() -> None:  # noqa: PLR0915
         b_directions = torch.flatten(buffer.directions, 0, 1).detach()
         b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
 
-        batch_size = num_envs * horizon
         b_inds = np.arange(batch_size)
         clipfracs = []
 
