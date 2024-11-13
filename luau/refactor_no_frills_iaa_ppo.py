@@ -55,7 +55,7 @@ class RolloutBuffer:
         permuted_sample = np.transpose(sample, (2, 0, 1))
         self.img_shape = permuted_sample.shape
 
-        self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
         self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.student_logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -68,7 +68,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *self.img_shape).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
         self.directions = torch.zeros((self.horizon, self.num_envs, 4)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.student_logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -170,7 +170,7 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: C901, PLR0915, PLR0912
     """Run main function."""
     # Initialize the PPO agent
-    seed = 1
+    seed = 8
     horizon = 128
     num_envs = 10
     lr_actor = 0.0001
@@ -184,7 +184,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 130
-    run_num = 1
+    run_num = 3
     door_locked = True
 
     # Initialize TensorBoard writer
@@ -228,7 +228,9 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
     # Initialize teacher model
-    teacher_model_path = "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run_1_seed_1/SmallIntrospectiveEnv-Locked_run_1_seed_1.pth"
+    teacher_model_path = (
+        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run_1_seed_8/SmallIntrospectiveEnv-Locked_-False-run_1_seed_8.pth"
+    )
     teacher_source_agent = ActorCritic(state_dim, env.action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
 
@@ -262,20 +264,34 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                     differences = torch.abs(teacher_target_vals - teacher_source_vals)
                     h_t = (p == 1) & (differences <= introspection_threshold)
                 advice_counter += h_t.int()
+                buffer.indicators[step] = h_t
 
                 # select action
-                buffer.indicators[step] = h_t
-                teacher_actions, teacher_action_logprobs, teacher_state_vals = teacher_source_agent(next_obs)
-                student_actions, student_action_logprobs, student_state_vals = policy(next_obs)
-                actions = torch.where(h_t, teacher_actions, student_actions)
-                log_probs = torch.where(h_t, teacher_action_logprobs, student_action_logprobs)
-                state_values = torch.where(h_t, teacher_state_vals, student_state_vals)
-                buffer.state_values[step] = state_values
+                if h_t.any():  # If any elements in h_t are true, run the teacher's forward pass
+                    teacher_actions, teacher_action_logprobs, teacher_state_vals = teacher_source_agent(next_obs)
+                if (~h_t).any():  # If any elements in h_t are false, run the student's forward pass
+                    student_actions, student_action_logprobs, student_state_vals = policy(next_obs)
 
+                # Initialize the buffer storage for actions, log_probs, and state_values
+                actions = torch.zeros_like(teacher_actions if h_t.any() else student_actions)
+                log_probs = torch.zeros_like(teacher_action_logprobs if h_t.any() else student_action_logprobs)
+                state_values = torch.zeros_like(teacher_state_vals if h_t.any() else student_state_vals)
+
+                # Populate the buffer conditionally based on h_t
+                if h_t.any():
+                    actions[h_t] = teacher_actions[h_t]
+                    log_probs[h_t] = teacher_action_logprobs[h_t]
+                    state_values[h_t] = teacher_state_vals[h_t]
+
+                if (~h_t).any():
+                    actions[~h_t] = student_actions[~h_t]
+                    log_probs[~h_t] = student_action_logprobs[~h_t]
+                    state_values[~h_t] = student_state_vals[~h_t]
+
+            # Add to the buffer
             buffer.actions[step] = actions
             buffer.logprobs[step] = log_probs
-            buffer.student_logprobs[step] = student_action_logprobs
-            buffer.teacher_logprobs[step] = teacher_action_logprobs
+            buffer.state_values[step] = state_values
 
             # Step the environment and store the rewards
             next_obs, rewards, next_dones, info = env.step(actions.tolist())
@@ -296,7 +312,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                     rewards[done_indx],
                     advice_counter[done_indx].item(),
                 )
-                advice_counter[done_indx] = 0
+                advice_counter[next_dones] = 0
 
         # Calculate rewards and advantages using GAE
         with torch.no_grad():
@@ -316,16 +332,36 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 advantages[t] = lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
             returns = advantages + buffer.state_values
 
+        # Initializing corrections
+        student_correction = torch.ones((horizon, num_envs), device=device)
+        teacher_correction = torch.ones((horizon, num_envs), device=device)
+
+        # Extract data in bulk
+        h = buffer.indicators  # Shape: (horizon, num_envs)
+        a = buffer.actions.long()  # Shape: (horizon, num_envs)
+
+        # Extract state images and directions
+        state_images = buffer.images.unsqueeze(2)  # Shape: (horizon, num_envs, 1, ...)
+        state_directions = buffer.directions  # Shape: (horizon, num_envs)
+
+        # Bulk evaluation (assuming policy and teacher_source_agent support batch evaluation)
+        state_i = {"image": state_images, "direction": state_directions}
+        student_logprob, _, _ = policy.evaluate(state_i, a)
+        teacher_logprob, _, _ = teacher_source_agent.evaluate(state_i, a)
+
+        # Compute corrections using tensor operations
+        student_correction[h == 1] = torch.exp(student_logprob[h == 1] - teacher_logprob[h == 1])
+        teacher_correction[h != 1] = torch.exp(teacher_logprob[h != 1] - student_logprob[h != 1])
+
         b_returns = returns.reshape(-1).detach()
         b_advantages = advantages.reshape(-1).detach()
         b_actions = torch.flatten(buffer.actions, 0, 1).detach()
         b_logprobs = torch.flatten(buffer.logprobs, 0, 1).detach()
-        b_student_logprobs = torch.flatten(buffer.student_logprobs, 0, 1).detach()
-        b_teacher_logprobs = torch.flatten(buffer.teacher_logprobs, 0, 1).detach()
         b_images = torch.flatten(buffer.images, 0, 1).detach()
         b_directions = torch.flatten(buffer.directions, 0, 1).detach()
         b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
-        b_indicators = torch.flatten(buffer.indicators, 0, 1).detach()
+        b_student_correction = torch.flatten(student_correction, 0, 1).detach()
+        b_teacher_correction = torch.flatten(teacher_correction, 0, 1).detach()
 
         batch_size = num_envs * horizon
         b_inds = np.arange(batch_size)
@@ -340,14 +376,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 end = i + minibatch_size
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
-                mb_student_logprobs = b_student_logprobs[mb_inds]
+                mb_rho_s = b_student_correction[mb_inds]
                 new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
-
-                with torch.no_grad():
-                    mb_rho_s = torch.ones(minibatch_size).to(device)
-                    for j, h_i in enumerate(b_indicators[mb_inds]):
-                        if h_i.item() == 1:
-                            mb_rho_s[j] = torch.exp(mb_student_logprobs[j] - b_logprobs[mb_inds][j])
 
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
@@ -402,14 +432,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 end = i + minibatch_size
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
-                mb_teacher_logprobs = b_teacher_logprobs[mb_inds]
+                mb_rho_t = b_teacher_correction[mb_inds]
                 teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
-
-                with torch.no_grad():
-                    mb_rho_t = torch.ones(minibatch_size).to(device)
-                    for j, h_i in enumerate(b_indicators[mb_inds]):
-                        if h_i.item() == 0:
-                            mb_rho_t[j] = torch.exp(mb_teacher_logprobs[j] - b_logprobs[mb_inds][j])
 
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
