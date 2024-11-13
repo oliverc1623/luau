@@ -235,7 +235,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
 
     teacher_target_agent = ActorCritic(state_dim, env.action_space.n).to(device)
-    teacher_target_agent.load_state_dict(torch.load(teacher_model_path))
+    teacher_target_agent.load_state_dict(teacher_source_agent.state_dict())
     teacher_optimizer = torch.optim.Adam(teacher_target_agent.parameters(), lr=lr_actor, eps=1e-5)
 
     next_obs = env.reset()
@@ -303,6 +303,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             global_step += 1 * num_envs
             if next_dones.any():
                 done_indx = torch.argmax(next_dones.int())
+                print(rewards)
                 writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
                 writer.add_scalar("charts/Advice Issued", advice_counter[done_indx], global_step)
                 logging.info(
@@ -360,7 +361,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
         b_student_correction = torch.flatten(student_correction, 0, 1).detach()
         b_teacher_correction = torch.flatten(teacher_correction, 0, 1).detach()
 
-        batch_size = num_envs * horizon
+        batch_size = 256  #  num_envs * horizon
         b_inds = np.arange(batch_size)
         clipfracs = []
 
@@ -402,7 +403,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_loss_student = (0.5 * mb_rho_s * v_loss_max).mean()
 
                 # entropy loss
-                entropy_loss_student = dist_entropy.mean()
+                entropy_loss_student = (mb_rho_s * dist_entropy).mean()
 
                 student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
                 optimizer.zero_grad()  # take gradient step
@@ -435,6 +436,14 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_advantages = b_advantages[mb_inds]
                 mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
+                # policy gradient
+                teacher_log_ratio = teacher_new_logprob - b_logprobs[mb_inds].detach()
+                teacher_ratios = torch.exp(teacher_log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
+
+                surr1 = -mb_advantages * teacher_ratios
+                surr2 = -mb_advantages * torch.clamp(teacher_ratios, 1 - eps_clip, 1 + eps_clip)
+                pg_loss_teacher = (mb_rho_t * torch.max(surr1, surr2)).mean()
+
                 # value function loss + clipping
                 new_value = new_value.view(-1)
                 v_loss_unclipped = (teacher_new_value - b_returns[mb_inds]) ** 2
@@ -442,8 +451,11 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss_teacher = (0.5 * mb_rho_t * v_loss_max).mean()
-                teacher_loss = v_loss_teacher * 0.5  # final loss of clipped objective PPO
 
+                # teacher entropy lossQ
+                entropy_loss_teacher = (mb_rho_t * teacher_dist_entropy).mean()
+
+                teacher_loss = pg_loss_teacher - 0.01 * entropy_loss_teacher + v_loss_teacher * 0.5  # final loss of clipped objective PPO
                 teacher_optimizer.zero_grad()  # take gradient step
                 teacher_loss.backward()
                 nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), 0.5)
