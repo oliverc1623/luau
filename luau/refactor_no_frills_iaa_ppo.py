@@ -391,7 +391,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
                 surr1 = -mb_advantages * ratios
                 surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
-                pg_loss_student = torch.max(surr1, surr2).mean()
+                pg_loss_student = (mb_rho_s * torch.max(surr1, surr2)).mean()
 
                 # value function loss + clipping
                 new_value = new_value.view(-1)
@@ -399,12 +399,12 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_student = 0.5 * v_loss_max.mean()
+                v_loss_student = (0.5 * mb_rho_s * v_loss_max).mean()
 
                 # entropy loss
                 entropy_loss_student = dist_entropy.mean()
+
                 student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
-                student_loss = torch.mean(student_loss * mb_rho_s)
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
                 nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
@@ -441,10 +441,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_clipped = b_state_values[mb_inds] + torch.clamp(teacher_new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_teacher = 0.5 * v_loss_max.mean()
-
+                v_loss_teacher = (0.5 * mb_rho_t * v_loss_max).mean()
                 teacher_loss = v_loss_teacher * 0.5  # final loss of clipped objective PPO
-                teacher_loss = torch.mean(teacher_loss * mb_rho_t)
 
                 teacher_optimizer.zero_grad()  # take gradient step
                 teacher_loss.backward()
