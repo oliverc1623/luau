@@ -332,26 +332,23 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 advantages[t] = lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
             returns = advantages + buffer.state_values
 
-        # Initializing corrections
-        student_correction = torch.ones((horizon, num_envs), device=device)
-        teacher_correction = torch.ones((horizon, num_envs), device=device)
+        student_correction = torch.zeros((horizon, num_envs), device=device)
+        teacher_correction = torch.zeros((horizon, num_envs), device=device)
 
-        # Extract data in bulk
-        h = buffer.indicators  # Shape: (horizon, num_envs)
-        a = buffer.actions.long()  # Shape: (horizon, num_envs)
+        for s in range(horizon):
+            for e in range(num_envs):
+                h = buffer.indicators[s, e]  # Indicator h_t for this step and environment
+                a = buffer.actions[s, e]  # Action a_t for this step and environment
+                state_i = {"image": buffer.images[s, e].unsqueeze(0), "direction": buffer.directions[s, e]}  # State s_t for this step and environment
 
-        # Extract state images and directions
-        state_images = buffer.images.unsqueeze(2)  # Shape: (horizon, num_envs, 1, ...)
-        state_directions = buffer.directions  # Shape: (horizon, num_envs)
-
-        # Bulk evaluation (assuming policy and teacher_source_agent support batch evaluation)
-        state_i = {"image": state_images, "direction": state_directions}
-        student_logprob, _, _ = policy.evaluate(state_i, a)
-        teacher_logprob, _, _ = teacher_source_agent.evaluate(state_i, a)
-
-        # Compute corrections using tensor operations
-        student_correction[h == 1] = torch.exp(student_logprob[h == 1] - teacher_logprob[h == 1])
-        teacher_correction[h != 1] = torch.exp(teacher_logprob[h != 1] - student_logprob[h != 1])
+                if h == 1:  # If indicator h_t is true (or 1)
+                    student_logprob, _, _ = policy.evaluate(state_i, a.long())
+                    teacher_correction[s, e] = 1
+                    student_correction[s, e] = torch.exp(student_logprob - buffer.logprobs[s, e])  # Adding epsilon to prevent division by zero
+                else:
+                    teacher_logprob, _, _ = teacher_source_agent.evaluate(state_i, a.long())
+                    teacher_correction[s, e] = torch.exp(teacher_logprob - buffer.logprobs[s, e])  # Adding epsilon to prevent division by zero
+                    student_correction[s, e] = 1
 
         b_returns = returns.reshape(-1).detach()
         b_advantages = advantages.reshape(-1).detach()
