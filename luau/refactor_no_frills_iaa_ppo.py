@@ -85,15 +85,15 @@ class ActorCritic(nn.Module):
 
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 1))
+        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 1))
         self.pool = nn.MaxPool2d(kernel_size=2, stride=1)
         self.actor_fc1 = self.layer_init(nn.Linear(580, action_dim), std=0.01)
 
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 1))
+        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 2))
+        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 1))
         self.critic_fc1 = self.layer_init(nn.Linear(580, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
@@ -170,9 +170,10 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: C901, PLR0915, PLR0912
     """Run main function."""
     # Initialize the PPO agent
-    seed = 8
+    seed = 47
     horizon = 128
-    num_envs = 10
+    num_envs = 5
+    batch_size = num_envs * horizon
     lr_actor = 0.0001
     max_training_timesteps = 500_000
     introspection_decay = 0.99999
@@ -183,17 +184,17 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     eps_clip = 0.2
     minibatch_size = 128
     k_epochs = 4
-    save_model_freq = 130
-    run_num = 3
+    save_model_freq = 71
+    run_num = 1
     door_locked = True
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run_{run_num}_seed_{seed}")
-    model_dir = Path(f"../../pvcvolume/models/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run_{run_num}_seed_{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
+    model_dir = Path(f"../../pvcvolume/models/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked-{door_locked}_{run_num}_seed_{seed}.pth"
+    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked-{door_locked}-{run_num}-seed-{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -229,7 +230,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
     # Initialize teacher model
     teacher_model_path = (
-        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run_1_seed_8/SmallIntrospectiveEnv-Locked_-False-run_1_seed_8.pth"
+        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-1-seed-47/SmallIntrospectiveEnv-Locked-False-run-1-seed-47.pth"
     )
     teacher_source_agent = ActorCritic(state_dim, env.action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
@@ -303,7 +304,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             global_step += 1 * num_envs
             if next_dones.any():
                 done_indx = torch.argmax(next_dones.int())
-                print(rewards)
                 writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
                 writer.add_scalar("charts/Advice Issued", advice_counter[done_indx], global_step)
                 logging.info(
@@ -361,7 +361,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
         b_student_correction = torch.flatten(student_correction, 0, 1).detach()
         b_teacher_correction = torch.flatten(teacher_correction, 0, 1).detach()
 
-        batch_size = 256  #  num_envs * horizon
         b_inds = np.arange(batch_size)
         clipfracs = []
 
@@ -408,7 +407,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
-                nn.utils.clip_grad_norm_(policy.parameters(), 0.5)
                 optimizer.step()
 
         # log debug variables
@@ -445,7 +443,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 pg_loss_teacher = (mb_rho_t * torch.max(surr1, surr2)).mean()
 
                 # value function loss + clipping
-                new_value = new_value.view(-1)
+                teacher_new_value = teacher_new_value.view(-1)
                 v_loss_unclipped = (teacher_new_value - b_returns[mb_inds]) ** 2
                 v_clipped = b_state_values[mb_inds] + torch.clamp(teacher_new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
@@ -458,7 +456,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 teacher_loss = pg_loss_teacher - 0.01 * entropy_loss_teacher + v_loss_teacher * 0.5  # final loss of clipped objective PPO
                 teacher_optimizer.zero_grad()  # take gradient step
                 teacher_loss.backward()
-                nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), 0.5)
                 teacher_optimizer.step()
 
         if update % save_model_freq == 0:
