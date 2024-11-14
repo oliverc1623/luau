@@ -174,7 +174,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     horizon = 128
     num_envs = 5
     batch_size = num_envs * horizon
-    lr_actor = 0.0001
+    lr_actor = 0.00005
     max_training_timesteps = 500_000
     introspection_decay = 0.99999
     burn_in = 0
@@ -187,6 +187,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     save_model_freq = 71
     run_num = 1
     door_locked = True
+    target_kl = 0.01
 
     # Initialize TensorBoard writer
     log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
@@ -237,7 +238,15 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
     teacher_target_agent = ActorCritic(state_dim, env.action_space.n).to(device)
     teacher_target_agent.load_state_dict(teacher_source_agent.state_dict())
-    teacher_optimizer = torch.optim.Adam(teacher_target_agent.parameters(), lr=lr_actor, eps=1e-5)
+    critic_params = [
+        teacher_target_agent.critic_conv1.parameters(),
+        teacher_target_agent.critic_conv2.parameters(),
+        teacher_target_agent.critic_conv3.parameters(),
+        teacher_target_agent.critic_fc1.parameters(),
+    ]
+    # Flatten the list of parameter groups into a single iterable
+    critic_params = [p for param_group in critic_params for p in param_group]
+    teacher_optimizer = torch.optim.Adam(critic_params, lr=lr_actor, eps=1e-5)
 
     next_obs = env.reset()
     next_obs = preprocess(next_obs)
@@ -347,7 +356,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                     teacher_correction[s, e] = 1
                     student_correction[s, e] = torch.exp(student_logprob - buffer.logprobs[s, e])  # Adding epsilon to prevent division by zero
                 else:
-                    teacher_logprob, _, _ = teacher_source_agent.evaluate(state_i, a.long())
+                    teacher_logprob, _, _ = teacher_target_agent.evaluate(state_i, a.long())
                     teacher_correction[s, e] = torch.exp(teacher_logprob - buffer.logprobs[s, e])  # Adding epsilon to prevent division by zero
                     student_correction[s, e] = 1
 
@@ -360,6 +369,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
         b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
         b_student_correction = torch.flatten(student_correction, 0, 1).detach()
         b_teacher_correction = torch.flatten(teacher_correction, 0, 1).detach()
+        print(f"b_student_correction: {b_student_correction}")
 
         b_inds = np.arange(batch_size)
         clipfracs = []
@@ -402,12 +412,16 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_loss_student = (0.5 * mb_rho_s * v_loss_max).mean()
 
                 # entropy loss
-                entropy_loss_student = (mb_rho_s * dist_entropy).mean()
+                entropy_loss_student = (dist_entropy).mean()
 
                 student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
+                nn.utils.clip_grad_norm_(policy.parameters(), 0.1)
                 optimizer.step()
+
+            if approx_kl > target_kl:
+                break
 
         # log debug variables
         with torch.no_grad():
@@ -429,18 +443,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds], "direction": b_directions[mb_inds]}
                 mb_rho_t = b_teacher_correction[mb_inds]
-                teacher_new_logprob, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
-
-                mb_advantages = b_advantages[mb_inds]
-                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-
-                # policy gradient
-                teacher_log_ratio = teacher_new_logprob - b_logprobs[mb_inds].detach()
-                teacher_ratios = torch.exp(teacher_log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
-
-                surr1 = -mb_advantages * teacher_ratios
-                surr2 = -mb_advantages * torch.clamp(teacher_ratios, 1 - eps_clip, 1 + eps_clip)
-                pg_loss_teacher = (mb_rho_t * torch.max(surr1, surr2)).mean()
+                _, teacher_new_value, _ = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
 
                 # value function loss + clipping
                 teacher_new_value = teacher_new_value.view(-1)
@@ -449,14 +452,15 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss_teacher = (0.5 * mb_rho_t * v_loss_max).mean()
+                teacher_loss = v_loss_teacher * 0.5  # final loss of clipped objective PPO
 
-                # teacher entropy lossQ
-                entropy_loss_teacher = (mb_rho_t * teacher_dist_entropy).mean()
-
-                teacher_loss = pg_loss_teacher - 0.01 * entropy_loss_teacher + v_loss_teacher * 0.5  # final loss of clipped objective PPO
                 teacher_optimizer.zero_grad()  # take gradient step
                 teacher_loss.backward()
+                nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), 0.1)
                 teacher_optimizer.step()
+
+            if approx_kl > target_kl:
+                break
 
         if update % save_model_freq == 0:
             logging.info("--------------------------------------------------------------------------------------------")
