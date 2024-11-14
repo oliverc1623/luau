@@ -187,7 +187,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     save_model_freq = 71
     run_num = 2
     door_locked = True
-    target_kl = 0.01
 
     # Initialize TensorBoard writer
     log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
@@ -404,11 +403,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 student_loss = torch.mean(student_loss * mb_rho_s)
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
-                nn.utils.clip_grad_norm_(policy.parameters(), 0.01)
                 optimizer.step()
-
-            if approx_kl > target_kl:
-                break
 
         # log debug variables
         with torch.no_grad():
@@ -443,11 +438,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
                 teacher_optimizer.zero_grad()  # take gradient step
                 teacher_loss.backward()
-                nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), 0.01)
                 teacher_optimizer.step()
-
-            if approx_kl > target_kl:
-                break
 
             with torch.no_grad():
                 writer.add_scalar("debugging/teacher_value_loss", v_loss_teacher.item(), global_step)
