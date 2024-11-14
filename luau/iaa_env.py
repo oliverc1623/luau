@@ -143,8 +143,8 @@ class SmallIntrospectiveEnv(MiniGridEnv):
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
 
-        vertical_wall = self.rng.integers(2, 4)
-        gap = self.rng.integers(1, 5)
+        vertical_wall = 2
+        gap = 3
         # Generate verical separation wall
         for i in range(height):
             if i != gap:
@@ -158,7 +158,8 @@ class SmallIntrospectiveEnv(MiniGridEnv):
 
         # Place the agent
         agent_width = self.rng.integers(1, vertical_wall)
-        self.agent_pos = (agent_width, gap)
+        agent_y = self.rng.integers(1, height - 1)
+        self.agent_pos = (agent_width, agent_y)
         self.agent_dir = self.rng.integers(0, 4)
 
         if self.locked:
