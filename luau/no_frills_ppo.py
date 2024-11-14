@@ -181,7 +181,7 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 71
-    run_num = 1
+    run_num = 2
     door_locked = True
     save_frames = False
 
@@ -331,11 +331,8 @@ def main() -> None:  # noqa: PLR0915
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss_student = 0.5 * v_loss_max.mean()
 
-                # entropy loss
-                entropy_loss_student = dist_entropy.mean()
-
                 # final loss of clipped objective PPO
-                student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5
+                student_loss = pg_loss_student + v_loss_student * 0.5  # - 0.01 * entropy_loss_student
 
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
@@ -345,7 +342,7 @@ def main() -> None:  # noqa: PLR0915
         with torch.no_grad():
             writer.add_scalar("debugging/policy_loss", pg_loss_student.item(), global_step)
             writer.add_scalar("debugging/value_loss", v_loss_student.item(), global_step)
-            writer.add_scalar("debugging/entropy_loss", entropy_loss_student.item(), global_step)
+
             writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
             writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
             writer.add_scalar("debugging/clipfrac", np.mean(clipfracs), global_step)
