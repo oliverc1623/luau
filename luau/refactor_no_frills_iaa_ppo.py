@@ -436,6 +436,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 teacher_loss = v_loss_teacher * 0.5  # final loss of clipped objective PPO
                 teacher_loss = torch.mean(teacher_loss * mb_rho_t)
 
+                # TODO: check if actually updating the teacher model
                 teacher_optimizer.zero_grad()  # take gradient step
                 teacher_loss.backward()
                 teacher_optimizer.step()
