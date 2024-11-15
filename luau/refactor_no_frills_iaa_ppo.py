@@ -56,7 +56,7 @@ class RolloutBuffer:
         self.img_shape = permuted_sample.shape
 
         self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
-        self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
+        self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape), dtype=torch.int64).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.is_terminals = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -66,7 +66,7 @@ class RolloutBuffer:
     def clear(self) -> None:
         """Clear the buffer."""
         self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
-        self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
+        self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape), dtype=torch.int64).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.is_terminals = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -152,7 +152,7 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: C901, PLR0915, PLR0912
     """Run main function."""
     # Initialize the PPO agent
-    seed = 314
+    seed = 22
     horizon = 128
     num_envs = 5
     batch_size = num_envs * horizon
@@ -212,17 +212,18 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
     # Initialize teacher model
     teacher_model_path = (
-        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-1-seed-314/SmallIntrospectiveEnv-Locked-False-run-1-seed-314.pth"
+        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-1-seed-22/SmallIntrospectiveEnv-Locked-False-run-1-seed-22.pth"
     )
     teacher_source_agent = ActorCritic(state_dim, env.action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
 
     teacher_target_agent = ActorCritic(state_dim, env.action_space.n).to(device)
-    teacher_target_agent.load_state_dict(teacher_source_agent.state_dict())
+    teacher_target_agent.load_state_dict(torch.load(teacher_model_path))
     critic_params = [
         teacher_target_agent.critic_conv1.parameters(),
         teacher_target_agent.critic_conv2.parameters(),
         teacher_target_agent.critic_fc1.parameters(),
+        teacher_target_agent.critic_fc2.parameters(),
     ]
     # Flatten the list of parameter groups into a single iterable
     critic_params = [p for param_group in critic_params for p in param_group]
@@ -232,7 +233,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     next_obs = preprocess(next_obs)
     next_dones = torch.zeros(num_envs).to(device)
     advice_counter = torch.zeros(num_envs).to(device)
-    global_step = 0
+    global_step = 1
 
     # Training loop
     num_updates = max_training_timesteps // (horizon * num_envs)
@@ -247,29 +248,37 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 h_t = torch.zeros(num_envs, dtype=torch.int64).to(device)
                 probability = introspection_decay ** max(0, global_step - burn_in)
                 p = Bernoulli(probability).sample([num_envs]).to(device)  # Bernoulli sampling for all envs
-                for n in range(num_envs):
-                    h_t[n] = 0
-                    nth_obs = {"image": next_obs["image"][n].unsqueeze(0)}
-                    if global_step > burn_in and p[n] == 1:
-                        _, _, teacher_source_vals = teacher_source_agent(nth_obs)
-                        _, _, teacher_target_vals = teacher_target_agent(nth_obs)
-                        if torch.abs(teacher_target_vals - teacher_source_vals) <= introspection_threshold:
-                            h_t[n] = 1
-                advice_counter += h_t.int()
+                if global_step > burn_in:
+                    nth_obs = {"image": next_obs["image"]}  # Pass entire batch instead of individual observations
+                    _, _, teacher_source_vals = teacher_source_agent(nth_obs)
+                    _, _, teacher_target_vals = teacher_target_agent(nth_obs)
+                    # Calculate absolute differences for introspection across the batch
+                    abs_diff = torch.abs(teacher_target_vals - teacher_source_vals)
+                    # Update h_t based on the introspection threshold
+                    h_t = (abs_diff <= introspection_threshold).int() * (p == 1).int()
+                advice_counter += h_t
                 buffer.indicators[step] = h_t
 
+                # Prepare the tensor to store actions
                 actions = torch.zeros(num_envs, dtype=torch.int64).to(device)
-                for n in range(num_envs):
-                    nth_obs = {"image": next_obs["image"][n].unsqueeze(0)}
-                    if h_t[n] == 1:
-                        action, log_prob, state_values = teacher_source_agent(nth_obs)
-                        actions[n] = action
-                    else:
-                        action, log_prob, state_values = policy(nth_obs)
-                        actions[n] = action
-                    buffer.actions[step, n] = action
-                    buffer.logprobs[step, n] = log_prob
-                    buffer.state_values[step, n] = state_values
+                teacher_mask = h_t == 1
+                student_mask = ~teacher_mask
+
+                # Perform batched forward pass for teacher
+                if teacher_mask.any():
+                    teacher_actions, teacher_log_probs, teacher_state_values = teacher_source_agent({"image": next_obs["image"][teacher_mask]})
+                    actions[teacher_mask] = teacher_actions
+                    buffer.actions[step, teacher_mask] = teacher_actions
+                    buffer.logprobs[step, teacher_mask] = teacher_log_probs
+                    buffer.state_values[step, teacher_mask] = teacher_state_values
+
+                # Perform batched forward pass for student
+                if student_mask.any():
+                    student_actions, student_log_probs, student_state_values = policy({"image": next_obs["image"][student_mask]})
+                    actions[student_mask] = student_actions
+                    buffer.actions[step, student_mask] = student_actions
+                    buffer.logprobs[step, student_mask] = student_log_probs
+                    buffer.state_values[step, student_mask] = student_state_values
 
             # Step the environment and store the rewards
             next_obs, rewards, next_dones, info = env.step(actions.tolist())
@@ -439,3 +448,5 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
 if __name__ == "__main__":
     main()
+
+# %%
