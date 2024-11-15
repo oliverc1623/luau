@@ -84,12 +84,15 @@ class ActorCritic(nn.Module):
         super().__init__()
         self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1))
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1))
-        self.actor_fc1 = self.layer_init(nn.Linear(1152, 128))
+        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1))
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.actor_fc1 = self.layer_init(nn.Linear(576, 128))
         self.actor_fc2 = self.layer_init(nn.Linear(128, action_dim), std=0.01)
 
         self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1))
-        self.critic_fc1 = self.layer_init(nn.Linear(1152, 128))
+        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1))
+        self.critic_fc1 = self.layer_init(nn.Linear(576, 128))
         self.critic_fc2 = self.layer_init(nn.Linear(128, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
@@ -101,7 +104,9 @@ class ActorCritic(nn.Module):
     def _actor_forward(self, image: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
         x = f.relu(self.actor_conv1(image))
+        x = self.pool(x)
         x = f.relu(self.actor_conv2(x))
+        x = f.relu(self.actor_conv3(x))
         x = x.reshape(x.size(0), -1)  # Flatten the tensor
         x = f.relu(self.actor_fc1(x))
         x = self.actor_fc2(x)
@@ -110,7 +115,9 @@ class ActorCritic(nn.Module):
     def _critic_forward(self, image: torch.tensor) -> torch.tensor:
         """Run common computations for the critic network."""
         y = f.relu(self.critic_conv1(image))
+        y = self.pool(y)
         y = f.relu(self.critic_conv2(y))
+        y = f.relu(self.critic_conv3(y))
         y = y.reshape(y.size(0), -1)  # Flatten the tensor
         y = f.relu(self.critic_fc1(y))
         y = self.critic_fc2(y).squeeze(-1)
@@ -155,20 +162,20 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 22
-    horizon = 128
-    num_envs = 5
+    seed = 50
+    horizon = 256
+    num_envs = 6
     batch_size = num_envs * horizon
     lr_actor = 0.0001
     max_training_timesteps = 500_000
     gamma = 0.99
     gae_lambda = 0.8
     eps_clip = 0.2
-    minibatch_size = 128
+    minibatch_size = 256
     k_epochs = 4
-    save_model_freq = 71
+    save_model_freq = 65
     run_num = 1
-    door_locked = True
+    door_locked = False
     save_frames = False
 
     # Initialize TensorBoard writer
@@ -318,7 +325,7 @@ def main() -> None:  # noqa: PLR0915
                 entropy_loss_student = dist_entropy.mean()
 
                 # final loss of clipped objective PPO
-                student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  #
+                student_loss = pg_loss_student - 0.05 * entropy_loss_student + v_loss_student * 0.5  #
 
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
