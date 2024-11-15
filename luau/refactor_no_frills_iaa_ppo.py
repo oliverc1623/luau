@@ -79,13 +79,15 @@ class ActorCritic(nn.Module):
 
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
-        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 1))
-        self.actor_fc1 = self.layer_init(nn.Linear(512, action_dim), std=0.01)
+        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1))
+        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1))
+        self.actor_fc1 = self.layer_init(nn.Linear(1152, 128))
+        self.actor_fc2 = self.layer_init(nn.Linear(128, action_dim), std=0.01)
 
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
-        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 1))
-        self.critic_fc1 = self.layer_init(nn.Linear(512, 1), std=1.0)
+        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1))
+        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1))
+        self.critic_fc1 = self.layer_init(nn.Linear(1152, 128))
+        self.critic_fc2 = self.layer_init(nn.Linear(128, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -98,7 +100,8 @@ class ActorCritic(nn.Module):
         x = f.relu(self.actor_conv1(image))
         x = f.relu(self.actor_conv2(x))
         x = x.reshape(x.size(0), -1)  # Flatten the tensor
-        x = self.actor_fc1(x)
+        x = f.relu(self.actor_fc1(x))
+        x = self.actor_fc2(x)
         return x
 
     def _critic_forward(self, image: torch.tensor) -> torch.tensor:
@@ -106,7 +109,8 @@ class ActorCritic(nn.Module):
         y = f.relu(self.critic_conv1(image))
         y = f.relu(self.critic_conv2(y))
         y = y.reshape(y.size(0), -1)  # Flatten the tensor
-        y = self.critic_fc1(y).squeeze(-1)
+        y = f.relu(self.critic_fc1(y))
+        y = self.critic_fc2(y).squeeze(-1)
         return y
 
     def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
