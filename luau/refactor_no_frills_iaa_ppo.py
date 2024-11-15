@@ -158,7 +158,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     batch_size = num_envs * horizon
     lr_actor = 0.0001
     max_training_timesteps = 500_000
-    introspection_decay = 0.99999
+    introspection_decay = 0.999
     burn_in = 0
     introspection_threshold = 0.9
     gamma = 0.99
@@ -227,7 +227,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     ]
     # Flatten the list of parameter groups into a single iterable
     critic_params = [p for param_group in critic_params for p in param_group]
-    teacher_optimizer = torch.optim.Adam(critic_params, lr=lr_actor, eps=1e-5)
+    teacher_optimizer = torch.optim.Adam(critic_params, lr=0.001, eps=1e-5)
 
     next_obs = env.reset()
     next_obs = preprocess(next_obs)
@@ -319,24 +319,25 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 advantages[t] = lastgaelam = delta + gamma * gae_lambda * next_non_terminal * lastgaelam
             returns = advantages + buffer.state_values
 
-        student_correction = torch.zeros((horizon, num_envs), device=device)
-        teacher_correction = torch.zeros((horizon, num_envs), device=device)
+        # Initialize corrections
+        student_correction = torch.ones((horizon, num_envs), device=device)
+        teacher_correction = torch.ones((horizon, num_envs), device=device)
 
         with torch.no_grad():
+            # Loop through the horizon only
             for s in range(horizon):
-                for e in range(num_envs):
-                    h = buffer.indicators[s, e]  # Indicator h_t for this step and environment
-                    a = buffer.actions[s, e]  # Action a_t for this step and environment
-                    state_i = {"image": buffer.images[s, e].unsqueeze(0)}  # State s_t for this step and env
-                    student_logprob, _, _ = policy.evaluate(state_i, a.long())
-                    teacher_logprob, _, _ = teacher_source_agent.evaluate(state_i, a.long())
+                # Extract batch of indicators, actions, and states for the current step across all environments
+                h = buffer.indicators[s]  # Shape: (num_envs,)
+                a = buffer.actions[s]  # Shape: (num_envs,)
+                states = {"image": buffer.images[s]}  # Shape: (num_envs, ...)
 
-                    if h == 1:  # If indicator h_t is true (or 1)
-                        teacher_correction[s, e] = 1
-                        student_correction[s, e] = torch.exp(student_logprob - teacher_logprob)  # Adding epsilon to prevent division by zero
-                    else:
-                        teacher_correction[s, e] = torch.exp(teacher_logprob - student_logprob)  # Adding epsilon to prevent division by zero
-                        student_correction[s, e] = 1
+                # Evaluate student and teacher log probabilities as a batch
+                student_logprobs, _, _ = policy.evaluate(states, a.long())  # Assuming batched input is supported
+                teacher_logprobs, _, _ = teacher_source_agent.evaluate(states, a.long())  # Assuming batched input is supported
+
+                # Calculate corrections using vectorized operations
+                teacher_correction[s] = torch.where(h == 1, torch.ones_like(teacher_correction[s]), torch.exp(teacher_logprobs - student_logprobs))
+                student_correction[s] = torch.where(h == 1, torch.exp(student_logprobs - teacher_logprobs), torch.ones_like(student_correction[s]))
 
         b_returns = returns.reshape(-1).detach()
         b_advantages = advantages.reshape(-1).detach()
@@ -360,6 +361,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds]}
                 mb_rho_s = b_student_correction[mb_inds]
+                mb_rho_s = mb_rho_s / (mb_rho_s.mean() + 1e-8)  # Normalizing to have a mean of 1
                 new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
 
                 mb_advantages = b_advantages[mb_inds]
@@ -415,6 +417,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds]}
                 mb_rho_t = b_teacher_correction[mb_inds]
+                mb_rho_t = mb_rho_t / (mb_rho_t.mean() + 1e-8)  # Normalizing to have a mean of 1
                 _, teacher_new_value, _ = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
 
                 # value function loss + clipping

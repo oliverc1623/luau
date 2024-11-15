@@ -155,7 +155,7 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 314
+    seed = 22
     horizon = 128
     num_envs = 5
     batch_size = num_envs * horizon
@@ -168,7 +168,7 @@ def main() -> None:  # noqa: PLR0915
     k_epochs = 4
     save_model_freq = 71
     run_num = 1
-    door_locked = False
+    door_locked = True
     save_frames = False
 
     # Initialize TensorBoard writer
