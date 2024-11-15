@@ -55,7 +55,7 @@ class RolloutBuffer:
         permuted_sample = np.transpose(sample, (2, 0, 1))
         self.img_shape = permuted_sample.shape
 
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 5, 5)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -65,7 +65,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 5, 5)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -193,7 +193,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
         def _init() -> SmallIntrospectiveEnv:
             sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=5, locked=door_locked, render_mode="rgb_array", max_steps=360)
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=6, locked=door_locked, render_mode="rgb_array", max_steps=360)
             env = FullyObsWrapper(env)
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)
