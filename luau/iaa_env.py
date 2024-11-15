@@ -143,34 +143,26 @@ class SmallIntrospectiveEnv(MiniGridEnv):
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
 
-        vertical_wall = 2
-        gap = 3
-        # Generate verical separation wall
-        for i in range(height):
-            if i != gap:
-                self.grid.set(vertical_wall, i, Wall())
-
-        # Place the door and key
-        self.grid.set(vertical_wall, gap, Door("yellow", is_locked=self.locked))
-
-        # Place a goal square in the bottom-right corner
+        # Place a goal in the bottom-right corner
         self.put_obj(Goal(), width - 2, height - 2)
 
-        # Place the agent
-        agent_width = self.rng.integers(1, vertical_wall)
-        agent_y = self.rng.integers(1, height - 1)
-        self.agent_pos = (agent_width, agent_y)
-        self.agent_dir = self.rng.integers(0, 4)
+        # Create a vertical splitting wall
+        splitIdx = 2  # noqa: N806
+        self.grid.vert_wall(splitIdx, 0)
 
+        # Place the agent at a random position and orientation
+        # on the left side of the splitting wall
+        self.place_agent(size=(splitIdx, height))
+
+        # Place a door in the wall
+        doorIdx = 2  # noqa: N806
+        self.put_obj(Door("yellow", is_locked=self.locked), splitIdx, doorIdx)
+
+        # Place a yellow key on the left side
         if self.locked:
-            # Place the key
-            def reject_right_of_door(self, pos: tuple[int, int]) -> bool:  # noqa: ARG001, ANN001
-                w, h = pos
-                return w > vertical_wall
+            self.place_obj(obj=Key("yellow"), top=(0, 0), size=(splitIdx, height))
 
-            self.place_obj(Key("yellow"), reject_fn=reject_right_of_door)
-
-        self.mission = "get to the green goal square"
+        self.mission = "use the key to open the door and then get to the goal"
 
 
 # %%

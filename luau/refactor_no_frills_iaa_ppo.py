@@ -55,7 +55,7 @@ class RolloutBuffer:
         permuted_sample = np.transpose(sample, (2, 0, 1))
         self.img_shape = permuted_sample.shape
 
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 5, 5)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -65,7 +65,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 5, 5)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -80,15 +80,12 @@ class ActorCritic(nn.Module):
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
         self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
-        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 1))
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=1)
-        self.actor_fc1 = self.layer_init(nn.Linear(576, action_dim), std=0.01)
+        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 1))
+        self.actor_fc1 = self.layer_init(nn.Linear(512, action_dim), std=0.01)
 
         self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 2))
-        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 2))
-        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 1))
-        self.critic_fc1 = self.layer_init(nn.Linear(576, 1), std=1.0)
+        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 1))
+        self.critic_fc1 = self.layer_init(nn.Linear(512, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -99,9 +96,7 @@ class ActorCritic(nn.Module):
     def _actor_forward(self, image: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
         x = f.relu(self.actor_conv1(image))
-        x = self.pool(x)
         x = f.relu(self.actor_conv2(x))
-        x = f.relu(self.actor_conv3(x))
         x = x.reshape(x.size(0), -1)  # Flatten the tensor
         x = self.actor_fc1(x)
         return x
@@ -109,9 +104,7 @@ class ActorCritic(nn.Module):
     def _critic_forward(self, image: torch.tensor) -> torch.tensor:
         """Run common computations for the critic network."""
         y = f.relu(self.critic_conv1(image))
-        y = self.pool(y)
         y = f.relu(self.critic_conv2(y))
-        y = f.relu(self.critic_conv3(y))
         y = y.reshape(y.size(0), -1)  # Flatten the tensor
         y = self.critic_fc1(y).squeeze(-1)
         return y
@@ -155,7 +148,7 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: C901, PLR0915, PLR0912
     """Run main function."""
     # Initialize the PPO agent
-    seed = 47
+    seed = 314
     horizon = 128
     num_envs = 5
     batch_size = num_envs * horizon
@@ -170,7 +163,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     minibatch_size = 128
     k_epochs = 4
     save_model_freq = 71
-    run_num = 3
+    run_num = 1
     door_locked = True
 
     # Initialize TensorBoard writer
@@ -196,7 +189,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
         def _init() -> SmallIntrospectiveEnv:
             sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=6, locked=door_locked, render_mode="rgb_array", max_steps=360)
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=5, locked=door_locked, render_mode="rgb_array", max_steps=360)
             env = FullyObsWrapper(env)
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)
@@ -215,7 +208,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
     # Initialize teacher model
     teacher_model_path = (
-        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-3-seed-47/SmallIntrospectiveEnv-Locked-False-run-3-seed-47.pth"
+        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-1-seed-314/SmallIntrospectiveEnv-Locked-False-run-1-seed-314.pth"
     )
     teacher_source_agent = ActorCritic(state_dim, env.action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
@@ -225,7 +218,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     critic_params = [
         teacher_target_agent.critic_conv1.parameters(),
         teacher_target_agent.critic_conv2.parameters(),
-        teacher_target_agent.critic_conv3.parameters(),
         teacher_target_agent.critic_fc1.parameters(),
     ]
     # Flatten the list of parameter groups into a single iterable
