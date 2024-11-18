@@ -6,7 +6,7 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-from minigrid.wrappers import FullyObsWrapper
+from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper
 from PIL import Image
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from torch import nn
@@ -48,18 +48,14 @@ print("=========================================================================
 class RolloutBuffer:
     """A buffer to store rollout data for reinforcement learning agents and supports the generation of minibatches for training."""
 
-    def __init__(self, horizon: int, num_envs: int, state: dict, action_space: gym.Space):
+    def __init__(self, horizon: int, num_envs: int, observation_shape: tuple, action_space: gym.Space):
         # Storage setup
         self.horizon = horizon
         self.num_envs = num_envs
-        self.state = state
+        self.observation_shape = observation_shape
         self.action_space = action_space
 
-        sample = state["image"].sample()
-        permuted_sample = np.transpose(sample, (2, 0, 1))
-        self.img_shape = permuted_sample.shape
-
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *self.observation_shape).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -68,7 +64,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *self.observation_shape).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -83,7 +79,7 @@ class ActorCritic(nn.Module):
         super().__init__()
 
         # Actor network
-        self.actor_layers = nn.Sequential(
+        self.actor = nn.Sequential(
             self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1)),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
@@ -98,7 +94,7 @@ class ActorCritic(nn.Module):
         )
 
         # Critic network
-        self.critic_layers = nn.Sequential(
+        self.critic = nn.Sequential(
             self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1)),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
@@ -118,31 +114,31 @@ class ActorCritic(nn.Module):
         nn.init.constant_(layer.bias, bias_const)
         return layer
 
-    def forward(self, state: dict, action: torch.tensor = None) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
+    def get_value(self, image: torch.tensor) -> torch.tensor:
+        """Get the value of the state."""
+        return self.critic(image)
+
+    def forward(self, image: torch.tensor, action: torch.tensor = None) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
         """Forward pass. Optionally takes an action for evaluation."""
-        image = state["image"]
-        logits = self.actor_layers(image)
+        logits = self.actor(image)
         dist = Categorical(logits=logits)
         if action is None:
             action = dist.sample()
         action_logprob = dist.log_prob(action)
-        state_values = self.critic_layers(image).squeeze(-1)
+        state_values = self.critic(image)
         return action, action_logprob, state_values, dist.entropy()
 
 
-def preprocess(x: dict) -> dict:
+def preprocess(image: np.array) -> dict:
     """Preprocess the input for a grid-based environment, padding it to (12, 12, channels)."""
-    image = x["image"]
     image = torch.from_numpy(image).float()
-
-    rgb = 3
-    if image.ndim == rgb:  # Single image case with shape (height, width, channels)
+    if image.ndim == RGB_CHANNEL:  # Single image case with shape (height, width, channels)
         image = image.permute(2, 0, 1)
         # Permute back to (batch_size, channels, height, width)
         image = image.unsqueeze(0).to(device)  # Adding batch dimension
     else:  # Batch case with shape (batch_size, height, width, channels)
         image = image.permute(0, 3, 1, 2).to(device)  # Change to (batch, channels, height, width)
-    return {"image": image}
+    return image
 
 
 def main() -> None:  # noqa: PLR0915
@@ -191,6 +187,7 @@ def main() -> None:  # noqa: PLR0915
             sub_env_rng = np.random.default_rng(sub_env_seed)
             env = SmallIntrospectiveEnv(rng=sub_env_rng, size=7, locked=door_locked, render_mode="rgb_array", max_steps=360)
             env = FullyObsWrapper(env)
+            env = ImgObsWrapper(env)
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)
             env.observation_space.seed(sub_env_seed)
@@ -201,8 +198,9 @@ def main() -> None:  # noqa: PLR0915
     envs = [make_env(seed + i) for i in range(num_envs)]
     env = SubprocVecEnv(envs)
 
-    buffer = RolloutBuffer(horizon, num_envs, env.observation_space, env.action_space)
-    state_dim = env.observation_space["image"].shape[-1]
+    observation_shape = np.transpose(env.observation_space.sample(), (2, 0, 1)).shape
+    buffer = RolloutBuffer(horizon, num_envs, observation_shape, env.action_space)
+    state_dim = env.observation_space.shape[-1]
     policy = ActorCritic(state_dim, env.action_space.n).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
@@ -223,12 +221,12 @@ def main() -> None:  # noqa: PLR0915
                 image.save(f"frames/{global_step}.png")
 
             # Preprocess the next observation and store relevant data in the PPO agent's buffer
-            buffer.images[step] = next_obs["image"]
+            buffer.images[step] = next_obs
             buffer.is_terminals[step] = next_dones
 
             with torch.no_grad():
                 actions, log_probs, state_values, _ = policy(next_obs)
-                buffer.state_values[step] = state_values
+                buffer.state_values[step] = state_values.flatten()
             buffer.actions[step] = actions
             buffer.logprobs[step] = log_probs
 
@@ -246,7 +244,7 @@ def main() -> None:  # noqa: PLR0915
 
         # Calculate rewards and advantages using GAE
         with torch.no_grad():
-            _, _, next_value, _ = policy(next_obs)
+            next_value = policy.get_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(buffer.rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(horizon)):
@@ -263,12 +261,12 @@ def main() -> None:  # noqa: PLR0915
             returns = advantages + buffer.state_values
 
         # Flatten the buffer
-        b_returns = returns.reshape(-1).detach()
-        b_advantages = advantages.reshape(-1).detach()
-        b_actions = torch.flatten(buffer.actions, 0, 1).detach()
-        b_logprobs = torch.flatten(buffer.logprobs, 0, 1).detach()
-        b_images = torch.flatten(buffer.images, 0, 1).detach()
-        b_state_values = torch.flatten(buffer.state_values, 0, 1).detach()
+        b_images = buffer.images.reshape((-1, *observation_shape))
+        b_logprobs = buffer.logprobs.reshape(-1)
+        b_actions = buffer.actions.reshape((-1, *env.action_space.shape))
+        b_advantages = advantages.reshape(-1)
+        b_returns = returns.reshape(-1)
+        b_state_values = buffer.state_values.reshape(-1)
 
         b_inds = np.arange(batch_size)
         clipfracs = []
@@ -281,8 +279,8 @@ def main() -> None:  # noqa: PLR0915
             for i in range(0, batch_size, minibatch_size):
                 end = i + minibatch_size
                 mb_inds = b_inds[i:end]
-                mb_states = {"image": b_images[mb_inds]}
-                _, new_logprob, new_value, dist_entropy = policy(mb_states, b_actions.long()[mb_inds])
+                mb_images = b_images[mb_inds]
+                _, new_logprob, new_value, dist_entropy = policy(mb_images, b_actions.long()[mb_inds])
 
                 # policy gradient
                 log_ratio = new_logprob - b_logprobs[mb_inds].detach()
