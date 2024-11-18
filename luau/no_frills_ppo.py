@@ -6,7 +6,6 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-import torch.nn.functional as f
 from minigrid.wrappers import FullyObsWrapper
 from PIL import Image
 from stable_baselines3.common.vec_env import SubprocVecEnv
@@ -78,22 +77,40 @@ class RolloutBuffer:
 
 
 class ActorCritic(nn.Module):
-    """Actor-Critic class. Only discrete action spaces are supported... for now."""
+    """Actor-Critic class supporting discrete action spaces."""
 
     def __init__(self, state_dim: torch.tensor, action_dim: int):
         super().__init__()
-        self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1))
-        self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1))
-        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1))
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.actor_fc1 = self.layer_init(nn.Linear(576, 128))
-        self.actor_fc2 = self.layer_init(nn.Linear(128, action_dim), std=0.01)
 
-        self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1))
-        self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1))
-        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1))
-        self.critic_fc1 = self.layer_init(nn.Linear(576, 128))
-        self.critic_fc2 = self.layer_init(nn.Linear(128, 1), std=1.0)
+        # Actor network
+        self.actor_layers = nn.Sequential(
+            self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            nn.Flatten(),
+            self.layer_init(nn.Linear(576, 128)),
+            nn.ReLU(),
+            self.layer_init(nn.Linear(128, action_dim), std=0.01),
+        )
+
+        # Critic network
+        self.critic_layers = nn.Sequential(
+            self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1)),
+            nn.ReLU(),
+            nn.Flatten(),
+            self.layer_init(nn.Linear(576, 128)),
+            nn.ReLU(),
+            self.layer_init(nn.Linear(128, 1), std=1.0),
+        )
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
         """Initialize layer."""
@@ -101,47 +118,16 @@ class ActorCritic(nn.Module):
         nn.init.constant_(layer.bias, bias_const)
         return layer
 
-    def _actor_forward(self, image: torch.tensor) -> torch.tensor:
-        """Run common computations for the actor network."""
-        x = f.relu(self.actor_conv1(image))
-        x = self.pool(x)
-        x = f.relu(self.actor_conv2(x))
-        x = f.relu(self.actor_conv3(x))
-        x = x.reshape(x.size(0), -1)  # Flatten the tensor
-        x = f.relu(self.actor_fc1(x))
-        x = self.actor_fc2(x)
-        return x
-
-    def _critic_forward(self, image: torch.tensor) -> torch.tensor:
-        """Run common computations for the critic network."""
-        y = f.relu(self.critic_conv1(image))
-        y = self.pool(y)
-        y = f.relu(self.critic_conv2(y))
-        y = f.relu(self.critic_conv3(y))
-        y = y.reshape(y.size(0), -1)  # Flatten the tensor
-        y = f.relu(self.critic_fc1(y))
-        y = self.critic_fc2(y).squeeze(-1)
-        return y
-
-    def forward(self, state: dict) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
-        """Forward pass."""
+    def forward(self, state: dict, action: torch.tensor = None) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
+        """Forward pass. Optionally takes an action for evaluation."""
         image = state["image"]
-        logits = self._actor_forward(image)
+        logits = self.actor_layers(image)
         dist = Categorical(logits=logits)
-        action = dist.sample()
+        if action is None:
+            action = dist.sample()
         action_logprob = dist.log_prob(action)
-        state_values = self._critic_forward(image)
-        return action, action_logprob, state_values
-
-    def evaluate(self, states: dict, actions: torch.tensor) -> tuple[torch.tensor, torch.tensor, torch.tensor]:
-        """Evaluate the policy."""
-        images = states["image"]
-        logits = self._actor_forward(images)
-        dist = Categorical(logits=logits)
-        action_logprobs = dist.log_prob(actions)
-        dist_entropy = dist.entropy()
-        state_values = self._critic_forward(images)
-        return action_logprobs, state_values, dist_entropy
+        state_values = self.critic_layers(image).squeeze(-1)
+        return action, action_logprob, state_values, dist.entropy()
 
 
 def preprocess(x: dict) -> dict:
@@ -175,7 +161,7 @@ def main() -> None:  # noqa: PLR0915
     k_epochs = 4
     save_model_freq = 65
     run_num = 1
-    door_locked = True
+    door_locked = False
     save_frames = False
 
     # Initialize TensorBoard writer
@@ -241,7 +227,7 @@ def main() -> None:  # noqa: PLR0915
             buffer.is_terminals[step] = next_dones
 
             with torch.no_grad():
-                actions, log_probs, state_values = policy(next_obs)
+                actions, log_probs, state_values, _ = policy(next_obs)
                 buffer.state_values[step] = state_values
             buffer.actions[step] = actions
             buffer.logprobs[step] = log_probs
@@ -260,7 +246,7 @@ def main() -> None:  # noqa: PLR0915
 
         # Calculate rewards and advantages using GAE
         with torch.no_grad():
-            _, _, next_value = policy(next_obs)
+            _, _, next_value, _ = policy(next_obs)
             advantages = torch.zeros_like(buffer.rewards).to(device)
             lastgaelam = 0
             for t in reversed(range(horizon)):
@@ -296,7 +282,7 @@ def main() -> None:  # noqa: PLR0915
                 end = i + minibatch_size
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds]}
-                new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
+                _, new_logprob, new_value, dist_entropy = policy(mb_states, b_actions.long()[mb_inds])
 
                 # policy gradient
                 log_ratio = new_logprob - b_logprobs[mb_inds].detach()
@@ -325,7 +311,7 @@ def main() -> None:  # noqa: PLR0915
                 entropy_loss_student = dist_entropy.mean()
 
                 # final loss of clipped objective PPO
-                student_loss = pg_loss_student - 0.05 * entropy_loss_student + v_loss_student * 0.5  #
+                student_loss = pg_loss_student - 0.05 * entropy_loss_student + v_loss_student * 0.5
 
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
