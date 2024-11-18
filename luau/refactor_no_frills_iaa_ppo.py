@@ -10,7 +10,7 @@ import torch.nn.functional as f
 from minigrid.wrappers import FullyObsWrapper
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from torch import nn
-from torch.distributions import Bernoulli, Categorical
+from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
 from luau.iaa_env import SmallIntrospectiveEnv
@@ -81,12 +81,15 @@ class ActorCritic(nn.Module):
         super().__init__()
         self.actor_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1))
         self.actor_conv2 = self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1))
-        self.actor_fc1 = self.layer_init(nn.Linear(1152, 128))
+        self.actor_conv3 = self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1))
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.actor_fc1 = self.layer_init(nn.Linear(576, 128))
         self.actor_fc2 = self.layer_init(nn.Linear(128, action_dim), std=0.01)
 
         self.critic_conv1 = self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1))
         self.critic_conv2 = self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1))
-        self.critic_fc1 = self.layer_init(nn.Linear(1152, 128))
+        self.critic_conv3 = self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1))
+        self.critic_fc1 = self.layer_init(nn.Linear(576, 128))
         self.critic_fc2 = self.layer_init(nn.Linear(128, 1), std=1.0)
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
@@ -98,7 +101,9 @@ class ActorCritic(nn.Module):
     def _actor_forward(self, image: torch.tensor) -> torch.tensor:
         """Run common computations for the actor network."""
         x = f.relu(self.actor_conv1(image))
+        x = self.pool(x)
         x = f.relu(self.actor_conv2(x))
+        x = f.relu(self.actor_conv3(x))
         x = x.reshape(x.size(0), -1)  # Flatten the tensor
         x = f.relu(self.actor_fc1(x))
         x = self.actor_fc2(x)
@@ -107,7 +112,9 @@ class ActorCritic(nn.Module):
     def _critic_forward(self, image: torch.tensor) -> torch.tensor:
         """Run common computations for the critic network."""
         y = f.relu(self.critic_conv1(image))
+        y = self.pool(y)
         y = f.relu(self.critic_conv2(y))
+        y = f.relu(self.critic_conv3(y))
         y = y.reshape(y.size(0), -1)  # Flatten the tensor
         y = f.relu(self.critic_fc1(y))
         y = self.critic_fc2(y).squeeze(-1)
@@ -158,9 +165,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     batch_size = num_envs * horizon
     lr_actor = 0.0001
     max_training_timesteps = 500_000
-    introspection_decay = 0.999
     burn_in = 0
-    introspection_threshold = 0.9
+    introspection_threshold = 0.95
     gamma = 0.99
     gae_lambda = 0.8
     eps_clip = 0.2
@@ -212,7 +218,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
     # Initialize teacher model
     teacher_model_path = (
-        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-1-seed-22/SmallIntrospectiveEnv-Locked-False-run-1-seed-22.pth"
+        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-1-seed-50/SmallIntrospectiveEnv-Locked-False-run-1-seed-50.pth"
     )
     teacher_source_agent = ActorCritic(state_dim, env.action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
@@ -227,7 +233,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     ]
     # Flatten the list of parameter groups into a single iterable
     critic_params = [p for param_group in critic_params for p in param_group]
-    teacher_optimizer = torch.optim.Adam(critic_params, lr=0.001, eps=1e-5)
+    teacher_optimizer = torch.optim.Adam(critic_params, lr=0.0001, eps=1e-5)
 
     next_obs = env.reset()
     next_obs = preprocess(next_obs)
@@ -246,16 +252,13 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             with torch.no_grad():
                 # Introspection
                 h_t = torch.zeros(num_envs, dtype=torch.int64).to(device)
-                probability = introspection_decay ** max(0, global_step - burn_in)
-                p = Bernoulli(probability).sample([num_envs]).to(device)  # Bernoulli sampling for all envs
                 if global_step > burn_in:
-                    nth_obs = {"image": next_obs["image"]}  # Pass entire batch instead of individual observations
-                    _, _, teacher_source_vals = teacher_source_agent(nth_obs)
-                    _, _, teacher_target_vals = teacher_target_agent(nth_obs)
+                    _, _, teacher_source_vals = teacher_source_agent(next_obs)
+                    _, _, teacher_target_vals = teacher_target_agent(next_obs)
                     # Calculate absolute differences for introspection across the batch
                     abs_diff = torch.abs(teacher_target_vals - teacher_source_vals)
                     # Update h_t based on the introspection threshold
-                    h_t = (abs_diff <= introspection_threshold).int() * (p == 1).int()
+                    h_t = (abs_diff <= introspection_threshold).int()
                 advice_counter += h_t
                 buffer.indicators[step] = h_t
 
@@ -361,7 +364,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds]}
                 mb_rho_s = b_student_correction[mb_inds]
-                mb_rho_s = mb_rho_s / (mb_rho_s.mean() + 1e-8)  # Normalizing to have a mean of 1
                 new_logprob, new_value, dist_entropy = policy.evaluate(mb_states, b_actions.long()[mb_inds])
 
                 mb_advantages = b_advantages[mb_inds]
@@ -417,7 +419,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds]}
                 mb_rho_t = b_teacher_correction[mb_inds]
-                mb_rho_t = mb_rho_t / (mb_rho_t.mean() + 1e-8)  # Normalizing to have a mean of 1
                 _, teacher_new_value, _ = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
 
                 # value function loss + clipping
