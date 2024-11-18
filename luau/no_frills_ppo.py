@@ -60,7 +60,7 @@ class RolloutBuffer:
         permuted_sample = np.transpose(sample, (2, 0, 1))
         self.img_shape = permuted_sample.shape
 
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -69,7 +69,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape)).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -166,7 +166,7 @@ def main() -> None:  # noqa: PLR0915
     horizon = 256
     num_envs = 6
     batch_size = num_envs * horizon
-    lr_actor = 0.0001
+    lr_actor = 0.00005
     max_training_timesteps = 500_000
     gamma = 0.99
     gae_lambda = 0.8
@@ -175,7 +175,7 @@ def main() -> None:  # noqa: PLR0915
     k_epochs = 4
     save_model_freq = 65
     run_num = 1
-    door_locked = False
+    door_locked = True
     save_frames = False
 
     # Initialize TensorBoard writer
@@ -203,7 +203,7 @@ def main() -> None:  # noqa: PLR0915
 
         def _init() -> SmallIntrospectiveEnv:
             sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=6, locked=door_locked, render_mode="rgb_array", max_steps=360)
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=7, locked=door_locked, render_mode="rgb_array", max_steps=360)
             env = FullyObsWrapper(env)
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)

@@ -55,7 +55,7 @@ class RolloutBuffer:
         permuted_sample = np.transpose(sample, (2, 0, 1))
         self.img_shape = permuted_sample.shape
 
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape), dtype=torch.int64).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -65,7 +65,7 @@ class RolloutBuffer:
 
     def clear(self) -> None:
         """Clear the buffer."""
-        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 6, 6)).to(device)
+        self.images = torch.zeros(self.horizon, self.num_envs, *(3, 7, 7)).to(device)
         self.actions = torch.zeros((self.horizon, self.num_envs, *self.action_space.shape), dtype=torch.int64).to(device)
         self.logprobs = torch.zeros((self.horizon, self.num_envs)).to(device)
         self.rewards = torch.zeros((self.horizon, self.num_envs)).to(device)
@@ -159,7 +159,7 @@ def preprocess(x: dict) -> dict:
 def main() -> None:  # noqa: C901, PLR0915, PLR0912
     """Run main function."""
     # Initialize the PPO agent
-    seed = 22
+    seed = 50
     horizon = 128
     num_envs = 5
     batch_size = num_envs * horizon
@@ -199,7 +199,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
         def _init() -> SmallIntrospectiveEnv:
             sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=6, locked=door_locked, render_mode="rgb_array", max_steps=360)
+            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=7, locked=door_locked, render_mode="rgb_array", max_steps=360)
             env = FullyObsWrapper(env)
             env.reset(seed=sub_env_seed)
             env.action_space.seed(sub_env_seed)
@@ -233,7 +233,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     ]
     # Flatten the list of parameter groups into a single iterable
     critic_params = [p for param_group in critic_params for p in param_group]
-    teacher_optimizer = torch.optim.Adam(critic_params, lr=0.0001, eps=1e-5)
+    teacher_optimizer = torch.optim.Adam(critic_params, lr=lr_actor, eps=1e-5)
 
     next_obs = env.reset()
     next_obs = preprocess(next_obs)
@@ -419,7 +419,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_inds = b_inds[i:end]
                 mb_states = {"image": b_images[mb_inds]}
                 mb_rho_t = b_teacher_correction[mb_inds]
-                _, teacher_new_value, _ = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
+                _, teacher_new_value, teacher_dist_entropy = teacher_target_agent.evaluate(mb_states, b_actions.long()[mb_inds])
 
                 # value function loss + clipping
                 teacher_new_value = teacher_new_value.view(-1)
@@ -429,8 +429,10 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss_teacher = (0.5 * v_loss_max).mean()
 
+                entropy_loss_teacher = teacher_dist_entropy.mean()
+
                 # Apply policy correction factor as a weight on the total value loss
-                weighted_v_loss_teacher = v_loss_teacher * mb_rho_t.mean()
+                weighted_v_loss_teacher = (v_loss_teacher - 0.01 * entropy_loss_teacher) * mb_rho_t.mean()
                 teacher_loss = weighted_v_loss_teacher
 
                 teacher_optimizer.zero_grad()  # take gradient step
