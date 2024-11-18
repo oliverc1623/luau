@@ -141,23 +141,32 @@ def preprocess(image: np.array) -> dict:
     return image
 
 
+def largest_divisor(n: int) -> int:
+    """Find the largest divisor of batch_size that is less than or equal to horizon."""
+    for i in range(n // 2, 0, -1):
+        if n % i == 0:
+            return i
+    return 1  # If no divisors found, return 1
+
+
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
     seed = 50
-    horizon = 256
+    horizon = 128
     num_envs = 6
     batch_size = num_envs * horizon
     lr_actor = 0.00005
     max_training_timesteps = 500_000
+    num_updates = max_training_timesteps // (horizon * num_envs)
     gamma = 0.99
     gae_lambda = 0.8
     eps_clip = 0.2
     minibatch_size = 256
     k_epochs = 4
-    save_model_freq = 65
+    save_model_freq = largest_divisor(num_updates)
     run_num = 1
-    door_locked = False
+    door_locked = True
     save_frames = False
 
     # Initialize TensorBoard writer
@@ -210,7 +219,6 @@ def main() -> None:  # noqa: PLR0915
     global_step = 0
 
     # Training loop
-    num_updates = max_training_timesteps // (horizon * num_envs)
     for update in range(1, num_updates + 1):
         for step in range(horizon):
             if save_frames:
