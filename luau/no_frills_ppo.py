@@ -154,16 +154,16 @@ def main() -> None:  # noqa: PLR0915
     # Initialize the PPO agent
     seed = 50
     horizon = 128
-    num_envs = 6
+    num_envs = 2
     batch_size = num_envs * horizon
-    lr_actor = 0.00005
+    lr_actor = 0.0005
     max_training_timesteps = 500_000
     num_updates = max_training_timesteps // (horizon * num_envs)
     gamma = 0.99
     gae_lambda = 0.8
     eps_clip = 0.2
-    minibatch_size = 256
     k_epochs = 4
+    minibatch_size = batch_size // k_epochs
     save_model_freq = largest_divisor(num_updates)
     run_num = 1
     door_locked = True

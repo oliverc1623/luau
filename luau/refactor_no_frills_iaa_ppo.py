@@ -151,16 +151,16 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     # Initialize the PPO agent
     seed = 50
     horizon = 128
-    num_envs = 6
+    num_envs = 2
     batch_size = num_envs * horizon
-    lr_actor = 0.00005
+    lr_actor = 0.0005
     max_training_timesteps = 500_000
     num_updates = max_training_timesteps // (horizon * num_envs)
     gamma = 0.99
     gae_lambda = 0.8
     eps_clip = 0.2
-    minibatch_size = 256
     k_epochs = 4
+    minibatch_size = batch_size // k_epochs
     save_model_freq = largest_divisor(num_updates)
     run_num = 1
     door_locked = True
@@ -310,8 +310,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             returns = advantages + buffer.state_values
 
         # Initialize corrections
-        student_correction = torch.ones((horizon, num_envs), device=device)
-        teacher_correction = torch.ones((horizon, num_envs), device=device)
+        student_correction = torch.ones((horizon, num_envs)).to(device)
+        teacher_correction = torch.ones((horizon, num_envs)).to(device)
 
         with torch.no_grad():
             # Loop through the horizon only
@@ -323,8 +323,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
                 # Evaluate student and teacher log probabilities as a batch
                 _, student_logprobs, _, _ = policy(states, a.long())  # Assuming batched input is supported
-                _, teacher_logprobs, _, _ = teacher_source_agent(states, a.long())  # Assuming batched input is supported
-
+                _, teacher_logprobs, _, _ = teacher_source_agent(states, a.long())  # Assuming batched input is supported)
                 # Calculate corrections using vectorized operations
                 teacher_correction[s] = torch.where(h == 1, torch.ones_like(teacher_correction[s]), torch.exp(teacher_logprobs - student_logprobs))
                 student_correction[s] = torch.where(h == 1, torch.exp(student_logprobs - teacher_logprobs), torch.ones_like(student_correction[s]))
@@ -369,6 +368,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 surr1 = -mb_advantages * ratios
                 surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
                 pg_loss_student = torch.max(surr1, surr2).mean()
+                pg_loss_student = torch.mean(pg_loss_student * mb_rho_s)  # Apply policy correction factor as a weight on the total policy loss
 
                 # value function loss + clipping
                 new_value = new_value.view(-1)
@@ -376,12 +376,11 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_student = (0.5 * v_loss_max).mean()
+                v_loss_student = (0.5 * v_loss_max * mb_rho_s).mean()
 
                 entropy_loss_student = dist_entropy.mean()
 
                 student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
-                student_loss = (student_loss * mb_rho_s).mean()
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
                 optimizer.step()
@@ -405,7 +404,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 mb_inds = b_inds[i:end]
                 mb_states = b_images[mb_inds]
                 mb_rho_t = b_teacher_correction[mb_inds]
-                _, _, teacher_new_value, teacher_dist_entropy = teacher_target_agent(mb_states, b_actions.long()[mb_inds])
+                _, _, teacher_new_value, _ = teacher_target_agent(mb_states, b_actions.long()[mb_inds])
 
                 # value function loss + clipping
                 teacher_new_value = teacher_new_value.view(-1)
@@ -415,8 +414,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                 v_loss_teacher = (0.5 * v_loss_max).mean()
 
-                # Apply policy correction factor as a weight on the total value loss
-                weighted_v_loss_teacher = (0.5 * v_loss_teacher * mb_rho_t).mean()
+                weighted_v_loss_teacher = torch.mean(v_loss_teacher * mb_rho_t)
 
                 teacher_optimizer.zero_grad()  # take gradient step
                 weighted_v_loss_teacher.backward()
