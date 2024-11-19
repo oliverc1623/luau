@@ -121,7 +121,7 @@ class SmallIntrospectiveEnv(MiniGridEnv):
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
-            max_steps = 4 * size**2
+            max_steps = 10 * size**2
 
         super().__init__(
             mission_space=mission_space,
@@ -147,7 +147,7 @@ class SmallIntrospectiveEnv(MiniGridEnv):
         self.put_obj(Goal(), width - 2, height - 2)
 
         # Create a vertical splitting wall
-        splitIdx = self._rand_int(2, width - 2)  # noqa: N806
+        splitIdx = self._rand_int(3, width - 2)  # noqa: N806
         self.grid.vert_wall(splitIdx, 0)
 
         # Place the agent at a random position and orientation
