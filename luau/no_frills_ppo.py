@@ -13,8 +13,6 @@ from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import SmallIntrospectiveEnv
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -152,12 +150,12 @@ def largest_divisor(n: int) -> int:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 50
+    seed = 17
     horizon = 128
     num_envs = 2
     batch_size = num_envs * horizon
     lr_actor = 0.0005
-    max_training_timesteps = 500_000
+    max_training_timesteps = 100_000
     num_updates = max_training_timesteps // (horizon * num_envs)
     gamma = 0.99
     gae_lambda = 0.8
@@ -166,16 +164,16 @@ def main() -> None:  # noqa: PLR0915
     minibatch_size = batch_size // k_epochs
     save_model_freq = largest_divisor(num_updates)
     run_num = 1
-    door_locked = True
     save_frames = False
+    env_name = "MiniGrid-LavaGapS6-v0"
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
-    model_dir = Path(f"../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/{env_name}/run-{run_num}-seed-{seed}")
+    model_dir = Path(f"../../pvcvolume/models/PPO/{env_name}/run-{run_num}-seed-{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked-{door_locked}-run-{run_num}-seed-{seed}.pth"
+    checkpoint_path = f"{model_dir}/{env_name}-run-{run_num}-seed-{seed}.pth"
     print(f"Logging to: {log_dir}")
     print(f"Saving to: {checkpoint_path}")
 
@@ -189,12 +187,11 @@ def main() -> None:  # noqa: PLR0915
 
     rng = np.random.default_rng(seed)
 
-    def make_env(sub_env_seed: int) -> SmallIntrospectiveEnv:
+    def make_env(sub_env_seed: int) -> gym.Env:
         """Create the environment."""
 
-        def _init() -> SmallIntrospectiveEnv:
-            sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=7, locked=door_locked, render_mode="rgb_array", max_steps=360)
+        def _init() -> gym.Env:
+            env = gym.make(env_name, render_mode="rgb_array")
             env = FullyObsWrapper(env)
             env = ImgObsWrapper(env)
             env.reset(seed=sub_env_seed)

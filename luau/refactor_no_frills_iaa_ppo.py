@@ -7,12 +7,11 @@ import gymnasium as gym
 import numpy as np
 import torch
 from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper
+from PIL import Image
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from torch import nn
-from torch.distributions import Categorical
+from torch.distributions import Bernoulli, Categorical
 from torch.utils.tensorboard import SummaryWriter
-
-from luau.iaa_env import SmallIntrospectiveEnv
 
 
 # Configure logging
@@ -149,12 +148,12 @@ def largest_divisor(n: int) -> int:
 def main() -> None:  # noqa: C901, PLR0915, PLR0912
     """Run main function."""
     # Initialize the PPO agent
-    seed = 50
+    seed = 17
     horizon = 128
     num_envs = 2
     batch_size = num_envs * horizon
     lr_actor = 0.0005
-    max_training_timesteps = 500_000
+    max_training_timesteps = 100_000
     num_updates = max_training_timesteps // (horizon * num_envs)
     gamma = 0.99
     gae_lambda = 0.8
@@ -163,18 +162,20 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     minibatch_size = batch_size // k_epochs
     save_model_freq = largest_divisor(num_updates)
     run_num = 1
-    door_locked = True
+    save_frames = False
     # Introspection parameters
-    introspection_threshold = 0.9
-    burn_in = 25_000
+    introspection_threshold = 0.75
+    env_name = "MiniGrid-LavaGapS6-v0"
+    introspection_decay = 0.9999
+    burn_in = 0
 
     # Initialize TensorBoard writer
-    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
-    model_dir = Path(f"../../pvcvolume/models/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
+    log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/{env_name}/run-{run_num}-seed-{seed}")
+    model_dir = Path(f"../../pvcvolume/models/IAAPPO/{env_name}/run-{run_num}-seed-{seed}")
     log_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(log_dir))
-    checkpoint_path = f"{model_dir}/SmallIntrospectiveEnv-Locked-{door_locked}-{run_num}-seed-{seed}.pth"
+    checkpoint_path = f"{model_dir}/{env_name}-{run_num}-seed-{seed}.pth"
 
     random.seed(seed)
     torch.manual_seed(seed)
@@ -186,12 +187,11 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
     rng = np.random.default_rng(seed)
 
-    def make_env(sub_env_seed: int) -> SmallIntrospectiveEnv:
+    def make_env(sub_env_seed: int) -> gym.Env:
         """Create the environment."""
 
-        def _init() -> SmallIntrospectiveEnv:
-            sub_env_rng = np.random.default_rng(sub_env_seed)
-            env = SmallIntrospectiveEnv(rng=sub_env_rng, size=7, locked=door_locked, render_mode="rgb_array", max_steps=360)
+        def _init() -> gym.Env:
+            env = gym.make(env_name, render_mode="rgb_array")
             env = FullyObsWrapper(env)
             env = ImgObsWrapper(env)
             env.reset(seed=sub_env_seed)
@@ -211,9 +211,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr_actor, eps=1e-5)
 
     # Initialize teacher model
-    teacher_model_path = (
-        "../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-1-seed-50/SmallIntrospectiveEnv-Locked-False-run-1-seed-50.pth"
-    )
+    teacher_model_path = "../../pvcvolume/models/PPO/Empty6x6/run-1-seed-17/Empty6x6-run-1-seed-17.pth"
     teacher_source_agent = ActorCritic(state_dim, env.action_space.n).to(device)
     teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
 
@@ -231,6 +229,11 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     # Training loop
     for update in range(1, num_updates + 1):
         for step in range(horizon):
+            if save_frames:
+                img1 = env.render()
+                image = Image.fromarray(img1)
+                image.save(f"frames/frame_{global_step:04d}.png")
+
             # Preprocess the next observation and store relevant data in the PPO agent's buffer
             buffer.images[step] = next_obs
             buffer.is_terminals[step] = next_dones
@@ -238,6 +241,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
             with torch.no_grad():
                 # Introspection
                 h_t = torch.zeros(num_envs).to(device)
+                probability = introspection_decay ** max(0, global_step - burn_in)
+                p = Bernoulli(probability).sample([num_envs]).to(device)
                 if global_step > burn_in:
                     teacher_source_vals = teacher_source_agent.get_value(next_obs).flatten()
                     teacher_target_vals = teacher_target_agent.get_value(next_obs).flatten()
@@ -246,7 +251,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                     writer.add_scalar("debugging/abs_diff0", abs_diff[0].item(), global_step)
                     writer.add_scalar("debugging/abs_diff1", abs_diff[1].item(), global_step)
                     # Update h_t based on the introspection threshold
-                    h_t = (abs_diff <= introspection_threshold).int()
+                    h_t = (abs_diff <= introspection_threshold).int() * (p == 1).int()
                 advice_counter += h_t
                 buffer.indicators[step] = h_t
 
