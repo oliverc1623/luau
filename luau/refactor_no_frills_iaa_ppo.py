@@ -166,7 +166,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     door_locked = True
     # Introspection parameters
     introspection_threshold = 0.9
-    burn_in = 0
+    burn_in = 25_000
 
     # Initialize TensorBoard writer
     log_dir = Path(f"../../pvcvolume/PPO_logs/IAAPPO/SmallIntrospectiveEnv-Locked-{door_locked}/run-{run_num}-seed-{seed}")
@@ -225,6 +225,7 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
     next_obs = preprocess(next_obs)
     next_dones = torch.zeros(num_envs).to(device)
     advice_counter = torch.zeros(num_envs).to(device)
+    episode_length = torch.zeros(num_envs).to(device)
     global_step = 1
 
     # Training loop
@@ -242,6 +243,8 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                     teacher_target_vals = teacher_target_agent.get_value(next_obs).flatten()
                     # Calculate absolute differences for introspection across the batch
                     abs_diff = torch.abs(teacher_target_vals - teacher_source_vals)
+                    writer.add_scalar("debugging/abs_diff0", abs_diff[0].item(), global_step)
+                    writer.add_scalar("debugging/abs_diff1", abs_diff[1].item(), global_step)
                     # Update h_t based on the introspection threshold
                     h_t = (abs_diff <= introspection_threshold).int()
                 advice_counter += h_t
@@ -278,18 +281,22 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
 
             # Log the rewards and advice issued
             global_step += 1 * num_envs
+            episode_length += 1
             if next_dones.any():
                 done_indx = torch.argmax(next_dones.int())
                 writer.add_scalar("charts/Episodic Reward", rewards[done_indx], global_step)
                 writer.add_scalar("charts/Advice Issued", advice_counter[done_indx], global_step)
+                writer.add_scalar("charts/Episodic Length", episode_length[done_indx], global_step)
                 logging.info(
-                    "i_update: %s, \t Timestep: %s, \t Reward: %s, \t Advice: %s",
+                    "i_update: %s, \t Timestep: %s, \t Reward: %s, \t Advice: %s, Length: %s",
                     update,
                     global_step,
                     rewards[done_indx],
                     advice_counter[done_indx].item(),
+                    episode_length[done_indx].item(),
                 )
                 advice_counter[next_dones] = 0
+                episode_length[next_dones] = 0
 
         # Calculate rewards and advantages using GAE
         with torch.no_grad():
@@ -368,7 +375,6 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 surr1 = -mb_advantages * ratios
                 surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
                 pg_loss_student = torch.max(surr1, surr2).mean()
-                pg_loss_student = torch.mean(pg_loss_student * mb_rho_s)  # Apply policy correction factor as a weight on the total policy loss
 
                 # value function loss + clipping
                 new_value = new_value.view(-1)
@@ -376,11 +382,12 @@ def main() -> None:  # noqa: C901, PLR0915, PLR0912
                 v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_student = (0.5 * v_loss_max * mb_rho_s).mean()
+                v_loss_student = (0.5 * v_loss_max).mean()
 
                 entropy_loss_student = dist_entropy.mean()
 
                 student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5  # final loss of clipped objective PPO
+                student_loss = torch.mean(student_loss * mb_rho_s)
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
                 optimizer.step()
