@@ -154,7 +154,7 @@ def main() -> None:  # noqa: PLR0915
     horizon = 128
     num_envs = 2
     batch_size = num_envs * horizon
-    lr_actor = 0.0005
+    lr_actor = 0.0001
     max_training_timesteps = 100_000
     num_updates = max_training_timesteps // (horizon * num_envs)
     gamma = 0.99
@@ -163,7 +163,7 @@ def main() -> None:  # noqa: PLR0915
     k_epochs = 4
     minibatch_size = batch_size // k_epochs
     save_model_freq = largest_divisor(num_updates)
-    run_num = 1
+    run_num = 2
     save_frames = False
     env_name = "MiniGrid-LavaGapS6-v0"
 
@@ -203,6 +203,7 @@ def main() -> None:  # noqa: PLR0915
 
     envs = [make_env(seed + i) for i in range(num_envs)]
     env = SubprocVecEnv(envs)
+    env.seed(seed=seed)
 
     observation_shape = np.transpose(env.observation_space.sample(), (2, 0, 1)).shape
     buffer = RolloutBuffer(horizon, num_envs, observation_shape, env.action_space)
