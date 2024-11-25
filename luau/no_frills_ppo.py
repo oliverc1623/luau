@@ -13,6 +13,8 @@ from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
+from luau.iaa_env import IntrospectiveEnv
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -154,8 +156,8 @@ def main() -> None:  # noqa: PLR0915
     horizon = 128
     num_envs = 2
     batch_size = num_envs * horizon
-    lr_actor = 0.00001
-    max_training_timesteps = 100_000
+    lr_actor = 0.0005
+    max_training_timesteps = 500_000
     num_updates = max_training_timesteps // (horizon * num_envs)
     gamma = 0.99
     gae_lambda = 0.8
@@ -163,7 +165,7 @@ def main() -> None:  # noqa: PLR0915
     k_epochs = 4
     minibatch_size = batch_size // k_epochs
     save_model_freq = largest_divisor(num_updates)
-    run_num = 3
+    run_num = 1
     save_frames = False
     env_name = "MiniGrid-LavaGapS6-v0"
 
@@ -187,16 +189,13 @@ def main() -> None:  # noqa: PLR0915
 
     rng = np.random.default_rng(seed)
 
-    def make_env(sub_env_seed: int) -> gym.Env:
+    def make_env() -> gym.Env:
         """Create the environment."""
 
         def _init() -> gym.Env:
-            env = gym.make(env_name, render_mode="rgb_array")
+            env = IntrospectiveEnv(size=9, locked=False, render_mode="rgb_array")
             env = FullyObsWrapper(env)
             env = ImgObsWrapper(env)
-            env.reset(seed=sub_env_seed)
-            env.action_space.seed(sub_env_seed)
-            env.observation_space.seed(sub_env_seed)
             return env
 
         return _init

@@ -61,11 +61,13 @@ class IntrospectiveEnv(MiniGridEnv):
             self.put_obj(Door("red", is_locked=True), 6, split_indx)
             self.place_obj(obj=Key("red"), top=(0, 0), size=(8, split_indx))
         else:
-            self.grid.vert_wall(split_indx, 0)
-            self.grid.horz_wall(0, split_indx)
-            self.put_obj(Door("blue", is_locked=False), split_indx, 2)
-            self.put_obj(Door("blue", is_locked=False), split_indx, 6)
-            self.put_obj(Door("blue", is_locked=False), 6, split_indx)
+            self.grid.vert_wall(split_indx, 0, length=2)
+            self.grid.vert_wall(split_indx, 3, length=2)
+            self.grid.vert_wall(split_indx, 4, length=2)
+            self.grid.vert_wall(split_indx, 7, length=2)
+            self.grid.horz_wall(4, split_indx, length=2)
+            self.grid.horz_wall(0, split_indx, length=6)
+            self.grid.horz_wall(7, split_indx, length=2)
         self.place_agent(top=(0, 0), size=(8, 4))
         self.place_obj(Goal(), top=(0, 4), size=(8, 4))
 
