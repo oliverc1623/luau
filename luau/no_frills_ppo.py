@@ -13,7 +13,7 @@ from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import IntrospectiveEnv
+from luau.iaa_env import MultiRoomGrid
 
 
 # Configure logging
@@ -80,32 +80,32 @@ class ActorCritic(nn.Module):
 
         # Actor network
         self.actor = nn.Sequential(
-            self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1)),
+            self.layer_init(nn.Conv2d(state_dim, 16, 2)),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1)),
+            nn.MaxPool2d(kernel_size=2),
+            self.layer_init(nn.Conv2d(16, 32, 2)),
             nn.ReLU(),
-            self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1)),
+            self.layer_init(nn.Conv2d(32, 64, 2)),
             nn.ReLU(),
             nn.Flatten(),
-            self.layer_init(nn.Linear(576, 128)),
+            self.layer_init(nn.Linear(256, 512)),
             nn.ReLU(),
-            self.layer_init(nn.Linear(128, action_dim), std=0.01),
+            self.layer_init(nn.Linear(512, action_dim), std=0.01),
         )
 
         # Critic network
         self.critic = nn.Sequential(
-            self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1)),
+            self.layer_init(nn.Conv2d(state_dim, 16, 2)),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1)),
+            nn.MaxPool2d(kernel_size=2),
+            self.layer_init(nn.Conv2d(16, 32, 2)),
             nn.ReLU(),
-            self.layer_init(nn.Conv2d(32, 64, 3, stride=1, padding=1)),
+            self.layer_init(nn.Conv2d(32, 64, 2)),
             nn.ReLU(),
             nn.Flatten(),
-            self.layer_init(nn.Linear(576, 128)),
+            self.layer_init(nn.Linear(256, 512)),
             nn.ReLU(),
-            self.layer_init(nn.Linear(128, 1), std=1.0),
+            self.layer_init(nn.Linear(512, 1), std=1.0),
         )
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
@@ -154,7 +154,7 @@ def main() -> None:  # noqa: PLR0915
     # Initialize the PPO agent
     seed = 17
     horizon = 128
-    num_envs = 2
+    num_envs = 5
     batch_size = num_envs * horizon
     lr_actor = 0.0005
     max_training_timesteps = 500_000
@@ -167,7 +167,7 @@ def main() -> None:  # noqa: PLR0915
     save_model_freq = largest_divisor(num_updates)
     run_num = 1
     save_frames = False
-    env_name = "MiniGrid-LavaGapS6-v0"
+    env_name = "IntrospectiveEnv-Locked-False"
 
     # Initialize TensorBoard writer
     log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/{env_name}/run-{run_num}-seed-{seed}")
@@ -193,14 +193,15 @@ def main() -> None:  # noqa: PLR0915
         """Create the environment."""
 
         def _init() -> gym.Env:
-            env = IntrospectiveEnv(size=9, locked=False, render_mode="rgb_array")
+            config = [["wwow", "owwo"], ["wwow", "ooww"]]
+            env = MultiRoomGrid(config=config, start_rooms=[[0, 0], [0, 1]], goal_rooms=[[1, 0], [1, 1]], render_mode="rgb_array")
             env = FullyObsWrapper(env)
             env = ImgObsWrapper(env)
             return env
 
         return _init
 
-    envs = [make_env(seed + i) for i in range(num_envs)]
+    envs = [make_env() for _ in range(num_envs)]
     env = SubprocVecEnv(envs)
     env.seed(seed=seed)
 
@@ -219,11 +220,9 @@ def main() -> None:  # noqa: PLR0915
     for update in range(1, num_updates + 1):
         for step in range(horizon):
             if save_frames:
-                img1, img2, img3, img4, img5 = env.render()
-                concatenated_horizontally = np.concatenate((img1, img2, img3, img4, img5), axis=1)  # Along width
-                array = concatenated_horizontally.astype(np.uint8)
-                image = Image.fromarray(array)
-                image.save(f"frames/{global_step}.png")
+                img = env.render()
+                image = Image.fromarray(img)
+                image.save(f"frames/frame_{global_step}.png")
 
             # Preprocess the next observation and store relevant data in the PPO agent's buffer
             buffer.images[step] = next_obs
@@ -309,12 +308,12 @@ def main() -> None:  # noqa: PLR0915
                 v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_student = 0.5 * v_loss_max.mean()
+                v_loss_student = v_loss_max.mean()
 
                 entropy_loss_student = dist_entropy.mean()
 
                 # final loss of clipped objective PPO
-                student_loss = pg_loss_student - 0.05 * entropy_loss_student + v_loss_student * 0.5
+                student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5
 
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
