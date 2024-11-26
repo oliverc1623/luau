@@ -24,12 +24,7 @@ root_path = Path(__file__).resolve().parent.parent
 
 # %%
 RGB_CHANNEL = 3
-KL_THRESHOLD = 0.01
-
-OBJECT_IDX_EMPTY = 1
-COLOR_IDX_EMPTY = 5  # Or another value if different in your environment
-STATE_EMPTY = 0
-
+KL_THRESHOLD = 0.02
 ################################## set device ##################################
 print("============================================================================================")
 # set device to cpu, mps, or cuda
@@ -146,10 +141,10 @@ def largest_divisor(n: int) -> int:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 11
+    seed = 47
     horizon = 128
     num_envs = 10
-    batch_size = num_envs * horizon
+    batch_size = 256  #  num_envs * horizon
     lr_actor = 0.0005
     max_training_timesteps = 500_000
     num_updates = max_training_timesteps // (horizon * num_envs)
@@ -188,7 +183,7 @@ def main() -> None:  # noqa: PLR0915
         """Create the environment."""
 
         def _init() -> gym.Env:
-            env = IntrospectiveEnv(locked=locked, max_steps=972, render_mode="rgb_array")
+            env = IntrospectiveEnv(locked=locked, max_steps=810, render_mode="rgb_array")
             env = FullyObsWrapper(env)
             env = ImgObsWrapper(env)
             return env
@@ -281,33 +276,30 @@ def main() -> None:  # noqa: PLR0915
                 _, new_logprob, new_value, dist_entropy = policy(mb_images, b_actions.long()[mb_inds])
 
                 # policy gradient
-                log_ratio = new_logprob - b_logprobs[mb_inds].detach()
+                log_ratio = new_logprob - b_logprobs[mb_inds]
                 ratios = torch.exp(log_ratio)  # Finding the ratio (pi_theta / pi_theta__old)
+
+                mb_advantages = b_advantages[mb_inds]
+                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                surr1 = mb_advantages * ratios
+                surr2 = mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
+                pg_loss_student = -torch.min(surr1, surr2).mean()
+
+                # value function loss + clipping
+                new_value = new_value.view(-1)
+                v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
+                value_loss = nn.functional.mse_loss(v_clipped, b_returns[mb_inds])
+
+                entropy_loss_student = torch.mean(dist_entropy)
+
+                # final loss of clipped objective PPO
+                student_loss = pg_loss_student - 0.01 * entropy_loss_student + 0.5 * value_loss
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-log_ratio).mean()
                     approx_kl = ((ratios - 1) - log_ratio).mean()
                     clipfracs += [((ratios - 1.0).abs() > eps_clip).float().mean().item()]
-
-                mb_advantages = b_advantages[mb_inds]
-                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-                surr1 = -mb_advantages * ratios
-                surr2 = -mb_advantages * torch.clamp(ratios, 1 - eps_clip, 1 + eps_clip)
-                pg_loss_student = torch.max(surr1, surr2).mean()
-
-                # value function loss + clipping
-                new_value = new_value.view(-1)
-                v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
-                v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
-                v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_student = 0.5 * v_loss_max.mean()
-
-                entropy_loss_student = dist_entropy.mean()
-
-                # final loss of clipped objective PPO
-                student_loss = pg_loss_student - 0.05 * entropy_loss_student + v_loss_student * 0.5
 
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
@@ -319,7 +311,7 @@ def main() -> None:  # noqa: PLR0915
         # log debug variables
         with torch.no_grad():
             writer.add_scalar("debugging/policy_loss", pg_loss_student.item(), global_step)
-            writer.add_scalar("debugging/value_loss", v_loss_student.item(), global_step)
+            writer.add_scalar("debugging/value_loss", value_loss.item(), global_step)
             writer.add_scalar("debugging/entropy_loss", entropy_loss_student.item(), global_step)
             writer.add_scalar("debugging/old_approx_kl", old_approx_kl.item(), global_step)
             writer.add_scalar("debugging/approx_kl", approx_kl.item(), global_step)
