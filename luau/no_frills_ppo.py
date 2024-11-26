@@ -13,7 +13,7 @@ from torch import nn
 from torch.distributions import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import MultiRoomGrid
+from luau.iaa_env import IntrospectiveEnv
 
 
 # Configure logging
@@ -80,32 +80,26 @@ class ActorCritic(nn.Module):
 
         # Actor network
         self.actor = nn.Sequential(
-            self.layer_init(nn.Conv2d(state_dim, 16, 2)),
+            self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1)),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
-            self.layer_init(nn.Conv2d(16, 32, 2)),
-            nn.ReLU(),
-            self.layer_init(nn.Conv2d(32, 64, 2)),
+            self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1)),
             nn.ReLU(),
             nn.Flatten(),
-            self.layer_init(nn.Linear(256, 512)),
+            self.layer_init(nn.Linear(32 * 9 * 9, 128)),
             nn.ReLU(),
-            self.layer_init(nn.Linear(512, action_dim), std=0.01),
+            self.layer_init(nn.Linear(128, action_dim), std=0.01),
         )
 
         # Critic network
         self.critic = nn.Sequential(
-            self.layer_init(nn.Conv2d(state_dim, 16, 2)),
+            self.layer_init(nn.Conv2d(state_dim, 16, 3, stride=1, padding=1)),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
-            self.layer_init(nn.Conv2d(16, 32, 2)),
-            nn.ReLU(),
-            self.layer_init(nn.Conv2d(32, 64, 2)),
+            self.layer_init(nn.Conv2d(16, 32, 3, stride=1, padding=1)),
             nn.ReLU(),
             nn.Flatten(),
-            self.layer_init(nn.Linear(256, 512)),
+            self.layer_init(nn.Linear(32 * 9 * 9, 128)),
             nn.ReLU(),
-            self.layer_init(nn.Linear(512, 1), std=1.0),
+            self.layer_init(nn.Linear(128, 1), std=1.0),
         )
 
     def layer_init(self, layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.0) -> nn.Module:
@@ -152,7 +146,7 @@ def largest_divisor(n: int) -> int:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 1
+    seed = 11
     horizon = 128
     num_envs = 10
     batch_size = num_envs * horizon
@@ -167,7 +161,8 @@ def main() -> None:  # noqa: PLR0915
     save_model_freq = largest_divisor(num_updates)
     run_num = 1
     save_frames = False
-    env_name = "IntrospectiveEnv-Locked-False"
+    locked = True
+    env_name = f"IntrospectiveEnv-Locked-{locked}"
 
     # Initialize TensorBoard writer
     log_dir = Path(f"../../pvcvolume/PPO_logs/PPO/{env_name}/run-{run_num}-seed-{seed}")
@@ -193,10 +188,7 @@ def main() -> None:  # noqa: PLR0915
         """Create the environment."""
 
         def _init() -> gym.Env:
-            config = [["wwow", "owwo"], ["wwow", "ooww"]]
-            start_rooms = [[0, 0], [0, 1]]
-            goal_rooms = [[1, 0], [1, 1]]
-            env = MultiRoomGrid(config=config, start_rooms=start_rooms, goal_rooms=goal_rooms, room_size=3, max_steps=100, render_mode="rgb_array")
+            env = IntrospectiveEnv(locked=locked, max_steps=972, render_mode="rgb_array")
             env = FullyObsWrapper(env)
             env = ImgObsWrapper(env)
             return env
@@ -310,16 +302,19 @@ def main() -> None:  # noqa: PLR0915
                 v_clipped = b_state_values[mb_inds] + torch.clamp(new_value - b_state_values[mb_inds], -10.0, 10.0)
                 v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                 v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                v_loss_student = v_loss_max.mean()
+                v_loss_student = 0.5 * v_loss_max.mean()
 
                 entropy_loss_student = dist_entropy.mean()
 
                 # final loss of clipped objective PPO
-                student_loss = pg_loss_student - 0.01 * entropy_loss_student + v_loss_student * 0.5
+                student_loss = pg_loss_student - 0.05 * entropy_loss_student + v_loss_student * 0.5
 
                 optimizer.zero_grad()  # take gradient step
                 student_loss.backward()
                 optimizer.step()
+
+            if approx_kl > KL_THRESHOLD:
+                break
 
         # log debug variables
         with torch.no_grad():
