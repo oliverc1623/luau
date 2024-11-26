@@ -152,9 +152,9 @@ def largest_divisor(n: int) -> int:
 def main() -> None:  # noqa: PLR0915
     """Run Main function."""
     # Initialize the PPO agent
-    seed = 17
+    seed = 1
     horizon = 128
-    num_envs = 5
+    num_envs = 10
     batch_size = num_envs * horizon
     lr_actor = 0.0005
     max_training_timesteps = 500_000
@@ -163,7 +163,7 @@ def main() -> None:  # noqa: PLR0915
     gae_lambda = 0.8
     eps_clip = 0.2
     k_epochs = 4
-    minibatch_size = batch_size // k_epochs
+    minibatch_size = 128  # batch_size // k_epochs
     save_model_freq = largest_divisor(num_updates)
     run_num = 1
     save_frames = False
@@ -194,7 +194,9 @@ def main() -> None:  # noqa: PLR0915
 
         def _init() -> gym.Env:
             config = [["wwow", "owwo"], ["wwow", "ooww"]]
-            env = MultiRoomGrid(config=config, start_rooms=[[0, 0], [0, 1]], goal_rooms=[[1, 0], [1, 1]], render_mode="rgb_array")
+            start_rooms = [[0, 0], [0, 1]]
+            goal_rooms = [[1, 0], [1, 1]]
+            env = MultiRoomGrid(config=config, start_rooms=start_rooms, goal_rooms=goal_rooms, room_size=3, max_steps=100, render_mode="rgb_array")
             env = FullyObsWrapper(env)
             env = ImgObsWrapper(env)
             return env
