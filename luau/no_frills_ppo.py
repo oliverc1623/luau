@@ -108,6 +108,14 @@ def preprocess(image: np.array) -> dict:
     return image
 
 
+def largest_divisor(n: int) -> int:
+    """Find the largest divisor of batch_size that is less than or equal to horizon."""
+    for i in range(n // 2, 0, -1):
+        if n % i == 0:
+            return i
+    return 1  # If no divisors found, return 1
+
+
 class Agent(nn.Module):
     """The agent class for the PPO algorithm."""
 
@@ -171,7 +179,10 @@ if __name__ == "__main__":
             monitor_gym=True,
             save_code=True,
         )
-    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
+    writer = SummaryWriter(f"/../../../pvcvolume/runs/{run_name}")
+    model_dir = Path(f"/../../../pvcvolume/runs/{run_name}/model")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = f"{model_dir}/{run_name}.pth"
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -223,6 +234,7 @@ if __name__ == "__main__":
     next_obs = preprocess(next_obs)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
+    save_model_freq = largest_divisor(num_updates)
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
@@ -367,6 +379,10 @@ if __name__ == "__main__":
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+        if update % save_model_freq == 0:
+            print(f"Saving model checkpoint at step {global_step} to {checkpoint_path}")
+            torch.save(agent.state_dict(), checkpoint_path)
 
     envs.close()
     writer.close()
