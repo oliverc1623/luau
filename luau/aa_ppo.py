@@ -312,6 +312,7 @@ if __name__ == "__main__":
                     print(f"global_step={global_step}, episodic_return={ep_return}, advice_counter={ep_advice}")
                     writer.add_scalar("charts/episodic_return", ep_return, global_step)
                     writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                    writer.add_scalar("charts/advice_issued", ep_length, global_step)
                 advice_counter[completed_mask] = 0
 
         # bootstrap value if not done
@@ -345,21 +346,6 @@ if __name__ == "__main__":
         # Initialize corrections
         student_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
         teacher_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
-
-        with torch.no_grad():
-            # Loop through the horizon only
-            for s in range(args.num_steps):
-                # Extract batch of indicators, actions, and states for the current step across all environments
-                h = indicators[s]  # Shape: (num_envs,)
-                a = actions[s]  # Shape: (num_envs,)
-                states = obs[s]  # Shape: (num_envs, ...)
-
-                # Evaluate student and teacher log probabilities as a batch
-                _, student_logprobs, _, _ = agent.get_action_and_value(states, a.long())  # Assuming batched input is supported
-                _, teacher_logprobs, _, _ = teacher_source_agent.get_action_and_value(states, a.long())  # Assuming batched input is supported)
-                # Calculate corrections using vectorized operations
-                teacher_correction[s] = torch.where(h == 1, torch.ones_like(teacher_correction[s]), torch.exp(teacher_logprobs - student_logprobs))
-                student_correction[s] = torch.where(h == 1, torch.exp(student_logprobs - teacher_logprobs), torch.ones_like(student_correction[s]))
 
         # flatten the batch
         b_obs = obs.reshape((-1, 3, 9, 9))
