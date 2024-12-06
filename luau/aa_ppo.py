@@ -7,13 +7,13 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper
+from minigrid.wrappers import ImgObsWrapper
 from torch import nn, optim
 from torch.distributions.bernoulli import Bernoulli
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import IntrospectiveEnv
+from luau.iaa_env import SmallIntrospectiveEnv
 
 
 RGB_CHANNEL = 3
@@ -79,8 +79,8 @@ def parse_args() -> argparse.Namespace:
         help="the target KL divergence threshold")
     parser.add_argument("--locked", type=bool, default=False,
         help="Toggle whether the environment is locked after the first observation")
-    parser.add_argument("--max-env-steps", type=int, default=128,
-        help="the maximum number of steps in an environment")
+    parser.add_argument("--grid-size", type=int, default=6,
+        help="the size of the grid")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
         help="the coefficient for the value clipping")
     parser.add_argument("--teacher-model", type=str, required=True,
@@ -107,7 +107,7 @@ def layer_init(layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.
 
 
 def preprocess(image: np.array) -> dict:
-    """Preprocess the input for a grid-based environment, padding it to (12, 12, channels)."""
+    """Preprocess the input for a grid-based environment."""
     image = torch.from_numpy(image).float()
     if image.ndim == RGB_CHANNEL:  # Single image case with shape (height, width, channels)
         image = image.permute(2, 0, 1)
@@ -141,7 +141,7 @@ class Agent(nn.Module):
             layer_init(nn.Conv2d(32, 64, (2, 2))),
             nn.ReLU(),
             nn.Flatten(),
-            layer_init(nn.Linear(256, 64)),
+            layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
         )
@@ -156,7 +156,7 @@ class Agent(nn.Module):
             layer_init(nn.Conv2d(32, 64, (2, 2))),
             nn.ReLU(),
             nn.Flatten(),
-            layer_init(nn.Linear(256, 64)),
+            layer_init(nn.Linear(64, 64)),
             nn.Tanh(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
@@ -211,9 +211,8 @@ if __name__ == "__main__":
         """Create the environment."""
 
         def _init() -> gym.Env:
-            env = IntrospectiveEnv(locked=args.locked, max_steps=args.max_env_steps, render_mode="rgb_array")
+            env = SmallIntrospectiveEnv(size=args.grid_size, locked=args.locked, render_mode="rgb_array")
             env = gym.wrappers.RecordEpisodeStatistics(env)
-            env = FullyObsWrapper(env)
             env = ImgObsWrapper(env)
             env.reset(seed=subenv_seed)
             env.action_space.seed(subenv_seed)
@@ -237,15 +236,6 @@ if __name__ == "__main__":
     teacher_target_agent.load_state_dict(torch.load(args.teacher_model))
     teacher_optimizer = torch.optim.Adam(teacher_target_agent.critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps, args.num_envs, 3, 9, 9)).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs, *envs.single_action_space.shape), dtype=torch.int64).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    indicators = torch.zeros((args.num_steps, args.num_envs)).to(device)
-
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
@@ -255,6 +245,16 @@ if __name__ == "__main__":
     num_updates = args.total_timesteps // args.batch_size
     save_model_freq = largest_divisor(num_updates)
     advice_counter = torch.zeros(args.num_envs).to(device)
+
+    # ALGO Logic: Storage setup
+    observation_shape = next_obs.shape[1:]
+    obs = torch.zeros((args.num_steps, args.num_envs, *observation_shape)).to(device)
+    actions = torch.zeros((args.num_steps, args.num_envs, *envs.single_action_space.shape), dtype=torch.int64).to(device)
+    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    indicators = torch.zeros((args.num_steps, args.num_envs)).to(device)
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
@@ -297,6 +297,7 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, done, truncated, info = envs.step(action.cpu().numpy())
             rewards[step] = torch.tensor(reward).to(device).view(-1)
+            done = np.logical_or(done, truncated)
             next_obs, next_done = preprocess(next_obs), torch.Tensor(done).to(device)
 
             if "episode" in info:
@@ -348,7 +349,7 @@ if __name__ == "__main__":
         teacher_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
 
         # flatten the batch
-        b_obs = obs.reshape((-1, 3, 9, 9))
+        b_obs = obs.reshape((-1), *observation_shape)
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1, *envs.single_action_space.shape))
         b_advantages = advantages.reshape(-1)
