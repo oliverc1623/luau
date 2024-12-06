@@ -77,7 +77,6 @@ class SmallIntrospectiveEnv(MiniGridEnv):
 
     def __init__(
         self,
-        rng: np.random.default_rng,
         size: int = 6,
         agent_start_pos: tuple[int, int] | None = None,
         agent_start_dir: int = 0,
@@ -86,7 +85,6 @@ class SmallIntrospectiveEnv(MiniGridEnv):
         locked: bool = False,
         **kwargs: str,
     ):
-        self.rng = rng
         self.agent_start_pos = agent_start_pos
         self.agent_start_dir = agent_start_dir
         self.locked = locked
