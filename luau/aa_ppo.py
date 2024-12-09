@@ -283,13 +283,35 @@ if __name__ == "__main__":
             indicators[step] = h_t
 
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
-                value = value.flatten()
-                teacher_action, teacher_logprob, _, teacher_value = teacher_source_agent.get_action_and_value(next_obs)
-                teacher_value = teacher_value.flatten()
-                action = torch.where(h_t == 1, teacher_action, action)
-                logprob = torch.where(h_t == 1, teacher_logprob, logprob)
-                value = torch.where(h_t == 1, teacher_value, value)
+                # Identify which environments need teacher actions and which need student actions
+                teacher_mask = h_t == 1
+                student_mask = h_t == 0
+
+                # Prepare tensors to store the final actions, logprobs, and values
+                num_envs = next_obs.shape[0]
+                action = torch.zeros((num_envs, *envs.single_action_space.shape), dtype=torch.int64, device=device)
+                logprob = torch.zeros(num_envs, device=device)
+                value = torch.zeros(num_envs, device=device)
+
+                # If any environment needs teacher actions, run teacher forward pass for that subset
+                teacher_indices = teacher_mask.nonzero(as_tuple=True)[0]
+                if teacher_indices.numel() > 0:
+                    teacher_obs = next_obs[teacher_indices]
+                    t_action, t_logprob, _, t_value = teacher_source_agent.get_action_and_value(teacher_obs)
+                    action[teacher_indices] = t_action
+                    logprob[teacher_indices] = t_logprob
+                    value[teacher_indices] = t_value.flatten()
+
+                # If any environment needs student actions, run student forward pass for that subset
+                student_indices = student_mask.nonzero(as_tuple=True)[0]
+                if student_indices.numel() > 0:
+                    student_obs = next_obs[student_indices]
+                    s_action, s_logprob, _, s_value = agent.get_action_and_value(student_obs)
+                    action[student_indices] = s_action
+                    logprob[student_indices] = s_logprob
+                    value[student_indices] = s_value.flatten()
+
+                # Store the final values
                 values[step] = value
             actions[step] = action
             logprobs[step] = logprob
@@ -313,7 +335,7 @@ if __name__ == "__main__":
                     print(f"global_step={global_step}, episodic_return={ep_return}, advice_counter={ep_advice}")
                     writer.add_scalar("charts/episodic_return", ep_return, global_step)
                     writer.add_scalar("charts/episodic_length", ep_length, global_step)
-                    writer.add_scalar("charts/advice_issued", ep_length, global_step)
+                    writer.add_scalar("charts/advice_issued", ep_advice, global_step)
                 advice_counter[completed_mask] = 0
 
         # bootstrap value if not done
