@@ -16,6 +16,8 @@ from torch.utils.tensorboard import SummaryWriter
 from luau.iaa_env import SmallIntrospectiveEnv
 
 
+torch.set_printoptions(precision=10)
+
 RGB_CHANNEL = 3
 
 
@@ -370,6 +372,20 @@ if __name__ == "__main__":
         student_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
         teacher_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
 
+        with torch.no_grad():
+            # Loop through the horizon only
+            for s in range(args.num_steps):
+                # Extract batch of indicators, actions, and states for the current step across all environments
+                h = indicators[s]  # Shape: (num_envs,)
+                a = actions[s]  # Shape: (num_envs,)
+                states = obs[s]  # Shape: (num_envs, ...)
+                # Evaluate student and teacher log probabilities as a batch
+                _, student_logprobs, _, _ = agent.get_action_and_value(states, a.long())  # Assuming batched input is supported
+                _, teacher_logprobs, _, _ = teacher_source_agent.get_action_and_value(states, a.long())  # Assuming batched input is supported)
+                # Calculate corrections using vectorized operations
+                teacher_correction[s] = torch.where(h == 1, torch.ones_like(teacher_correction[s]), torch.exp(teacher_logprobs - student_logprobs))
+                student_correction[s] = torch.where(h == 1, torch.exp(student_logprobs - teacher_logprobs), torch.ones_like(student_correction[s]))
+
         # flatten the batch
         b_obs = obs.reshape((-1), *observation_shape)
         b_logprobs = logprobs.reshape(-1)
@@ -463,23 +479,10 @@ if __name__ == "__main__":
                 mb_inds = b_inds[start:end]
                 mb_rho_t = b_teacher_correction[mb_inds]
 
-                _, newlogprob, entropy, newvalue = teacher_target_agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
-                logratio = newlogprob - b_logprobs[mb_inds]
+                _, _, _, teacher_newvalue = teacher_target_agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
 
                 # Value loss
-                newvalue = newvalue.view(-1)
-                if args.clip_vloss:
-                    teacher_v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                    teacher_v_clipped = b_values[mb_inds] + torch.clamp(
-                        newvalue - b_values[mb_inds],
-                        -args.vf_clip_coef,
-                        args.vf_clip_coef,
-                    )
-                    teacher_v_loss_clipped = (teacher_v_clipped - b_returns[mb_inds]) ** 2
-                    teacher_v_loss_max = torch.max(teacher_v_loss_unclipped, teacher_v_loss_clipped)
-                    teacher_v_loss = 0.5 * teacher_v_loss_max.mean()
-                else:
-                    teacher_v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                teacher_v_loss = 0.5 * ((teacher_newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 teacher_loss = teacher_v_loss * args.vf_coef
                 teacher_loss = torch.mean(teacher_loss * mb_rho_t)
@@ -488,9 +491,6 @@ if __name__ == "__main__":
                 teacher_loss.backward()
                 nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), args.max_grad_norm)
                 teacher_optimizer.step()
-
-            if args.target_kl is not None and approx_kl > args.target_kl:
-                break
 
     envs.close()
     writer.close()
