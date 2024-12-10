@@ -16,8 +16,6 @@ from torch.utils.tensorboard import SummaryWriter
 from luau.iaa_env import SmallIntrospectiveEnv
 
 
-torch.set_printoptions(precision=10)
-
 RGB_CHANNEL = 3
 
 
@@ -321,7 +319,6 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, done, truncated, info = envs.step(action.cpu().numpy())
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-            done = np.logical_or(done, truncated)
             next_obs, next_done = preprocess(next_obs), torch.Tensor(done).to(device)
 
             if "episode" in info:
@@ -449,6 +446,21 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
 
+                # Teacher loss
+                mb_rho_t = b_teacher_correction[mb_inds]
+                _, _, _, teacher_newvalue = teacher_target_agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
+
+                # Value loss
+                teacher_v_loss = 0.5 * ((teacher_newvalue - b_returns[mb_inds]) ** 2).mean()
+
+                teacher_loss = teacher_v_loss * args.vf_coef
+                teacher_loss = torch.mean(teacher_loss * mb_rho_t)
+
+                teacher_optimizer.zero_grad()
+                teacher_loss.backward()
+                nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), args.max_grad_norm)
+                teacher_optimizer.step()
+
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
 
@@ -471,26 +483,6 @@ if __name__ == "__main__":
         if update % save_model_freq == 0:
             print(f"Saving model checkpoint at step {global_step} to {checkpoint_path}")
             torch.save(agent.state_dict(), checkpoint_path)
-
-        for _epoch in range(args.update_epochs):
-            rng.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
-                mb_inds = b_inds[start:end]
-                mb_rho_t = b_teacher_correction[mb_inds]
-
-                _, _, _, teacher_newvalue = teacher_target_agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
-
-                # Value loss
-                teacher_v_loss = 0.5 * ((teacher_newvalue - b_returns[mb_inds]) ** 2).mean()
-
-                teacher_loss = teacher_v_loss * args.vf_coef
-                teacher_loss = torch.mean(teacher_loss * mb_rho_t)
-
-                teacher_optimizer.zero_grad()
-                teacher_loss.backward()
-                nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), args.max_grad_norm)
-                teacher_optimizer.step()
 
     envs.close()
     writer.close()
