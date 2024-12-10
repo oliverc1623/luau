@@ -1,16 +1,14 @@
 # %%
 
-import time
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+import gymnasium as gym
 import numpy as np
 import torch
-from IPython.display import clear_output, display
-from minigrid.wrappers import FullyObsWrapper, ImgObsWrapper
+from minigrid.wrappers import ImgObsWrapper
 
 from luau.iaa_env import SmallIntrospectiveEnv
-from luau.no_frills_ppo import ActorCritic
+from luau.no_frills_ppo import Agent
 
 
 root_path = Path(__file__).resolve().parent.parent
@@ -34,56 +32,53 @@ def preprocess(image: np.array) -> dict:
 
 # %%
 seed = 1623
-door_locked = True
+door_locked = False
+num_envs = 1
 
-sub_env_rng = np.random.default_rng(seed)
-env = SmallIntrospectiveEnv(rng=sub_env_rng, size=7, locked=door_locked, render_mode="rgb_array", max_steps=360)
-env = FullyObsWrapper(env)
-env = ImgObsWrapper(env)
+
+# env setup
+def make_env(subenv_seed: int) -> gym.Env:
+    """Create the environment."""
+
+    def _init() -> gym.Env:
+        env = SmallIntrospectiveEnv(size=6, locked=door_locked, render_mode="rgb_array")
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = ImgObsWrapper(env)
+        env.reset(seed=subenv_seed)
+        env.action_space.seed(subenv_seed)
+        env.observation_space.seed(subenv_seed)
+        return env
+
+    return _init
+
+
+envs = [make_env(seed + i) for i in range(num_envs)]
+envs = gym.vector.SyncVectorEnv(envs)
 
 # %%
-observation_shape = np.transpose(env.observation_space.sample(), (2, 0, 1)).shape
-state_dim = env.observation_space.shape[-1]
+observation_shape = np.transpose(envs.single_observation_space.sample(), (2, 0, 1)).shape
+state_dim = envs.observation_space.shape[-1]
 # Initialize teacher model
 teacher_model_path = (
-    "../../../pvcvolume/models/PPO/SmallIntrospectiveEnv-Locked-False/run-1-seed-50/SmallIntrospectiveEnv-Locked-False-run-1-seed-50.pth"
+    "../../../pvcvolume/runs/MiniGrid-DoorKey-6x6-v0__PPO_Teacher_Source__1733791056/"
+    "model/MiniGrid-DoorKey-6x6-v0__PPO_Teacher_Source__1733791056.pth"
 )
-teacher_source_agent = ActorCritic(state_dim, env.action_space.n).to(device)
+teacher_source_agent = Agent(envs).to(device)
 teacher_source_agent.load_state_dict(torch.load(teacher_model_path))
 
 
 # %%
 
-for i in range(51, 100):
-    state, _ = env.reset(seed=i)
-    done = False
-    truncated = False
-    step = 0
-    while not done and not truncated:
-        state = preprocess(state)
-        action, _, _, _ = teacher_source_agent(state)
-        state, reward, done, truncated, _ = env.step(action.item())
-        img = env.render()
-    print(i, reward)
-env.close()
-
-# %%
-
-state, _ = env.reset(seed=60)
+state, _ = envs.reset()
 done = False
 truncated = False
 step = 0
 while not done and not truncated:
     state = preprocess(state)
-    action, _, _, _ = teacher_source_agent(state)
-    state, reward, done, truncated, _ = env.step(action.item())
-    img = env.render()
-
-    plt.imshow(img)
-    plt.axis("off")  # Hide axis
-    display(plt.gcf())  # Display the current figure
-    clear_output(wait=True)  # Clear the previous output
-    plt.clf()  # Clear the current figure to prevent overlap
-    time.sleep(0.1)  # Pause to control the update speed
-
+    action, _, _, _ = teacher_source_agent.get_action_and_value(state)
+    state, reward, done, truncated, _ = envs.step(action.cpu().numpy())
+    img = envs.render()
 print(reward)
+envs.close()
+
+# %%
