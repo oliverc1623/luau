@@ -126,12 +126,13 @@ class SmallIntrospectiveEnv(MiniGridEnv):
         self.place_agent(size=(splitIdx, height))
 
         # Place a door in the wall
-        doorIdx = self._rand_int(1, height - 2)  # noqa: N806
-        self.put_obj(Door("yellow", is_locked=self.locked), splitIdx, doorIdx)
-
-        # Place a yellow key on the left side
+        doorIdx = self._rand_int(1, height - 1)  # noqa: N806
         if self.locked:
-            self.place_obj(obj=Key("yellow"), top=(0, 0), size=(splitIdx, height))
+            self.put_obj(Door("red", is_locked=self.locked), splitIdx, doorIdx)
+            # Place a yellow key on the left side
+            self.place_obj(obj=Key("red"), top=(0, 0), size=(splitIdx, height))
+        else:
+            self.put_obj(Floor("blue"), splitIdx, doorIdx)
 
         self.mission = "use the key to open the door and then get to the goal"
 
