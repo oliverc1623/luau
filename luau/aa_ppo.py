@@ -291,7 +291,7 @@ if __name__ == "__main__":
                 num_envs = next_obs.shape[0]
                 action = torch.zeros((num_envs, *envs.single_action_space.shape), dtype=torch.int64, device=device)
                 logprob = torch.zeros(num_envs, device=device)
-                value = torch.zeros(num_envs, device=device)
+                value = torch.zeros(num_envs, 1, device=device)
 
                 # If any environment needs teacher actions, run teacher forward pass for that subset
                 teacher_indices = teacher_mask.nonzero(as_tuple=True)[0]
@@ -300,7 +300,7 @@ if __name__ == "__main__":
                     t_action, t_logprob, _, t_value = teacher_source_agent.get_action_and_value(teacher_obs)
                     action[teacher_indices] = t_action
                     logprob[teacher_indices] = t_logprob
-                    value[teacher_indices] = t_value.flatten()
+                    value[teacher_indices] = t_value
 
                 # If any environment needs student actions, run student forward pass for that subset
                 student_indices = student_mask.nonzero(as_tuple=True)[0]
@@ -309,10 +309,10 @@ if __name__ == "__main__":
                     s_action, s_logprob, _, s_value = agent.get_action_and_value(student_obs)
                     action[student_indices] = s_action
                     logprob[student_indices] = s_logprob
-                    value[student_indices] = s_value.flatten()
+                    value[student_indices] = s_value
 
                 # Store the final values
-                values[step] = value
+                values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
 
