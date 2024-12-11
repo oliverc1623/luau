@@ -289,22 +289,28 @@ if __name__ == "__main__":
             indicators[step] = h_t
 
             with torch.no_grad():
-                # Prepare tensors to store the final actions, logprobs, and values
+                teacher_mask = h_t == 1
+                student_mask = h_t == 0
                 num_envs = next_obs.shape[0]
                 action = torch.zeros((num_envs, *envs.single_action_space.shape), dtype=torch.int64, device=device)
                 logprob = torch.zeros(num_envs, device=device)
                 value = torch.zeros(num_envs, 1, device=device)
-                for env_idx in range(num_envs):
-                    if h_t[env_idx] == 1:  # Teacher action required
-                        t_action, t_logprob, _, t_value = teacher_source_agent.get_action_and_value(next_obs[env_idx].unsqueeze(0))
-                        action[env_idx] = t_action
-                        logprob[env_idx] = t_logprob
-                        value[env_idx] = t_value
-                    else:  # Student action required
-                        s_action, s_logprob, _, s_value = agent.get_action_and_value(next_obs[env_idx].unsqueeze(0))
-                        action[env_idx] = s_action
-                        logprob[env_idx] = s_logprob
-                        value[env_idx] = s_value
+                # If any environment needs teacher actions, run teacher forward pass for that subset
+                teacher_indices = teacher_mask.nonzero(as_tuple=True)[0]
+                if teacher_indices.numel() > 0:
+                    teacher_obs = next_obs[teacher_indices]
+                    t_action, t_logprob, _, t_value = teacher_source_agent.get_action_and_value(teacher_obs)
+                    action[teacher_indices] = t_action
+                    logprob[teacher_indices] = t_logprob
+                    value[teacher_indices] = t_value
+                # If any environment needs student actions, run student forward pass for that subset
+                student_indices = student_mask.nonzero(as_tuple=True)[0]
+                if student_indices.numel() > 0:
+                    student_obs = next_obs[student_indices]
+                    s_action, s_logprob, _, s_value = agent.get_action_and_value(student_obs)
+                    action[student_indices] = s_action
+                    logprob[student_indices] = s_logprob
+                    value[student_indices] = s_value
                 # Store the final values
                 values[step] = value.flatten()
             actions[step] = action
