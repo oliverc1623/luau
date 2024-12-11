@@ -451,7 +451,19 @@ if __name__ == "__main__":
                 _, _, _, teacher_newvalue = teacher_target_agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
 
                 # Value loss
-                teacher_v_loss = 0.5 * ((teacher_newvalue - b_returns[mb_inds]) ** 2).mean()
+                teacher_newvalue = teacher_newvalue.view(-1)
+                if args.clip_vloss:
+                    teacher_v_loss_unclipped = (teacher_newvalue - b_returns[mb_inds]) ** 2
+                    teacher_v_clipped = b_values[mb_inds] + torch.clamp(
+                        teacher_newvalue - b_values[mb_inds],
+                        -args.vf_clip_coef,
+                        args.vf_clip_coef,
+                    )
+                    teacher_v_loss_clipped = (teacher_v_clipped - b_returns[mb_inds]) ** 2
+                    teacher_v_loss_max = torch.max(teacher_v_loss_unclipped, teacher_v_clipped)
+                    teacher_v_loss = 0.5 * teacher_v_loss_max.mean()
+                else:
+                    teacher_v_loss = 0.5 * ((teacher_newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 teacher_loss = teacher_v_loss * args.vf_coef
                 teacher_loss = torch.mean(teacher_loss * mb_rho_t)
