@@ -231,9 +231,15 @@ if __name__ == "__main__":
     # Initialize teacher model
     teacher_source_agent = Agent(envs).to(device)
     teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    for param in teacher_source_agent.parameters():
+        param.requires_grad = False
 
     teacher_target_agent = Agent(envs).to(device)
     teacher_target_agent.load_state_dict(torch.load(args.teacher_model))
+    for param in teacher_target_agent.actor.parameters():
+        param.requires_grad = False
+    for param in teacher_target_agent.critic.parameters():
+        param.requires_grad = True
     teacher_optimizer = torch.optim.Adam(teacher_target_agent.critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # TRY NOT TO MODIFY: start the game
@@ -283,34 +289,22 @@ if __name__ == "__main__":
             indicators[step] = h_t
 
             with torch.no_grad():
-                # Identify which environments need teacher actions and which need student actions
-                teacher_mask = h_t == 1
-                student_mask = h_t == 0
-
                 # Prepare tensors to store the final actions, logprobs, and values
                 num_envs = next_obs.shape[0]
                 action = torch.zeros((num_envs, *envs.single_action_space.shape), dtype=torch.int64, device=device)
                 logprob = torch.zeros(num_envs, device=device)
                 value = torch.zeros(num_envs, 1, device=device)
-
-                # If any environment needs teacher actions, run teacher forward pass for that subset
-                teacher_indices = teacher_mask.nonzero(as_tuple=True)[0]
-                if teacher_indices.numel() > 0:
-                    teacher_obs = next_obs[teacher_indices]
-                    t_action, t_logprob, _, t_value = teacher_source_agent.get_action_and_value(teacher_obs)
-                    action[teacher_indices] = t_action
-                    logprob[teacher_indices] = t_logprob
-                    value[teacher_indices] = t_value
-
-                # If any environment needs student actions, run student forward pass for that subset
-                student_indices = student_mask.nonzero(as_tuple=True)[0]
-                if student_indices.numel() > 0:
-                    student_obs = next_obs[student_indices]
-                    s_action, s_logprob, _, s_value = agent.get_action_and_value(student_obs)
-                    action[student_indices] = s_action
-                    logprob[student_indices] = s_logprob
-                    value[student_indices] = s_value
-
+                for env_idx in range(num_envs):
+                    if h_t[env_idx] == 1:  # Teacher action required
+                        t_action, t_logprob, _, t_value = teacher_source_agent.get_action_and_value(next_obs[env_idx].unsqueeze(0))
+                        action[env_idx] = t_action
+                        logprob[env_idx] = t_logprob
+                        value[env_idx] = t_value
+                    else:  # Student action required
+                        s_action, s_logprob, _, s_value = agent.get_action_and_value(next_obs[env_idx].unsqueeze(0))
+                        action[env_idx] = s_action
+                        logprob[env_idx] = s_logprob
+                        value[env_idx] = s_value
                 # Store the final values
                 values[step] = value.flatten()
             actions[step] = action
@@ -365,24 +359,6 @@ if __name__ == "__main__":
                     returns[t] = rewards[t] + args.gamma * nextnonterminal * next_return
                 advantages = returns - values
 
-        # Initialize corrections
-        student_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
-        teacher_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
-
-        with torch.no_grad():
-            # Loop through the horizon only
-            for s in range(args.num_steps):
-                # Extract batch of indicators, actions, and states for the current step across all environments
-                h = indicators[s]  # Shape: (num_envs,)
-                a = actions[s]  # Shape: (num_envs,)
-                states = obs[s]  # Shape: (num_envs, ...)
-                # Evaluate student and teacher log probabilities as a batch
-                _, student_logprobs, _, _ = agent.get_action_and_value(states, a.long())  # Assuming batched input is supported
-                _, teacher_logprobs, _, _ = teacher_source_agent.get_action_and_value(states, a.long())  # Assuming batched input is supported)
-                # Calculate corrections using vectorized operations
-                teacher_correction[s] = torch.where(h == 1, torch.ones_like(teacher_correction[s]), torch.exp(teacher_logprobs - student_logprobs))
-                student_correction[s] = torch.where(h == 1, torch.exp(student_logprobs - teacher_logprobs), torch.ones_like(student_correction[s]))
-
         # flatten the batch
         b_obs = obs.reshape((-1), *observation_shape)
         b_logprobs = logprobs.reshape(-1)
@@ -390,6 +366,23 @@ if __name__ == "__main__":
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
+
+        # Initialize corrections
+        student_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
+        teacher_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
+
+        with torch.no_grad():
+            for s in range(args.num_steps):
+                for n in range(args.num_envs):
+                    if indicators[s, n] == 1:
+                        _, correct_s_logprob, _, _ = agent.get_action_and_value(obs[s, n].unsqueeze(0), actions[s, n].long())
+                        student_correction[s, n] = torch.exp(correct_s_logprob - logprobs[s, n])
+                        teacher_correction[s, n] = 1
+                    else:
+                        _, correct_t_logprob, _, _ = teacher_source_agent.get_action_and_value(obs[s, n].unsqueeze(0), actions[s, n].long())
+                        teacher_correction[s, n] = torch.exp(correct_t_logprob - logprobs[s, n])
+                        student_correction[s, n] = 1
+
         b_student_correction = student_correction.reshape(-1)
         b_teacher_correction = teacher_correction.reshape(-1)
 
@@ -448,29 +441,13 @@ if __name__ == "__main__":
 
                 # Teacher loss
                 mb_rho_t = b_teacher_correction[mb_inds]
-                _, _, _, teacher_newvalue = teacher_target_agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
+                teacher_newvalue = teacher_target_agent.get_value(b_obs[mb_inds]).view(-1)
+                teacher_v_loss = ((teacher_newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                # Value loss
-                teacher_newvalue = teacher_newvalue.view(-1)
-                if args.clip_vloss:
-                    teacher_v_loss_unclipped = (teacher_newvalue - b_returns[mb_inds]) ** 2
-                    teacher_v_clipped = b_values[mb_inds] + torch.clamp(
-                        teacher_newvalue - b_values[mb_inds],
-                        -args.vf_clip_coef,
-                        args.vf_clip_coef,
-                    )
-                    teacher_v_loss_clipped = (teacher_v_clipped - b_returns[mb_inds]) ** 2
-                    teacher_v_loss_max = torch.max(teacher_v_loss_unclipped, teacher_v_clipped)
-                    teacher_v_loss = 0.5 * teacher_v_loss_max.mean()
-                else:
-                    teacher_v_loss = 0.5 * ((teacher_newvalue - b_returns[mb_inds]) ** 2).mean()
-
-                teacher_loss = teacher_v_loss * args.vf_coef
-                teacher_loss = torch.mean(teacher_loss * mb_rho_t)
+                teacher_loss = torch.mean(teacher_v_loss * mb_rho_t)
 
                 teacher_optimizer.zero_grad()
                 teacher_loss.backward()
-                nn.utils.clip_grad_norm_(teacher_target_agent.parameters(), args.max_grad_norm)
                 teacher_optimizer.step()
 
             if args.target_kl is not None and approx_kl > args.target_kl:
@@ -483,6 +460,7 @@ if __name__ == "__main__":
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+        writer.add_scalar("losses/teacher_value_loss", teacher_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
         writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
