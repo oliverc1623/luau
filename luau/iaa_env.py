@@ -278,3 +278,52 @@ class MultiRoomGrid(MiniGridEnv):
     @staticmethod
     def _gen_mission() -> str:
         return "get to the green goal square"
+
+
+# %%
+
+
+class SimpleEnv(MiniGridEnv):
+    """Simple Env."""
+
+    def __init__(
+        self,
+        size: int = 8,
+        agent_start_pos: tuple = (1, 1),
+        agent_start_dir: int = 0,
+        max_steps: int | None = None,
+        locked: int = 0,
+        **kwargs: str,
+    ):
+        self.agent_start_pos = agent_start_pos
+        self.agent_start_dir = agent_start_dir
+
+        mission_space = MissionSpace(mission_func=self._gen_mission)
+        if max_steps is None:
+            max_steps = 4 * size**2
+
+        self.locked = locked
+
+        super().__init__(
+            mission_space=mission_space,
+            grid_size=size,
+            max_steps=256,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _gen_mission() -> str:
+        return "grand mission"
+
+    def _gen_grid(self, width: int, height: int) -> None:
+        self.grid = Grid(width, height)
+        self.grid.wall_rect(0, 0, width, height)
+        if self.agent_start_pos is not None:
+            self.agent_pos = self.agent_start_pos
+            self.agent_dir = self.agent_start_dir
+        else:
+            self.place_agent()
+        if self.locked:
+            self.put_obj(Goal(), width - 2, height - 6)
+        else:
+            self.put_obj(Goal(), width - 2, height - 2)
