@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=str(Path(__file__).stem),
         help="the name of this experiment")
-    parser.add_argument("--gym-id", type=str, default="MiniGrid-DoorKey-5x5-v0",
+    parser.add_argument("--gym-id", type=str, default="MiniGrid-Empty-5x5-v0",
         help="the id of the gym environment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
         help="the learning rate of the optimizer")
@@ -179,12 +179,14 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    def make_env(subenv_seed: int) -> gym.Env:
+    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> gym.Env:
         """Create the environment."""
 
         def _init() -> gym.Env:
-            env = gym.make(args.gym_id)
+            env = gym.make(args.gym_id, render_mode="rgb_array")
             env.action_space = gym.spaces.Discrete(7)  # make all 7 actions available
+            if capture_video and idx == 0:
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda x: x % save_model_freq == 0)
             env = gym.wrappers.RecordEpisodeStatistics(env)
             env = ImgObsWrapper(env)
             env.reset(seed=subenv_seed)
@@ -194,7 +196,10 @@ if __name__ == "__main__":
 
         return _init
 
-    envs = [make_env(args.seed + i) for i in range(args.num_envs)]
+    num_updates = args.total_timesteps // args.batch_size
+    save_model_freq = largest_divisor(num_updates)
+
+    envs = [make_env(args.seed + i, i, args.capture_video, run_name, save_model_freq) for i in range(args.num_envs)]
     envs = gym.vector.SyncVectorEnv(envs)
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -207,8 +212,6 @@ if __name__ == "__main__":
     next_obs, info = envs.reset()
     next_obs = preprocess(next_obs)
     next_done = torch.zeros(args.num_envs).to(device)
-    num_updates = args.total_timesteps // args.batch_size
-    save_model_freq = largest_divisor(num_updates)
 
     # ALGO Logic: Storage setup
     observation_shape = next_obs.shape[1:]
