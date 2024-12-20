@@ -13,8 +13,6 @@ from torch.distributions.bernoulli import Bernoulli
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from luau.iaa_env import SmallIntrospectiveEnv
-
 
 RGB_CHANNEL = 3
 
@@ -132,46 +130,52 @@ class Agent(nn.Module):
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
         # Actor network
-        self.actor = nn.Sequential(
-            layer_init(nn.Conv2d(3, 16, (2, 2))),
+        c = envs.single_observation_space.shape[-1]
+        # Define image embedding
+        self.image_conv = nn.Sequential(
+            nn.Conv2d(c, 16, (2, 2)),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
-            layer_init(nn.Conv2d(16, 32, (2, 2))),
+            nn.Conv2d(16, 32, (2, 2)),
             nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, (2, 2))),
+            nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU(),
-            nn.Flatten(),
-            layer_init(nn.Linear(64, 64)),
+        )
+        n = envs.single_observation_space.shape[0]
+        m = envs.single_observation_space.shape[1]
+        self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
+
+        # Define actor's model
+        self.actor = nn.Sequential(
+            nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+            nn.Linear(64, envs.single_action_space.n),
         )
 
-        # Critic network
+        # Define critic's model
         self.critic = nn.Sequential(
-            layer_init(nn.Conv2d(3, 16, (2, 2))),
-            nn.ReLU(),
-            nn.MaxPool2d((2, 2)),
-            layer_init(nn.Conv2d(16, 32, (2, 2))),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, (2, 2))),
-            nn.ReLU(),
-            nn.Flatten(),
-            layer_init(nn.Linear(64, 64)),
+            nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
+            nn.Linear(64, 1),
         )
 
     def get_value(self, x: torch.tensor) -> torch.tensor:
         """Get the value of the state."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
         return self.critic(x)
 
     def get_action_and_value(self, x: torch.tensor, action: int | None = None) -> tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
         """Get the action and value of the state."""
-        logits = self.actor(x)
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        embedding = x
+        logits = self.actor(embedding)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+        critic_val = self.critic(embedding)
+        return action, probs.log_prob(action), probs.entropy(), critic_val
 
 
 if __name__ == "__main__":
@@ -189,8 +193,8 @@ if __name__ == "__main__":
             monitor_gym=True,
             save_code=True,
         )
-    writer = SummaryWriter(f"/../../../pvcvolume/runs/{run_name}")
-    model_dir = Path(f"/../../../pvcvolume/runs/{run_name}/model")
+    writer = SummaryWriter(f"runs/{run_name}")
+    model_dir = Path(f"runs/{run_name}/model")
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{model_dir}/{run_name}.pth"
     writer.add_text(
@@ -207,11 +211,14 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    def make_env(subenv_seed: int) -> gym.Env:
+    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> gym.Env:
         """Create the environment."""
 
         def _init() -> gym.Env:
-            env = SmallIntrospectiveEnv(size=args.grid_size, locked=args.locked, render_mode="rgb_array")
+            env = gym.make(args.gym_id, render_mode="rgb_array")
+            env.action_space = gym.spaces.Discrete(7)  # make all 7 actions available
+            if capture_video and idx == 0:
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda x: x % save_model_freq == 0)
             env = gym.wrappers.RecordEpisodeStatistics(env)
             env = ImgObsWrapper(env)
             env.reset(seed=subenv_seed)
@@ -221,7 +228,10 @@ if __name__ == "__main__":
 
         return _init
 
-    envs = [make_env(args.seed + i) for i in range(args.num_envs)]
+    num_updates = args.total_timesteps // args.batch_size
+    save_model_freq = largest_divisor(num_updates)
+
+    envs = [make_env(args.seed + i, i, args.capture_video, run_name, save_model_freq) for i in range(args.num_envs)]
     envs = gym.vector.SyncVectorEnv(envs)
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -236,7 +246,7 @@ if __name__ == "__main__":
 
     teacher_target_agent = Agent(envs).to(device)
     teacher_target_agent.load_state_dict(torch.load(args.teacher_model))
-    for param in teacher_target_agent.actor.parameters():
+    for param in list(teacher_target_agent.actor.parameters()) + list(teacher_target_agent.image_conv.parameters()):
         param.requires_grad = False
     for param in teacher_target_agent.critic.parameters():
         param.requires_grad = True
@@ -248,8 +258,6 @@ if __name__ == "__main__":
     next_obs, info = envs.reset()
     next_obs = preprocess(next_obs)
     next_done = torch.zeros(args.num_envs).to(device)
-    num_updates = args.total_timesteps // args.batch_size
-    save_model_freq = largest_divisor(num_updates)
     advice_counter = torch.zeros(args.num_envs).to(device)
 
     # ALGO Logic: Storage setup
