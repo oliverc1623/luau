@@ -387,15 +387,19 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             for s in range(args.num_steps):
-                for n in range(args.num_envs):
-                    if indicators[s, n] == 1:
-                        _, correct_s_logprob, _, _ = agent.get_action_and_value(obs[s, n].unsqueeze(0), actions[s, n].long())
-                        student_correction[s, n] = torch.exp(correct_s_logprob - logprobs[s, n])
-                        teacher_correction[s, n] = 1
-                    else:
-                        _, correct_t_logprob, _, _ = teacher_source_agent.get_action_and_value(obs[s, n].unsqueeze(0), actions[s, n].long())
-                        teacher_correction[s, n] = torch.exp(correct_t_logprob - logprobs[s, n])
-                        student_correction[s, n] = 1
+                # Extract batch of indicators, actions, and states for the current step across all environments
+                h = indicators[s]  # Shape: (num_envs,)
+                a = actions[s]  # Shape: (num_envs,)
+                states = obs[s]  # Shape: (num_envs, ...)
+                # Evaluate student and teacher log probabilities as a batch
+                _, student_logprobs, _, _ = agent.get_action_and_value(states, a.long())  # Assuming batched input is supported
+                _, teacher_logprobs, _, _ = teacher_source_agent.get_action_and_value(states, a.long())  # Assuming batched input is supported)
+
+                # Calculate corrections using vectorized operations
+                teacher_ratio = torch.clamp(torch.exp(teacher_logprobs - student_logprobs), -0.2, 0.2)
+                student_ratio = torch.clamp(torch.exp(student_logprobs - teacher_logprobs), -0.2, 0.2)
+                teacher_correction[s] = torch.where(h == 1, torch.ones_like(teacher_correction[s]), teacher_ratio)
+                student_correction[s] = torch.where(h == 1, student_ratio, torch.ones_like(student_correction[s]))
 
         b_student_correction = student_correction.reshape(-1)
         b_teacher_correction = teacher_correction.reshape(-1)
@@ -422,31 +426,32 @@ if __name__ == "__main__":
 
                 mb_advantages = b_advantages[mb_inds]
                 if args.norm_adv:
+                    mb_advantages = mb_advantages * mb_rho_s
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
                 # Policy loss
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                pg_loss = torch.max(pg_loss1 * mb_rho_s, pg_loss2 * mb_rho_s).mean()
 
                 # Value loss
                 newvalue = newvalue.view(-1)
                 if args.clip_vloss:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2 * mb_rho_s
                     v_clipped = b_values[mb_inds] + torch.clamp(
                         newvalue - b_values[mb_inds],
                         -args.vf_clip_coef,
                         args.vf_clip_coef,
                     )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2 * mb_rho_s
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                entropy_loss = entropy.mean()
+                entropy_loss = (entropy * mb_rho_s).mean()
+
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
-                loss = torch.mean(loss * mb_rho_s)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -456,12 +461,10 @@ if __name__ == "__main__":
                 # Teacher loss
                 mb_rho_t = b_teacher_correction[mb_inds]
                 teacher_newvalue = teacher_target_agent.get_value(b_obs[mb_inds]).view(-1)
-                teacher_v_loss = ((teacher_newvalue - b_returns[mb_inds]) ** 2).mean()
-
-                teacher_loss = torch.mean(teacher_v_loss * mb_rho_t)
+                teacher_v_loss = ((teacher_newvalue - b_returns[mb_inds]) ** 2 * mb_rho_t).mean()
 
                 teacher_optimizer.zero_grad()
-                teacher_loss.backward()
+                teacher_v_loss.backward()
                 teacher_optimizer.step()
 
             if args.target_kl is not None and approx_kl > args.target_kl:
@@ -474,7 +477,7 @@ if __name__ == "__main__":
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/teacher_value_loss", teacher_loss.item(), global_step)
+        writer.add_scalar("losses/teacher_value_loss", teacher_v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
         writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
