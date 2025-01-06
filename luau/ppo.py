@@ -9,6 +9,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from minigrid.wrappers import ImgObsWrapper
+from torch.nn import functional as f
 from torch import nn, optim
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
@@ -75,6 +76,10 @@ def parse_args() -> argparse.Namespace:
         help="the size of the grid")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
         help="the coefficient for the value clipping")
+    parser.add_argument("--kl-loss", type=bool, default=False,
+        help="Toggle kl loss")
+    parser.add_argument("--kl-coef", type=float, default=0.5,
+        help="kl coefficient for the loss")
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
@@ -107,6 +112,15 @@ def largest_divisor(n: int) -> int:
         if n % i == 0:
             return i
     return 1  # If no divisors found, return 1
+
+
+def adjust_beta(beta: float, kl: float, target_kl: float) -> float:
+    """Adjust the beta parameter based on the KL divergence."""
+    if kl > 1.5 * target_kl:
+        beta *= 2  # Increase beta (reduce updates)
+    elif kl < 0.5 * target_kl:
+        beta /= 2  # Decrease beta (allow larger updates)
+    return beta
 
 
 class Agent(nn.Module):
@@ -167,7 +181,7 @@ if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
     writer = SummaryWriter(f"runs/{run_name}")
-    model_dir = Path(f"runs/{run_name}/model")
+    model_dir = Path(f"model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{model_dir}/{run_name}.pth"
     writer.add_text(
@@ -329,6 +343,8 @@ if __name__ == "__main__":
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
+                kl_div = f.kl_div(b_logprobs[mb_inds], newlogprob, reduction="batchmean", log_target=True)
+
                 # Value loss
                 newvalue = newvalue.view(-1)
                 if args.clip_vloss:
@@ -346,6 +362,9 @@ if __name__ == "__main__":
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                if args.kl_loss:
+                    loss = loss + args.kl_coef * kl_div
+                    args.kl_coeff = adjust_beta(args.kl_coef, kl_div.item(), args.target_kl)
 
                 optimizer.zero_grad()
                 loss.backward()
