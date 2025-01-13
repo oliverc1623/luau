@@ -1,6 +1,5 @@
 # %%
 import argparse
-import copy
 import logging
 import random
 from datetime import datetime
@@ -62,7 +61,6 @@ class Trainer:
         self.env_name = config["env_name"]
         self.door_locked = config["door_locked"]
         self.size = config["size"]
-        self.has_continuous_action_space = config["has_continuous_action_space"]
         self.save_frames = config["save_frames"]
         self.horizon = config["horizon"]
         self.max_training_timesteps = config["max_training_timesteps"]
@@ -70,6 +68,9 @@ class Trainer:
         self.image_observation = config["image_observation"]
         if self.algorithm == "IAAPPO":
             self.teacher_model_path = config["teacher_model_path"]
+            self.introspection_decay = config["introspection_decay"]
+            self.burn_in = config["burn_in"]
+            self.introspection_threshold = config["introspection_threshold"]
         ################ PPO hyperparameters ################
         self.minibatch_size = config["minibatch_size"]
         self.k_epochs = config["k_epochs"]
@@ -109,12 +110,6 @@ class Trainer:
             img = env.render()
             plt.imsave(f"frames/frame_{time_step:06}.png", img)
 
-    def select_action(self, ppo_agent: PPO, state: dict, time_step: int) -> int:
-        """Select an action based on the algorithm."""
-        if self.algorithm == "IAAPPO":
-            return ppo_agent.select_action(state, time_step)
-        return ppo_agent.select_action(state)
-
     def _make_env(self, seed: int) -> IntrospectiveEnv:
         """Create the environment."""
 
@@ -134,7 +129,7 @@ class Trainer:
         envs = [self._make_env(seed + i) for i in range(self.num_envs)]
         return gym.vector.AsyncVectorEnv(envs, shared_memory=False)
 
-    def get_ppo_agent(self, env: gym.vector.AsyncVectorEnv) -> PPO:
+    def get_ppo_agent(self, env: gym.vector.AsyncVectorEnv) -> PPO | IAAPPO:
         """Get the PPO agent."""
         # State space dimension
         state_dim = env.env_fns[0]().observation_space["image"].shape[2]
@@ -157,16 +152,30 @@ class Trainer:
             raise ValueError(msg)
 
         if self.algorithm == "IAAPPO":
-            teacher_ppo_agent = copy.deepcopy(ppo_agent)
-            teacher_ppo_agent.load(self.teacher_model_path)
-            ppo_agent = ALGORITHM_CLASSES[self.algorithm](
-                state_dim=state_dim,
-                action_dim=action_dim,
+            teacher_ppo_agent = PPO(
+                env=env,
                 lr_actor=self.lr_actor,
                 gamma=self.gamma,
                 k_epochs=self.k_epochs,
                 eps_clip=self.eps_clip,
-                teacher_ppo_agent=teacher_ppo_agent,
+                minibatch_size=self.minibatch_size,
+                horizon=self.horizon,
+                gae_lambda=self.gae_lambda,
+            )
+            teacher_ppo_agent.load(self.teacher_model_path)
+            ppo_agent = ALGORITHM_CLASSES[self.algorithm](
+                env=env,
+                lr_actor=self.lr_actor,
+                gamma=self.gamma,
+                k_epochs=self.k_epochs,
+                eps_clip=self.eps_clip,
+                minibatch_size=self.minibatch_size,
+                horizon=self.horizon,
+                gae_lambda=self.gae_lambda,
+                teacher_source=teacher_ppo_agent,
+                introspection_decay=self.introspection_decay,
+                burn_in=self.burn_in,
+                introspection_threshold=self.introspection_threshold,
             )
         return ppo_agent
 
@@ -212,6 +221,8 @@ class Trainer:
             frac = 1.0 - (update - 1.0) / num_updates
             lrnow = frac * self.lr_actor
             ppo_agent.optimizer.param_groups[0]["lr"] = lrnow
+            if self.algorithm == "IAAPPO":
+                ppo_agent.teacher_target.optimizer.param_groups[0]["lr"] = lrnow
             for step in range(self.horizon):
                 # Preprocess the next observation and store relevant data in the PPO agent's buffer
                 obs = ppo_agent.preprocess(next_obs)
@@ -222,7 +233,10 @@ class Trainer:
 
                 # Select actions and store them in the PPO agent's buffer
                 with torch.no_grad():
-                    actions, action_logprobs, state_vals = ppo_agent.policy(obs)
+                    if self.algorithm == "IAAPPO":
+                        actions, action_logprobs, state_vals = ppo_agent.select_action(obs, step, time_step)  # obs, step, global timestep
+                    else:
+                        actions, action_logprobs, state_vals = ppo_agent.select_action(obs)
                     ppo_agent.buffer.state_values[step] = state_vals
                 ppo_agent.buffer.actions[step] = actions
                 ppo_agent.buffer.logprobs[step] = action_logprobs

@@ -1,17 +1,17 @@
-import argparse  # noqa: I001
+import argparse
 import random
 import time
 from distutils.util import strtobool
 from pathlib import Path
 
-import minigrid  # import minigrid before gym to register envs  # noqa: F401
 import gymnasium as gym
 import numpy as np
 import torch
 from minigrid.wrappers import ImgObsWrapper
-from torch.nn import functional as f
 from torch import nn, optim
+from torch.distributions.bernoulli import Bernoulli
 from torch.distributions.categorical import Categorical
+from torch.nn import functional as f
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=str(Path(__file__).stem),
         help="the name of this experiment")
-    parser.add_argument("--gym-id", type=str, default="MiniGrid-Empty-5x5-v0",
+    parser.add_argument("--gym-id", type=str, default="CartPole-v1",
         help="the id of the gym environment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
         help="the learning rate of the optimizer")
@@ -36,6 +36,12 @@ def parse_args() -> argparse.Namespace:
         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
         help="if toggled, cuda will be enabled by default")
+    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+        help="if toggled, this experiment will be tracked with Weights and Biases")
+    parser.add_argument("--wandb-project-name", type=str, default="ppo-implementation-details",
+        help="the wandb's project name")
+    parser.add_argument("--wandb-entity", type=str, default=None,
+        help="the entity (team) of wandb's project")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="weather to capture videos of the agent performances (check out `videos` folder)")
 
@@ -76,6 +82,14 @@ def parse_args() -> argparse.Namespace:
         help="the size of the grid")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
         help="the coefficient for the value clipping")
+    parser.add_argument("--teacher-model", type=str, required=True,
+        help="the path to the teacher model")
+    parser.add_argument("--introspection-threshold", type=float, default=0.9,
+        help="the threshold for introspection")
+    parser.add_argument("--introspection-decay", type=float, default=0.99999,
+        help="the decay rate for introspection")
+    parser.add_argument("--burn-in", type=int, default=0,
+        help="the burn-in period for introspection")
     parser.add_argument("--kl-loss", type=bool, default=False,
         help="Toggle kl loss")
     parser.add_argument("--kl-coef", type=float, default=0.5,
@@ -95,7 +109,7 @@ def layer_init(layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.
 
 
 def preprocess(image: np.array) -> dict:
-    """Preprocess the input for a grid-based environment, padding it to (12, 12, channels)."""
+    """Preprocess the input for a grid-based environment."""
     image = torch.from_numpy(image).float()
     if image.ndim == RGB_CHANNEL:  # Single image case with shape (height, width, channels)
         image = image.permute(2, 0, 1)
@@ -180,6 +194,18 @@ class Agent(nn.Module):
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
+    if args.track:
+        import wandb
+
+        wandb.init(
+            project=args.wandb_project_name,
+            entity=args.wandb_entity,
+            sync_tensorboard=True,
+            config=vars(args),
+            name=run_name,
+            monitor_gym=True,
+            save_code=True,
+        )
     writer = SummaryWriter(f"runs/{run_name}")
     model_dir = Path(f"model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -225,21 +251,37 @@ if __name__ == "__main__":
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
+    # Initialize teacher model
+    teacher_source_agent = Agent(envs).to(device)
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    for param in teacher_source_agent.parameters():
+        param.requires_grad = False
+
+    teacher_target_agent = Agent(envs).to(device)
+    teacher_target_agent.load_state_dict(torch.load(args.teacher_model))
+    for param in list(teacher_target_agent.actor.parameters()) + list(teacher_target_agent.image_conv.parameters()):
+        param.requires_grad = False
+    for param in teacher_target_agent.critic.parameters():
+        param.requires_grad = True
+    teacher_optimizer = torch.optim.Adam(teacher_target_agent.critic.parameters(), lr=0.00001, eps=1e-5)
+
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
     next_obs, info = envs.reset()
     next_obs = preprocess(next_obs)
     next_done = torch.zeros(args.num_envs).to(device)
+    advice_counter = torch.zeros(args.num_envs).to(device)
 
     # ALGO Logic: Storage setup
     observation_shape = next_obs.shape[1:]
     obs = torch.zeros((args.num_steps, args.num_envs, *observation_shape)).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs, *envs.single_action_space.shape)).to(device)
+    actions = torch.zeros((args.num_steps, args.num_envs, *envs.single_action_space.shape), dtype=torch.int64).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    indicators = torch.zeros((args.num_steps, args.num_envs)).to(device)
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
@@ -253,9 +295,44 @@ if __name__ == "__main__":
             obs[step] = next_obs
             dones[step] = next_done
 
-            # ALGO LOGIC: action logic
+            # Introspection
+            h_t = torch.zeros(args.num_envs).to(device)
+            probability = args.introspection_decay ** max(0, global_step - args.burn_in)
+            p = Bernoulli(probability).sample([args.num_envs]).to(device)
+            if global_step > args.burn_in:
+                teacher_source_vals = teacher_source_agent.get_value(next_obs).flatten()
+                teacher_target_vals = teacher_target_agent.get_value(next_obs).flatten()
+                # Calculate absolute differences for introspection across the batch
+                abs_diff = torch.abs(teacher_target_vals - teacher_source_vals)
+                # Update h_t based on the introspection threshold
+                h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
+            advice_counter += h_t
+            indicators[step] = h_t
+
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
+                teacher_mask = h_t == 1
+                student_mask = h_t == 0
+                num_envs = next_obs.shape[0]
+                action = torch.zeros((num_envs, *envs.single_action_space.shape), dtype=torch.int64, device=device)
+                logprob = torch.zeros(num_envs, device=device)
+                value = torch.zeros(num_envs, 1, device=device)
+                # If any environment needs teacher actions, run teacher forward pass for that subset
+                teacher_indices = teacher_mask.nonzero(as_tuple=True)[0]
+                if teacher_indices.numel() > 0:
+                    teacher_obs = next_obs[teacher_indices]
+                    t_action, t_logprob, _, t_value = teacher_source_agent.get_action_and_value(teacher_obs)
+                    action[teacher_indices] = t_action
+                    logprob[teacher_indices] = t_logprob
+                    value[teacher_indices] = t_value
+                # If any environment needs student actions, run student forward pass for that subset
+                student_indices = student_mask.nonzero(as_tuple=True)[0]
+                if student_indices.numel() > 0:
+                    student_obs = next_obs[student_indices]
+                    s_action, s_logprob, _, s_value = agent.get_action_and_value(student_obs)
+                    action[student_indices] = s_action
+                    logprob[student_indices] = s_logprob
+                    value[student_indices] = s_value
+                # Store the final values
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
@@ -274,10 +351,12 @@ if __name__ == "__main__":
                 episodic_lengths = info["episode"]["l"][completed_mask]
 
                 # Log each completed episode
-                for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
-                    print(f"global_step={global_step}, episodic_return={ep_return}")
+                for ep_return, ep_length, ep_advice in zip(episodic_returns, episodic_lengths, advice_counter, strict=False):
+                    print(f"global_step={global_step}, episodic_return={ep_return}, advice_counter={ep_advice}")
                     writer.add_scalar("charts/episodic_return", ep_return, global_step)
                     writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                    writer.add_scalar("charts/advice_issued", ep_advice, global_step)
+                advice_counter[completed_mask] = 0
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -315,6 +394,29 @@ if __name__ == "__main__":
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
 
+        # Initialize corrections
+        student_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
+        teacher_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
+
+        with torch.no_grad():
+            for s in range(args.num_steps):
+                # Extract batch of indicators, actions, and states for the current step across all environments
+                h = indicators[s]  # Shape: (num_envs,)
+                a = actions[s]  # Shape: (num_envs,)
+                states = obs[s]  # Shape: (num_envs, ...)
+                # Evaluate student and teacher log probabilities as a batch
+                _, student_logprobs, _, _ = agent.get_action_and_value(states, a.long())  # Assuming batched input is supported
+                _, teacher_logprobs, _, _ = teacher_source_agent.get_action_and_value(states, a.long())  # Assuming batched input is supported)
+
+                # Calculate corrections using vectorized operations
+                teacher_ratio = torch.clamp(torch.exp(teacher_logprobs - student_logprobs), -0.2, 0.2)
+                student_ratio = torch.clamp(torch.exp(student_logprobs - teacher_logprobs), -0.2, 0.2)
+                teacher_correction[s] = torch.where(h == 1, torch.ones_like(teacher_correction[s]), teacher_ratio)
+                student_correction[s] = torch.where(h == 1, student_ratio, torch.ones_like(student_correction[s]))
+
+        b_student_correction = student_correction.reshape(-1)
+        b_teacher_correction = teacher_correction.reshape(-1)
+
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []
@@ -323,6 +425,7 @@ if __name__ == "__main__":
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
+                mb_rho_s = b_student_correction[mb_inds]
 
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
@@ -336,31 +439,34 @@ if __name__ == "__main__":
 
                 mb_advantages = b_advantages[mb_inds]
                 if args.norm_adv:
+                    mb_advantages = mb_advantages * mb_rho_s
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
                 # Policy loss
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                pg_loss = torch.max(pg_loss1 * mb_rho_s, pg_loss2 * mb_rho_s).mean()
 
+                # KL divergence regularization
                 kl_div = f.kl_div(b_logprobs[mb_inds], newlogprob, reduction="batchmean", log_target=True)
 
                 # Value loss
                 newvalue = newvalue.view(-1)
                 if args.clip_vloss:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2 * mb_rho_s
                     v_clipped = b_values[mb_inds] + torch.clamp(
                         newvalue - b_values[mb_inds],
                         -args.vf_clip_coef,
                         args.vf_clip_coef,
                     )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2 * mb_rho_s
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                entropy_loss = entropy.mean()
+                entropy_loss = (entropy * mb_rho_s).mean()
+
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
                 if args.kl_loss:
                     loss = loss + args.kl_coef * kl_div
@@ -370,6 +476,15 @@ if __name__ == "__main__":
                 loss.backward()
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
+
+                # Teacher loss
+                mb_rho_t = b_teacher_correction[mb_inds]
+                teacher_newvalue = teacher_target_agent.get_value(b_obs[mb_inds]).view(-1)
+                teacher_v_loss = ((teacher_newvalue - b_returns[mb_inds]) ** 2 * mb_rho_t).mean()
+
+                teacher_optimizer.zero_grad()
+                teacher_v_loss.backward()
+                teacher_optimizer.step()
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
@@ -381,6 +496,7 @@ if __name__ == "__main__":
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+        writer.add_scalar("losses/teacher_value_loss", teacher_v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
         writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)

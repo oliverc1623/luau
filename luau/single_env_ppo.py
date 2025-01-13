@@ -40,8 +40,8 @@ def parse_args() -> argparse.Namespace:
         help="weather to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--num-envs", type=int, default=4,
-        help="the number of parallel game environments")
+    parser.add_argument("--num-envs", type=int, default=1,
+        help="the number of parallel game environments: just one. DO NOT CHANGE.")
     parser.add_argument("--num-steps", type=int, default=128,
         help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
