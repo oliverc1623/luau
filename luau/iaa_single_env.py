@@ -253,17 +253,17 @@ if __name__ == "__main__":
 
     # Initialize teacher model
     teacher_source_agent = Agent(envs).to(device)
-    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
     for param in teacher_source_agent.parameters():
         param.requires_grad = False
 
     teacher_target_agent = Agent(envs).to(device)
-    teacher_target_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_target_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
     for param in list(teacher_target_agent.actor.parameters()) + list(teacher_target_agent.image_conv.parameters()):
         param.requires_grad = False
     for param in teacher_target_agent.critic.parameters():
         param.requires_grad = True
-    teacher_optimizer = torch.optim.Adam(teacher_target_agent.critic.parameters(), lr=0.00001, eps=1e-5)
+    teacher_optimizer = torch.optim.Adam(teacher_target_agent.critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -275,13 +275,13 @@ if __name__ == "__main__":
 
     # ALGO Logic: Storage setup
     observation_shape = next_obs.shape[1:]
-    obs = torch.zeros((args.num_steps, args.num_envs, *observation_shape)).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs, *envs.single_action_space.shape), dtype=torch.int64).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    indicators = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    obs = torch.zeros((args.num_steps, args.num_envs, *observation_shape)).to(device).detach()
+    actions = torch.zeros((args.num_steps, args.num_envs, *envs.single_action_space.shape), dtype=torch.int64).to(device).detach()
+    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device).detach()
+    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device).detach()
+    dones = torch.zeros((args.num_steps, args.num_envs)).to(device).detach()
+    values = torch.zeros((args.num_steps, args.num_envs)).to(device).detach()
+    indicators = torch.zeros((args.num_steps, args.num_envs)).to(device).detach()
 
     for update in range(1, num_updates + 1):
         # Annealing the rate if instructed to do so.
@@ -299,6 +299,7 @@ if __name__ == "__main__":
             h_t = 0
             probability = args.introspection_decay ** max(0, global_step - args.burn_in)
             p = Bernoulli(probability).sample([args.num_envs]).to(device)
+            abs_diff = 0
             if global_step > args.burn_in and p == 1:
                 teacher_source_vals = teacher_source_agent.get_value(next_obs).flatten()
                 teacher_target_vals = teacher_target_agent.get_value(next_obs).flatten()
@@ -312,9 +313,9 @@ if __name__ == "__main__":
             if h_t:
                 with torch.no_grad():
                     action, logprob, _, value = teacher_source_agent.get_action_and_value(next_obs)
-                    values[step] = value.flatten()
-                actions[step] = action
-                logprobs[step] = logprob
+                    values[step] = value.flatten().detach()
+                actions[step] = action.detach()
+                logprobs[step] = logprob.detach()
             else:
                 with torch.no_grad():
                     action, logprob, _, value = agent.get_action_and_value(next_obs)
@@ -342,6 +343,7 @@ if __name__ == "__main__":
                     writer.add_scalar("charts/episodic_length", ep_length, global_step)
                     writer.add_scalar("charts/advice_issued", ep_advice, global_step)
                     writer.add_scalar("charts/abs_diff", abs_diff, global_step)
+                    writer.add_scalar("charts/probability", probability, global_step)
                 advice_counter[completed_mask] = 0
 
         # bootstrap value if not done
@@ -390,8 +392,11 @@ if __name__ == "__main__":
                 a = actions[s]
                 states = obs[s]
 
-                _, student_logprobs, _, _ = agent.get_action_and_value(states, a.long())  # Assuming batched input is supported
-                _, teacher_logprobs, _, _ = teacher_source_agent.get_action_and_value(states, a.long())  # Assuming batched input is supported)
+                _, student_logprobs, _, _ = agent.get_action_and_value(states.detach(), a.long().detach())  # Assuming batched input is supported
+                _, teacher_logprobs, _, _ = teacher_source_agent.get_action_and_value(
+                    states.detach(),
+                    a.long().detach(),
+                )  # Assuming batched input is supported)
 
                 # Calculate corrections using vectorized operations
                 teacher_ratio = torch.exp(teacher_logprobs - student_logprobs)
@@ -413,10 +418,10 @@ if __name__ == "__main__":
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
-                mb_rho_s = b_student_correction[mb_inds]
+                mb_rho_s = b_student_correction[mb_inds].detach()
 
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
-                logratio = newlogprob - b_logprobs[mb_inds]
+                logratio = newlogprob - b_logprobs[mb_inds].detach()
                 ratio = logratio.exp()
 
                 with torch.no_grad():
@@ -425,7 +430,7 @@ if __name__ == "__main__":
                     approx_kl = ((ratio - 1) - logratio).mean()
                     clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
-                mb_advantages = b_advantages[mb_inds]
+                mb_advantages = b_advantages[mb_inds].detach()
                 if args.norm_adv:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
