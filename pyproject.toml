@@ -22,9 +22,9 @@ invoke = "^2.2.0"
 beautifulsoup4 = "^4.12.3"
 pre-commit = "^3.7.1"
 ipykernel = "^6.29.4"
-torch = "^2.2.2"
-torchaudio = "^2.2.2"
-torchvision = "^0.17.2"
+torch = {version = "^2.5.0+cu124", source = "pytorch_cuda"}
+torchaudio = {version = "^2.5.0+cu124", source = "pytorch_cuda"}
+torchvision = {version = "^0.20.0+cu124", source = "pytorch_cuda"}
 numpy = "^1.26.4"
 pandas = "^2.2.2"
 matplotlib = "^3.9.0"
@@ -33,6 +33,11 @@ scikit-image = "^0.23.2"
 minigrid = "^2.3.1"
 tensorboard = "^2.18.0"
 wandb = "^0.19.1"
+
+[[tool.poetry.source]]
+name = "pytorch_cuda"
+url = "https://download.pytorch.org/whl/cu124"
+priority = "explicit"
 
 [tool.coverage.run]
 branch = true
