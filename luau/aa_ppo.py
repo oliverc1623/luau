@@ -17,6 +17,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 RGB_CHANNEL = 3
 
+gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.iaa_env:FourRoomDoorKeyLocked")
+
 
 def parse_args() -> argparse.Namespace:
     """Parse the arguments for the script."""
@@ -76,8 +78,6 @@ def parse_args() -> argparse.Namespace:
         help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None,
         help="the target KL divergence threshold")
-    parser.add_argument("--locked", type=bool, default=False,
-        help="Toggle whether the environment is locked after the first observation")
     parser.add_argument("--grid-size", type=int, default=6,
         help="the size of the grid")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
@@ -479,8 +479,8 @@ if __name__ == "__main__":
 
                 # Teacher loss
                 mb_rho_t = b_teacher_correction[mb_inds]
-                teacher_newvalue = teacher_target_agent.get_value(b_obs[mb_inds]).view(-1)
-                teacher_v_loss = ((teacher_newvalue - b_returns[mb_inds]) ** 2 * mb_rho_t).mean()
+                teacher_newvalue = teacher_target_agent.get_value(b_obs[mb_inds].detach()).view(-1)
+                teacher_v_loss = ((teacher_newvalue - b_returns[mb_inds].detach()) ** 2 * mb_rho_t).mean()
 
                 teacher_optimizer.zero_grad()
                 teacher_v_loss.backward()

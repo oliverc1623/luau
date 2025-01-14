@@ -17,6 +17,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 RGB_CHANNEL = 3
 
+gym.register(id="FourRoomDoorKey-v0", entry_point="luau.iaa_env:FourRoomDoorKey")
+
 
 def parse_args() -> argparse.Namespace:
     """Parse the arguments for the script."""

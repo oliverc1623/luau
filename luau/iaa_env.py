@@ -9,7 +9,7 @@ from minigrid.minigrid_env import MiniGridEnv
 
 
 # %%
-class IntrospectiveEnv(MiniGridEnv):
+class FourRoomDoorKey(MiniGridEnv):
     """Environment from IAA."""
 
     def __init__(
@@ -20,6 +20,69 @@ class IntrospectiveEnv(MiniGridEnv):
         max_steps: int | None = None,
         *,
         locked: bool = False,
+        **kwargs: str,
+    ):
+        self.size = size
+        self.agent_start_pos = agent_start_pos
+        self.agent_start_dir = agent_start_dir
+        self.locked = locked
+        mission_space = MissionSpace(mission_func=self._gen_mission)
+
+        self.max_steps = max_steps
+        if self.max_steps is None:
+            self.max_steps = 10 * size**2
+
+        super().__init__(
+            mission_space=mission_space,
+            grid_size=self.size,
+            # Set this to True for maximum speed
+            see_through_walls=True,
+            max_steps=self.max_steps,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _gen_mission() -> str:
+        """Generate the mission."""
+        return "get to the green goal square"
+
+    def _gen_grid(self, width: int, height: int) -> Grid:
+        # Create an empty grid
+        self.grid = Grid(width, height)
+
+        # Generate the surrounding walls
+        self.grid.wall_rect(0, 0, width, height)
+        split_indx = 4
+
+        if self.locked:
+            self.grid.vert_wall(split_indx, 0)
+            self.grid.horz_wall(0, split_indx)
+            self.put_obj(Floor("blue"), split_indx, 2)
+            self.put_obj(Floor("blue"), split_indx, 6)
+            self.put_obj(Door("red", is_locked=True), 6, split_indx)
+            self.place_obj(obj=Key("red"), top=(0, 0), size=(8, split_indx))
+        else:
+            self.grid.vert_wall(split_indx, 0)
+            self.grid.horz_wall(0, split_indx)
+            self.put_obj(Floor("blue"), split_indx, 2)
+            self.put_obj(Floor("blue"), split_indx, 6)
+            self.put_obj(Floor("blue"), 6, split_indx)
+
+        self.place_agent(top=(0, 0), size=(8, 4))
+        self.place_obj(Goal(), top=(0, 5), size=(8, 4))
+
+
+class FourRoomDoorKeyLocked(MiniGridEnv):
+    """Environment from IAA."""
+
+    def __init__(
+        self,
+        size: int = 9,
+        agent_start_pos: tuple[int, int] | None = None,
+        agent_start_dir: int = 0,
+        max_steps: int | None = None,
+        *,
+        locked: bool = True,
         **kwargs: str,
     ):
         self.size = size
@@ -138,12 +201,12 @@ class SmallIntrospectiveEnv(MiniGridEnv):
 
 
 # %%
-def _make_env(seed: int) -> IntrospectiveEnv:
+def _make_env(seed: int) -> FourRoomDoorKey:
     """Create the environment."""
 
-    def _init() -> IntrospectiveEnv:
+    def _init() -> FourRoomDoorKey:
         rng = np.random.default_rng(seed)
-        env = IntrospectiveEnv(rng=rng, size=9, locked=False, render_mode="rgb_array")
+        env = FourRoomDoorKey(rng=rng, size=9, locked=False, render_mode="rgb_array")
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.reset(seed=seed)
         env.action_space.seed(seed)
@@ -153,7 +216,7 @@ def _make_env(seed: int) -> IntrospectiveEnv:
     return _init
 
 
-def get_env(seed: int, num_envs: int) -> IntrospectiveEnv:
+def get_env(seed: int, num_envs: int) -> FourRoomDoorKey:
     """Get the environment."""
     envs = [_make_env(seed + i) for i in range(num_envs)]  # Different seed per env
     envs = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
