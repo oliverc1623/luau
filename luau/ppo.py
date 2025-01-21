@@ -17,7 +17,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 RGB_CHANNEL = 3
 
-gym.register(id="FourRoomDoorKey-v0", entry_point="luau.iaa_env:FourRoomDoorKey")
+gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
+gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,10 +73,6 @@ def parse_args() -> argparse.Namespace:
         help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None,
         help="the target KL divergence threshold")
-    parser.add_argument("--locked", type=bool, default=False,
-        help="Toggle whether the environment is locked after the first observation")
-    parser.add_argument("--grid-size", type=int, default=6,
-        help="the size of the grid")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
         help="the coefficient for the value clipping")
     parser.add_argument("--kl-loss", type=bool, default=False,
