@@ -1,6 +1,7 @@
 # %%
 
 import numpy as np
+from gymnasium.spaces import Discrete
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
 from minigrid.core.world_object import Door, Goal, Wall
@@ -62,6 +63,8 @@ class TrafficLightEnv(MiniGridEnv):
             max_steps=max_steps,
             **kwargs,
         )
+        self.action_space = Discrete(self.actions.forward + 1)
+        self.reward_range = (-1, 1)
 
     def _gen_grid(self, width: int, height: int) -> None:
         # Create an empty grid
