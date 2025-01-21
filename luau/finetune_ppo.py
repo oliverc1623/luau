@@ -69,10 +69,6 @@ def parse_args() -> argparse.Namespace:
         help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None,
         help="the target KL divergence threshold")
-    parser.add_argument("--locked", type=bool, default=False,
-        help="Toggle whether the environment is locked after the first observation")
-    parser.add_argument("--grid-size", type=int, default=6,
-        help="the size of the grid")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
         help="the coefficient for the value clipping")
     parser.add_argument("--teacher-model", type=str, required=True,
@@ -116,55 +112,65 @@ class Agent(nn.Module):
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        # Actor network
         c = envs.single_observation_space.shape[-1]
-        self.actor = nn.Sequential(
-            layer_init(nn.Conv2d(c, 16, (2, 2))),
+        # Define image embedding
+        self.image_conv = nn.Sequential(
+            nn.Conv2d(c, 16, (2, 2)),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
-            layer_init(nn.Conv2d(16, 32, (2, 2))),
+            nn.Conv2d(16, 32, (2, 2)),
             nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, (2, 2))),
+            nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU(),
-            nn.Flatten(),
-            layer_init(nn.Linear(64, 64)),
+        )
+        n = envs.single_observation_space.shape[0]
+        m = envs.single_observation_space.shape[1]
+        self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
+
+        # Define actor's model
+        self.actor = nn.Sequential(
+            nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            layer_init(nn.Linear(64, envs.single_action_space.n), std=0.01),
+            nn.Linear(64, envs.single_action_space.n),
         )
 
-        # Critic network
+        # Define critic's model
         self.critic = nn.Sequential(
-            layer_init(nn.Conv2d(c, 16, (2, 2))),
-            nn.ReLU(),
-            nn.MaxPool2d((2, 2)),
-            layer_init(nn.Conv2d(16, 32, (2, 2))),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, (2, 2))),
-            nn.ReLU(),
-            nn.Flatten(),
-            layer_init(nn.Linear(64, 64)),
+            nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
+            nn.Linear(64, 1),
         )
 
     def get_value(self, x: torch.tensor) -> torch.tensor:
         """Get the value of the state."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
         return self.critic(x)
 
     def get_action_and_value(self, x: torch.tensor, action: int | None = None) -> tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
         """Get the action and value of the state."""
-        logits = self.actor(x)
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        embedding = x
+        logits = self.actor(embedding)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+        critic_val = self.critic(embedding)
+        return action, probs.log_prob(action), probs.entropy(), critic_val
+
+    def get_logits(self, x: torch.tensor) -> torch.tensor:
+        """Get the logits of the state."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        return self.actor(x)
 
 
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"/../../../pvcvolume/runs/{run_name}")
-    model_dir = Path(f"/../../../pvcvolume/runs/{run_name}/model")
+    writer = SummaryWriter(f"runs/{run_name}")
+    model_dir = Path(f"model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{model_dir}/{run_name}.pth"
     writer.add_text(
@@ -207,6 +213,10 @@ if __name__ == "__main__":
 
     agent = Agent(envs).to(device)
     agent.load_state_dict(torch.load(args.teacher_model))
+    for param in agent.image_conv.parameters():
+        param.requires_grad = False
+    for param in list(agent.actor.parameters()) + list(agent.critic.parameters()):
+        param.requires_grad = True
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # TRY NOT TO MODIFY: start the game
