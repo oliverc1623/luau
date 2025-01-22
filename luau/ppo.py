@@ -18,6 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 RGB_CHANNEL = 3
 
 gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
+gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
 gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
 
 
@@ -179,8 +180,8 @@ class Agent(nn.Module):
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"runs/{run_name}")
-    model_dir = Path(f"model/{run_name}")
+    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
+    model_dir = Path(f"../../pvcvolume/model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{model_dir}/{run_name}.pth"
     writer.add_text(

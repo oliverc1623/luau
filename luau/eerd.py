@@ -18,6 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 RGB_CHANNEL = 3
 
 gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
+gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
 
 
 def parse_args() -> argparse.Namespace:
