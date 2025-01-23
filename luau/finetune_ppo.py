@@ -9,17 +9,12 @@ import gymnasium as gym
 import numpy as np
 import torch
 from minigrid.wrappers import ImgObsWrapper
-from torch.nn import functional as f
 from torch import nn, optim
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
 
 RGB_CHANNEL = 3
-
-gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
-gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
-gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=str(Path(__file__).stem),
         help="the name of this experiment")
-    parser.add_argument("--gym-id", type=str, default="MiniGrid-Empty-5x5-v0",
+    parser.add_argument("--gym-id", type=str, default="MiniGrid-DoorKey-5x5-v0",
         help="the id of the gym environment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
         help="the learning rate of the optimizer")
@@ -76,10 +71,8 @@ def parse_args() -> argparse.Namespace:
         help="the target KL divergence threshold")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
         help="the coefficient for the value clipping")
-    parser.add_argument("--kl-loss", type=bool, default=False,
-        help="Toggle kl loss")
-    parser.add_argument("--kl-coef", type=float, default=0.5,
-        help="kl coefficient for the loss")
+    parser.add_argument("--teacher-model", type=str, required=True,
+        help="the path to the teacher model")
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
@@ -114,21 +107,11 @@ def largest_divisor(n: int) -> int:
     return 1  # If no divisors found, return 1
 
 
-def adjust_beta(beta: float, kl: float, target_kl: float) -> float:
-    """Adjust the beta parameter based on the KL divergence."""
-    if kl > 1.5 * target_kl:
-        beta *= 2  # Increase beta (reduce updates)
-    elif kl < 0.5 * target_kl:
-        beta /= 2  # Decrease beta (allow larger updates)
-    return beta
-
-
 class Agent(nn.Module):
     """The agent class for the PPO algorithm."""
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        # Actor network
         c = envs.single_observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
@@ -176,12 +159,18 @@ class Agent(nn.Module):
         critic_val = self.critic(embedding)
         return action, probs.log_prob(action), probs.entropy(), critic_val
 
+    def get_logits(self, x: torch.tensor) -> torch.tensor:
+        """Get the logits of the state."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        return self.actor(x)
+
 
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
-    model_dir = Path(f"../../pvcvolume/model/{run_name}")
+    writer = SummaryWriter(f"runs/{run_name}")
+    model_dir = Path(f"model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{model_dir}/{run_name}.pth"
     writer.add_text(
@@ -223,6 +212,11 @@ if __name__ == "__main__":
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
     agent = Agent(envs).to(device)
+    agent.load_state_dict(torch.load(args.teacher_model))
+    for param in agent.image_conv.parameters():
+        param.requires_grad = False
+    for param in list(agent.actor.parameters()) + list(agent.critic.parameters()):
+        param.requires_grad = True
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # TRY NOT TO MODIFY: start the game
@@ -343,8 +337,6 @@ if __name__ == "__main__":
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                kl_div = f.kl_div(b_logprobs[mb_inds], newlogprob, reduction="batchmean", log_target=True)
-
                 # Value loss
                 newvalue = newvalue.view(-1)
                 if args.clip_vloss:
@@ -362,9 +354,6 @@ if __name__ == "__main__":
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
-                if args.kl_loss:
-                    loss = loss + args.kl_coef * kl_div
-                    args.kl_coeff = adjust_beta(args.kl_coef, kl_div.item(), args.target_kl)
 
                 optimizer.zero_grad()
                 loss.backward()

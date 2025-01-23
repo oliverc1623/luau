@@ -19,7 +19,6 @@ RGB_CHANNEL = 3
 
 gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
 gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
-gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,6 +79,12 @@ def parse_args() -> argparse.Namespace:
         help="Toggle kl loss")
     parser.add_argument("--kl-coef", type=float, default=0.5,
         help="kl coefficient for the loss")
+    parser.add_argument("--teacher-model", type=str, required=True,
+        help="the path to the teacher model")
+    parser.add_argument("--lambda_", type=float, default=0.01,
+        help="entropy regularization coefficient")
+    parser.add_argument("--alpha", type=float, default=1.0,
+        help="the coefficient for the EERD loss")
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
@@ -128,7 +133,6 @@ class Agent(nn.Module):
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        # Actor network
         c = envs.single_observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
@@ -176,6 +180,23 @@ class Agent(nn.Module):
         critic_val = self.critic(embedding)
         return action, probs.log_prob(action), probs.entropy(), critic_val
 
+    def get_logits(self, x: torch.tensor) -> torch.tensor:
+        """Get the logits of the state."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        return self.actor(x)
+
+
+def compute_cross_entropy_loss(teacher_policy: Agent, student_policy: Agent, states: torch.tensor) -> torch.tensor:
+    """Compute cross-entropy alignment loss between teacher and student policies."""
+    with torch.no_grad():
+        teacher_logits = teacher_policy.get_logits(states)  # Teacher's logits
+    student_logits = student_policy.get_logits(states)  # Student's logits
+    teacher_probs = torch.softmax(teacher_logits, dim=-1)
+    log_student_probs = torch.log_softmax(student_logits, dim=-1)
+    cross_entropy_loss = -torch.sum(teacher_probs * log_student_probs, dim=1).mean()
+    return cross_entropy_loss
+
 
 if __name__ == "__main__":
     args = parse_args()
@@ -222,8 +243,13 @@ if __name__ == "__main__":
     envs = gym.vector.SyncVectorEnv(envs)
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
+    # Student model
     agent = Agent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    # Teacher model
+    teacher_source_agent = Agent(envs).to(device)
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -343,8 +369,6 @@ if __name__ == "__main__":
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                kl_div = f.kl_div(b_logprobs[mb_inds], newlogprob, reduction="batchmean", log_target=True)
-
                 # Value loss
                 newvalue = newvalue.view(-1)
                 if args.clip_vloss:
@@ -360,9 +384,17 @@ if __name__ == "__main__":
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
+                # Compute EERD loss
+                cross_entropy_loss = compute_cross_entropy_loss(teacher_source_agent, agent, b_obs[mb_inds])
                 entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                eerd_loss = cross_entropy_loss - args.lambda_ * entropy_loss
+
+                # Total loss
+                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef + args.alpha * eerd_loss
+
+                # kl loss
                 if args.kl_loss:
+                    kl_div = f.kl_div(b_logprobs[mb_inds], newlogprob, reduction="batchmean", log_target=True)
                     loss = loss + args.kl_coef * kl_div
                     args.kl_coeff = adjust_beta(args.kl_coef, kl_div.item(), args.target_kl)
 
@@ -387,6 +419,7 @@ if __name__ == "__main__":
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        writer.add_scalar("losses/eerd_loss", eerd_loss.item(), global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
