@@ -9,12 +9,17 @@ import gymnasium as gym
 import numpy as np
 import torch
 from minigrid.wrappers import ImgObsWrapper
+from torch.nn import functional as f
 from torch import nn, optim
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
 
 RGB_CHANNEL = 3
+
+gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
+gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
+gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,6 +76,10 @@ def parse_args() -> argparse.Namespace:
         help="the target KL divergence threshold")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
         help="the coefficient for the value clipping")
+    parser.add_argument("--kl-loss", type=bool, default=False,
+        help="Toggle kl loss")
+    parser.add_argument("--kl-coef", type=float, default=0.5,
+        help="kl coefficient for the loss")
     parser.add_argument("--teacher-model", type=str, required=True,
         help="the path to the teacher model")
     args = parser.parse_args()
@@ -105,6 +114,15 @@ def largest_divisor(n: int) -> int:
         if n % i == 0:
             return i
     return 1  # If no divisors found, return 1
+
+
+def adjust_beta(beta: float, kl: float, target_kl: float) -> float:
+    """Adjust the beta parameter based on the KL divergence."""
+    if kl > 1.5 * target_kl:
+        beta *= 2  # Increase beta (reduce updates)
+    elif kl < 0.5 * target_kl:
+        beta /= 2  # Decrease beta (allow larger updates)
+    return beta
 
 
 class Agent(nn.Module):
@@ -169,8 +187,8 @@ class Agent(nn.Module):
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"runs/{run_name}")
-    model_dir = Path(f"model/{run_name}")
+    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
+    model_dir = Path(f"../../pvcvolume/model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{model_dir}/{run_name}.pth"
     writer.add_text(
@@ -213,10 +231,6 @@ if __name__ == "__main__":
 
     agent = Agent(envs).to(device)
     agent.load_state_dict(torch.load(args.teacher_model))
-    for param in agent.image_conv.parameters():
-        param.requires_grad = False
-    for param in list(agent.actor.parameters()) + list(agent.critic.parameters()):
-        param.requires_grad = True
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # TRY NOT TO MODIFY: start the game
@@ -354,6 +368,11 @@ if __name__ == "__main__":
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+
+                if args.kl_loss:
+                    kl_div = f.kl_div(b_logprobs[mb_inds], newlogprob, reduction="batchmean", log_target=True)
+                    loss = loss + args.kl_coef * kl_div
+                    args.kl_coeff = adjust_beta(args.kl_coef, kl_div.item(), args.target_kl)
 
                 optimizer.zero_grad()
                 loss.backward()

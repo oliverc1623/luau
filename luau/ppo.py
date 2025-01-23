@@ -362,6 +362,7 @@ if __name__ == "__main__":
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+
                 if args.kl_loss:
                     loss = loss + args.kl_coef * kl_div
                     args.kl_coeff = adjust_beta(args.kl_coef, kl_div.item(), args.target_kl)
