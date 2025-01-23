@@ -201,8 +201,8 @@ def compute_cross_entropy_loss(teacher_policy: Agent, student_policy: Agent, sta
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"runs/{run_name}")
-    model_dir = Path(f"model/{run_name}")
+    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
+    model_dir = Path(f"../../pvcvolume/model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{model_dir}/{run_name}.pth"
     writer.add_text(
