@@ -298,12 +298,12 @@ if __name__ == "__main__":
                 # Filter the rewards and lengths for completed episodes
                 episodic_returns = info["episode"]["r"][completed_mask]
                 episodic_lengths = info["episode"]["l"][completed_mask]
-
                 # Log each completed episode
                 for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
                     print(f"global_step={global_step}, episodic_return={ep_return}")
                     writer.add_scalar("charts/episodic_return", ep_return, global_step)
                     writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                    writer.add_scalar("charts/iter_return", ep_return, update)
 
         # bootstrap value if not done
         with torch.no_grad():
