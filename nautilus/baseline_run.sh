@@ -13,7 +13,7 @@ for ((run=1; run<=num_runs; run++)); do
 
   python luau/ppo.py \
     --exp-name "PPO_Teacher_Source_Run${run}" \
-    --gym-id "MiniGrid-Dynamic-Obstacles-8x8-v0" \
+    --gym-id "TrafficLight5x5-v0" \
     --learning-rate 0.0005 \
     --total-timesteps 500_000 \
     --num-envs 10 \
