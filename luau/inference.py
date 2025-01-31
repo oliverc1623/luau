@@ -7,8 +7,8 @@ import numpy as np
 import torch
 from minigrid.wrappers import ImgObsWrapper
 
-from luau.iaa_env import SmallIntrospectiveEnv
-from luau.no_frills_ppo import Agent
+from luau.multi_room_env import SmallIntrospectiveEnv
+from luau.ppo import Agent
 
 
 root_path = Path(__file__).resolve().parent.parent
