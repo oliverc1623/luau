@@ -7,7 +7,6 @@ import numpy as np
 import torch
 from minigrid.wrappers import ImgObsWrapper
 
-from luau.multi_room_env import SmallIntrospectiveEnv
 from luau.ppo import Agent
 
 
@@ -41,7 +40,7 @@ def make_env(subenv_seed: int) -> gym.Env:
     """Create the environment."""
 
     def _init() -> gym.Env:
-        env = SmallIntrospectiveEnv(size=6, locked=door_locked, render_mode="rgb_array")
+        env = gym.make("FourRoomDoorKeyLocked-v0", render_mode="rgb_array")
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = ImgObsWrapper(env)
         env.reset(seed=subenv_seed)
