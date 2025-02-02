@@ -124,7 +124,24 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> floa
     return max(slope * t + start_e, end_e)
 
 
-class QNetwork(nn.Module):
+def write_to_tensorboard(writer: SummaryWriter, global_step: int, info: dict) -> None:
+    """Write data to TensorBoard."""
+    if "episode" in info:
+        # Extract the mask for completed episodes
+        completed_mask = info["_episode"]
+
+        # Filter the rewards and lengths for completed episodes
+        episodic_returns = info["episode"]["r"][completed_mask]
+        episodic_lengths = info["episode"]["l"][completed_mask]
+
+        # Log each completed episode
+        for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
+            print(f"global_step={global_step}, episodic_return={ep_return}")
+            writer.add_scalar("charts/episodic_return", ep_return, global_step)
+            writer.add_scalar("charts/episodic_length", ep_length, global_step)
+
+
+class Actor(nn.Module):
     """The agent class for the AC DQN algorithm."""
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
@@ -152,12 +169,45 @@ class QNetwork(nn.Module):
             nn.Linear(64, envs.single_action_space.n),
         )
 
-        # Define critic's model (Q-Network using DQN)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the network."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        embedding = x
+        linear_output = self.actor(embedding)
+        return torch.softmax(linear_output, dim=-1)
+
+
+class QNetwork(nn.Module):
+    """The critic (QNetwork) class for the DQN algorithm."""
+
+    def __init__(self, envs: gym.vector.SyncVectorEnv):
+        c = envs.single_observation_space.shape[-1]
+        # Define image embedding
+        self.image_conv = nn.Sequential(
+            nn.Conv2d(c, 16, (2, 2)),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 2)),
+            nn.Conv2d(16, 32, (2, 2)),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, (2, 2)),
+            nn.ReLU(),
+        )
+        n = envs.single_observation_space.shape[0]
+        m = envs.single_observation_space.shape[1]
+        self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
+
         self.critic = nn.Sequential(
             nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
             nn.Linear(64, envs.single_action_space.n),
         )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the critic network."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        return self.critic(x)
 
 
 if __name__ == "__main__":
@@ -166,7 +216,8 @@ if __name__ == "__main__":
     writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
     model_dir = Path(f"../../pvcvolume/model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = f"{model_dir}/{run_name}.pth"
+    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
+    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
@@ -198,17 +249,18 @@ if __name__ == "__main__":
 
         return _init
 
-    num_updates = args.total_timesteps // args.batch_size
-    save_model_freq = largest_divisor(num_updates)
+    save_model_freq = args.target_network_frequency
 
     envs = [make_env(args.seed + i, i, args.capture_video, run_name, save_model_freq) for i in range(args.num_envs)]
     envs = gym.vector.SyncVectorEnv(envs)
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = QNetwork(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    agent = Actor(envs).to(device)
+    critic = QNetwork(envs).to(device)
     target_network = QNetwork(envs).to(device)
-    target_network.load_state_dict(agent.state_dict())
+    target_network.load_state_dict(critic.state_dict())
+    actor_optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    critic_optimizer = optim.Adam(critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
     rb = ReplayBuffer(
         args.buffer_size,
@@ -221,172 +273,72 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, info = envs.reset()
-    next_obs = preprocess(next_obs)
+    obs, info = envs.reset()
+    obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
 
-    # ALGO Logic: Storage setup
-    observation_shape = next_obs.shape[1:]
-    obs = torch.zeros((args.num_steps, args.num_envs, *observation_shape)).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs, *envs.single_action_space.shape)).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    for global_step in range(args.total_timesteps):
+        epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
+        if rng.random() < epsilon:
+            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+        else:
+            q_values = agent(obs)
+            actions = torch.argmax(q_values, dim=1).cpu().numpy()
 
-    for update in range(1, num_updates + 1):
-        # Annealing the rate if instructed to do so.
-        if args.anneal_lr:
-            frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * args.learning_rate
-            optimizer.param_groups[0]["lr"] = lrnow
+        next_obs, rewards, dones, truncations, infos = envs.step(actions)
+        write_to_tensorboard(writer, global_step, infos)
 
-        for step in range(args.num_steps):
-            global_step += 1 * args.num_envs
-            obs[step] = next_obs
-            dones[step] = next_done
+        real_next_obs = next_obs.copy()
+        for idx, trunc in enumerate(truncations):
+            if trunc:
+                real_next_obs[idx] = infos["final_observation"][idx]
+        rb.add(obs, real_next_obs, actions, rewards, dones, infos)
+        obs = next_obs
 
-            # ALGO LOGIC: action logic
-            with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
-                values[step] = value.flatten()
-            actions[step] = action
-            logprobs[step] = logprob
+        # ALGO LOGIC: training.
+        if global_step > args.learning_starts:
+            if global_step % args.train_frequency == 0:
+                # sample a batch of data
+                data = rb.sample(args.batch_size)
 
-            # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, done, truncated, info = envs.step(action.cpu().numpy())
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = preprocess(next_obs), torch.Tensor(done).to(device)
-
-            if "episode" in info:
-                # Extract the mask for completed episodes
-                completed_mask = info["_episode"]
-
-                # Filter the rewards and lengths for completed episodes
-                episodic_returns = info["episode"]["r"][completed_mask]
-                episodic_lengths = info["episode"]["l"][completed_mask]
-
-                # Log each completed episode
-                for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
-                    print(f"global_step={global_step}, episodic_return={ep_return}")
-                    writer.add_scalar("charts/episodic_return", ep_return, global_step)
-                    writer.add_scalar("charts/episodic_length", ep_length, global_step)
-
-        # bootstrap value if not done
-        with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
-            if args.gae:
-                advantages = torch.zeros_like(rewards).to(device)
-                lastgaelam = 0
-                for t in reversed(range(args.num_steps)):
-                    if t == args.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
-                        nextvalues = next_value
-                    else:
-                        nextnonterminal = 1.0 - dones[t + 1]
-                        nextvalues = values[t + 1]
-                    delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                returns = advantages + values
-            else:
-                returns = torch.zeros_like(rewards).to(device)
-                for t in reversed(range(args.num_steps)):
-                    if t == args.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
-                        next_return = next_value
-                    else:
-                        nextnonterminal = 1.0 - dones[t + 1]
-                        next_return = returns[t + 1]
-                    returns[t] = rewards[t] + args.gamma * nextnonterminal * next_return
-                advantages = returns - values
-
-        # flatten the batch
-        b_obs = obs.reshape((-1), *observation_shape)
-        b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1, *envs.single_action_space.shape))
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
-        b_values = values.reshape(-1)
-
-        # Optimizing the policy and value network
-        b_inds = np.arange(args.batch_size)
-        clipfracs = []
-        for _epoch in range(args.update_epochs):
-            rng.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
-                mb_inds = b_inds[start:end]
-
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
-                logratio = newlogprob - b_logprobs[mb_inds]
-                ratio = logratio.exp()
-
+                # compute advantages
                 with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    old_approx_kl = (-logratio).mean()
-                    approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                    next_q_values = target_network(data.next_observations).max(dim=1)
+                    td_target = data.rewards.flatten() + args.gamma * next_q_values * (1 - data.dones.flatten())
+                old_val = critic(data.observations).gather(1, data.actions).squeeze()
+                critic_loss = f.mse_loss(td_target, old_val)
 
-                mb_advantages = b_advantages[mb_inds]
-                if args.norm_adv:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                # optimize the critic QNetwork
+                critic_optimizer.zero_grad()
+                critic_loss.backward()
+                critic_optimizer.step()
 
-                # Policy loss
-                pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                # Policy gradient update for the actor
+                action_probs = agent(data.states)
+                chosen_action_probs = action_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
+                actor_loss = -torch.mean(torch.log(chosen_action_probs) * q_values.detach())
 
-                kl_div = f.kl_div(b_logprobs[mb_inds], newlogprob, reduction="batchmean", log_target=True)
+                # optimize the actor
+                actor_optimizer.zero_grad()
+                actor_loss.backward()
+                actor_optimizer.step()
 
-                # Value loss
-                newvalue = newvalue.view(-1)
-                if args.clip_vloss:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                    v_clipped = b_values[mb_inds] + torch.clamp(
-                        newvalue - b_values[mb_inds],
-                        -args.vf_clip_coef,
-                        args.vf_clip_coef,
+            # update target network
+            if global_step % args.target_network_frequency == 0:
+                for target_network_param, q_network_param in zip(target_network.parameters(), critic.parameters(), strict=False):
+                    target_network_param.data.copy_(
+                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
-                else:
-                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
+                writer.add_scalar("losses/critic_loss", critic_loss.item(), global_step)
+                writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                print("SPS:", int(global_step / (time.time() - start_time)))
+                writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-                if args.kl_loss:
-                    loss = loss + args.kl_coef * kl_div
-                    args.kl_coeff = adjust_beta(args.kl_coef, kl_div.item(), args.target_kl)
-
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
-                optimizer.step()
-
-            if args.target_kl is not None and approx_kl > args.target_kl:
-                break
-
-        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-        var_y = np.var(y_true)
-        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
-        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
-        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
-        if update % save_model_freq == 0:
-            print(f"Saving model checkpoint at step {global_step} to {checkpoint_path}")
-            torch.save(agent.state_dict(), checkpoint_path)
+                print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
+                torch.save(agent.state_dict(), actor_checkpoint_path)
+                torch.save(critic.state_dict(), critic_checkpoint_path)
 
     envs.close()
     writer.close()
