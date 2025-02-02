@@ -14,14 +14,56 @@ from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
-from stable_baselines3.common.buffers import ReplayBuffer
 
+from typing import NamedTuple
 
 RGB_CHANNEL = 3
 
 gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
 gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
 gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
+
+
+# Define a transition tuple for DQN
+class Transition(NamedTuple):
+    """A named tuple representing a single transition in the environment."""
+
+    state: torch.tensor
+    action: torch.tensor
+    reward: torch.tensor
+    next_state: torch.tensor
+    done: torch.tensor
+
+
+class DQNReplayBuffer:
+    """Replay buffer for storing transitions experienced by the agent."""
+
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args: tuple) -> None:
+        """Save a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Transition(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size: int) -> Transition:
+        """Sample a batch of transitions from the replay buffer."""
+        batch = random.sample(self.memory, batch_size)
+        batch = Transition(*zip(*batch, strict=False))
+        return Transition(
+            state=torch.cat(batch.state, dim=0),
+            action=torch.stack(batch.action),
+            reward=torch.stack(batch.reward),
+            next_state=torch.cat(batch.next_state, dim=0),
+            done=torch.stack(batch.done),
+        )
+
+    def __len__(self):
+        return len(self.memory)
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,7 +98,7 @@ def parse_args() -> argparse.Namespace:
         help="the batch size of the training")
     parser.add_argument("--start-e", type=float, default=1,
         help="the starting exploration rate")
-    parser.add_argument("--final-e", type=float, default=0.05,
+    parser.add_argument("--end-e", type=float, default=0.05,
         help="the final exploration rate")
     parser.add_argument("--exploration-fraction", type=float, default=0.5,
         help="the fraction of the total timesteps for exploration")
@@ -66,18 +108,10 @@ def parse_args() -> argparse.Namespace:
         help="the frequency of training the agent")
     parser.add_argument("--num-envs", type=int, default=4,
         help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128,
-        help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggle learning rate annealing for policy and value networks")
     parser.add_argument("--gamma", type=float, default=0.99,
         help="the discount factor gamma")
-    parser.add_argument("--max-grad-norm", type=float, default=0.5,
-        help="the maximum norm for the gradient clipping")
 
     args = parser.parse_args()
-    args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
     # fmt: on
     return args
 
@@ -90,7 +124,7 @@ def layer_init(layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.
 
 
 def preprocess(image: np.array) -> dict:
-    """Preprocess the input for a grid-based environment, padding it to (12, 12, channels)."""
+    """Preprocess the input for a grid-based environment."""
     image = torch.from_numpy(image).float()
     if image.ndim == RGB_CHANNEL:  # Single image case with shape (height, width, channels)
         image = image.permute(2, 0, 1)
@@ -182,6 +216,7 @@ class QNetwork(nn.Module):
     """The critic (QNetwork) class for the DQN algorithm."""
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
+        super().__init__()
         c = envs.single_observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
@@ -255,6 +290,7 @@ if __name__ == "__main__":
     envs = gym.vector.SyncVectorEnv(envs)
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
+    # agent setup
     agent = Actor(envs).to(device)
     critic = QNetwork(envs).to(device)
     target_network = QNetwork(envs).to(device)
@@ -262,13 +298,8 @@ if __name__ == "__main__":
     actor_optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     critic_optimizer = optim.Adam(critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
-    rb = ReplayBuffer(
-        args.buffer_size,
-        envs.single_observation_space,
-        envs.single_action_space,
-        device,
-        handle_timeout_termination=False,
-    )
+    # replay buffer
+    rb = DQNReplayBuffer(args.buffer_size)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -286,13 +317,11 @@ if __name__ == "__main__":
             actions = torch.argmax(q_values, dim=1).cpu().numpy()
 
         next_obs, rewards, dones, truncations, infos = envs.step(actions)
+        rewards = torch.tensor(rewards).to(device).view(-1)
+        next_obs, dones = preprocess(next_obs), torch.Tensor(dones).to(device)
         write_to_tensorboard(writer, global_step, infos)
 
-        real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                real_next_obs[idx] = infos["final_observation"][idx]
-        rb.add(obs, real_next_obs, actions, rewards, dones, infos)
+        rb.push(obs, torch.tensor(actions), rewards, next_obs, dones)
         obs = next_obs
 
         # ALGO LOGIC: training.
@@ -303,9 +332,9 @@ if __name__ == "__main__":
 
                 # compute advantages
                 with torch.no_grad():
-                    next_q_values = target_network(data.next_observations).max(dim=1)
-                    td_target = data.rewards.flatten() + args.gamma * next_q_values * (1 - data.dones.flatten())
-                old_val = critic(data.observations).gather(1, data.actions).squeeze()
+                    next_q_values, _ = target_network(data.next_state).max(dim=1)
+                    td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
+                old_val = critic(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
                 critic_loss = f.mse_loss(td_target, old_val)
 
                 # optimize the critic QNetwork
@@ -314,9 +343,9 @@ if __name__ == "__main__":
                 critic_optimizer.step()
 
                 # Policy gradient update for the actor
-                action_probs = agent(data.states)
-                chosen_action_probs = action_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
-                actor_loss = -torch.mean(torch.log(chosen_action_probs) * q_values.detach())
+                action_probs = agent(data.state)
+                chosen_action_probs = action_probs.gather(1, data.action.to(device).view(-1, 1)).squeeze(1)
+                actor_loss = -torch.mean(torch.log(chosen_action_probs) * old_val.detach())
 
                 # optimize the actor
                 actor_optimizer.zero_grad()
