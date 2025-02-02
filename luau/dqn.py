@@ -13,8 +13,8 @@ import torch
 from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
-from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
+from stable_baselines3.common.buffers import ReplayBuffer
 
 
 RGB_CHANNEL = 3
@@ -118,8 +118,14 @@ def adjust_beta(beta: float, kl: float, target_kl: float) -> float:
     return beta
 
 
-class Agent(nn.Module):
-    """The agent class for the PPO algorithm."""
+def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
+    """Calculate the linear schedule for exploration rate."""
+    slope = (end_e - start_e) / duration
+    return max(slope * t + start_e, end_e)
+
+
+class QNetwork(nn.Module):
+    """The agent class for the AC DQN algorithm."""
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
@@ -146,30 +152,12 @@ class Agent(nn.Module):
             nn.Linear(64, envs.single_action_space.n),
         )
 
-        # Define critic's model
+        # Define critic's model (Q-Network using DQN)
         self.critic = nn.Sequential(
             nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            nn.Linear(64, 1),
+            nn.Linear(64, envs.single_action_space.n),
         )
-
-    def get_value(self, x: torch.tensor) -> torch.tensor:
-        """Get the value of the state."""
-        x = self.image_conv(x)
-        x = x.reshape(x.shape[0], -1)
-        return self.critic(x)
-
-    def get_action_and_value(self, x: torch.tensor, action: int | None = None) -> tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
-        """Get the action and value of the state."""
-        x = self.image_conv(x)
-        x = x.reshape(x.shape[0], -1)
-        embedding = x
-        logits = self.actor(embedding)
-        probs = Categorical(logits=logits)
-        if action is None:
-            action = probs.sample()
-        critic_val = self.critic(embedding)
-        return action, probs.log_prob(action), probs.entropy(), critic_val
 
 
 if __name__ == "__main__":
@@ -217,8 +205,18 @@ if __name__ == "__main__":
     envs = gym.vector.SyncVectorEnv(envs)
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = Agent(envs).to(device)
+    agent = QNetwork(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    target_network = QNetwork(envs).to(device)
+    target_network.load_state_dict(agent.state_dict())
+
+    rb = ReplayBuffer(
+        args.buffer_size,
+        envs.single_observation_space,
+        envs.single_action_space,
+        device,
+        handle_timeout_termination=False,
+    )
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
