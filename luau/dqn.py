@@ -86,6 +86,8 @@ def parse_args() -> argparse.Namespace:
         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="weather to capture videos of the agent performances (check out `videos` folder)")
+    parser.add_argument("--save-model-freq", type=int, default=1000,
+        help="the frequency of saving the model")
 
     # Algorithm specific arguments
     parser.add_argument("--buffer-size", type=int, default=10000,
@@ -110,6 +112,8 @@ def parse_args() -> argparse.Namespace:
         help="the number of parallel game environments")
     parser.add_argument("--gamma", type=float, default=0.99,
         help="the discount factor gamma")
+    parser.add_argument("--gradient-steps", type=int, default=1,
+        help="the number of gradient steps to take per iteration")
 
     args = parser.parse_args()
     # fmt: on
@@ -133,23 +137,6 @@ def preprocess(image: np.array) -> dict:
     else:  # Batch case with shape (batch_size, height, width, channels)
         image = image.permute(0, 3, 1, 2).to(device)  # Change to (batch, channels, height, width)
     return image
-
-
-def largest_divisor(n: int) -> int:
-    """Find the largest divisor of batch_size that is less than or equal to horizon."""
-    for i in range(n // 2, 0, -1):
-        if n % i == 0:
-            return i
-    return 1  # If no divisors found, return 1
-
-
-def adjust_beta(beta: float, kl: float, target_kl: float) -> float:
-    """Adjust the beta parameter based on the KL divergence."""
-    if kl > 1.5 * target_kl:
-        beta *= 2  # Increase beta (reduce updates)
-    elif kl < 0.5 * target_kl:
-        beta /= 2  # Decrease beta (allow larger updates)
-    return beta
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
@@ -284,9 +271,7 @@ if __name__ == "__main__":
 
         return _init
 
-    save_model_freq = args.target_network_frequency
-
-    envs = [make_env(args.seed + i, i, args.capture_video, run_name, save_model_freq) for i in range(args.num_envs)]
+    envs = [make_env(args.seed + i, i, args.capture_video, run_name, args.save_model_freq) for i in range(args.num_envs)]
     envs = gym.vector.SyncVectorEnv(envs)
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -304,7 +289,7 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    obs, info = envs.reset()
+    obs, infos = envs.reset()
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
 
@@ -317,6 +302,7 @@ if __name__ == "__main__":
             actions = torch.argmax(q_values, dim=1).cpu().numpy()
 
         next_obs, rewards, dones, truncations, infos = envs.step(actions)
+        dones = np.logical_or(dones, truncations)
         rewards = torch.tensor(rewards).to(device).view(-1)
         next_obs, dones = preprocess(next_obs), torch.Tensor(dones).to(device)
         write_to_tensorboard(writer, global_step, infos)
@@ -327,30 +313,31 @@ if __name__ == "__main__":
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             if global_step % args.train_frequency == 0:
-                # sample a batch of data
-                data = rb.sample(args.batch_size)
+                for _ in range(args.gradient_steps):
+                    # sample a batch of data
+                    data = rb.sample(args.batch_size)
 
-                # compute advantages
-                with torch.no_grad():
-                    next_q_values, _ = target_network(data.next_state).max(dim=1)
-                    td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
-                old_val = critic(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
-                critic_loss = f.mse_loss(td_target, old_val)
+                    # compute advantages
+                    with torch.no_grad():
+                        next_q_values, _ = target_network(data.next_state).max(dim=1)
+                        td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
+                    old_val = critic(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
+                    critic_loss = f.mse_loss(td_target, old_val)
 
-                # optimize the critic QNetwork
-                critic_optimizer.zero_grad()
-                critic_loss.backward()
-                critic_optimizer.step()
+                    # optimize the critic QNetwork
+                    critic_optimizer.zero_grad()
+                    critic_loss.backward()
+                    critic_optimizer.step()
 
-                # Policy gradient update for the actor
-                action_probs = agent(data.state)
-                chosen_action_probs = action_probs.gather(1, data.action.to(device).view(-1, 1)).squeeze(1)
-                actor_loss = -torch.mean(torch.log(chosen_action_probs) * old_val.detach())
+                    # Policy gradient update for the actor
+                    action_probs = agent(data.state)
+                    chosen_action_probs = action_probs.gather(1, data.action.to(device).view(-1, 1)).squeeze(1)
+                    actor_loss = -torch.mean(torch.log(chosen_action_probs) * old_val.detach())
 
-                # optimize the actor
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
+                    # optimize the actor
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
 
             # update target network
             if global_step % args.target_network_frequency == 0:
@@ -362,9 +349,11 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/critic_loss", critic_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                writer.add_scalar("losses/epsilon", epsilon, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
+            if global_step % args.save_model_freq == 0:
                 print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
                 torch.save(agent.state_dict(), actor_checkpoint_path)
                 torch.save(critic.state_dict(), critic_checkpoint_path)
