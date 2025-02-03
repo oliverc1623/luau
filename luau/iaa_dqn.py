@@ -123,6 +123,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-steps", type=int, default=1,
         help="the number of gradient steps to take per iteration")
 
+    # Introspection specific arguments
+    parser.add_argument("--introspection-threshold", type=float, default=0.9,
+        help="the threshold for introspection")
+    parser.add_argument("--introspection-decay", type=float, default=0.99999,
+        help="the decay rate for introspection")
+    parser.add_argument("--burn-in", type=int, default=0,
+        help="the burn-in period for introspection")
+
     args = parser.parse_args()
     # fmt: on
     return args
@@ -249,11 +257,15 @@ if __name__ == "__main__":
 
     # teacher agent setup
     teacher_source_agent = QNetwork(envs).to(device)
-    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
     for param in teacher_source_agent.parameters():
         param.requires_grad = False
     teacher_new_agent = QNetwork(envs).to(device)  # new task
-    teacher_new_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_new_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
+    teacher_new_agent_optimizer = optim.Adam(teacher_new_agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    teacher_target_network = QNetwork(envs).to(device)
+    teacher_target_network.load_state_dict(teacher_source_agent.state_dict())
 
     # student agent setup
     student_agent = QNetwork(envs).to(device)
@@ -275,18 +287,18 @@ if __name__ == "__main__":
 
     for global_step in range(0, args.total_timesteps, args.num_envs):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
+        h_t = torch.zeros(args.num_envs).to(device)
         if rng.random() < epsilon:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             # Introspection
-            h_t = torch.zeros(args.num_envs).to(device)
             probability = args.introspection_decay ** max(0, global_step - args.burn_in)
             p = Bernoulli(probability).sample([args.num_envs]).to(device)
             if global_step > args.burn_in:
-                teacher_source_vals, _ = teacher_source_agent(obs).max(dim=1)
-                teacher_target_vals, _ = teacher_new_agent(obs).max(dim=1)
+                teacher_source_q, _ = teacher_source_agent(obs).max(dim=1)
+                teacher_target_q, _ = teacher_new_agent(obs).max(dim=1)
                 # Calculate absolute differences for introspection across the batch
-                abs_diff = torch.abs(teacher_target_vals - teacher_source_vals)
+                abs_diff = torch.abs(teacher_source_q - teacher_target_q)
                 # Update h_t based on the introspection threshold
                 h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
             advice_counter += h_t
@@ -316,7 +328,7 @@ if __name__ == "__main__":
 
         # add to replay buffer
         next_obs = preprocess(next_obs)
-        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones)
+        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones, h_t)
         obs = next_obs
 
         # ALGO LOGIC: training.
@@ -338,14 +350,41 @@ if __name__ == "__main__":
                     loss.backward()
                     optimizer.step()
 
+                    # update teacher new agent
+                    with torch.no_grad():
+                        teacher_next_q_values, _ = teacher_target_network(data.next_state).max(dim=1)
+                        teacher_td_target = data.reward.flatten().float() + args.gamma * teacher_next_q_values.float() * (
+                            1 - data.done.flatten().float()
+                        )
+                    teacher_old_val = (
+                        teacher_new_agent(data.state.to(device).float())
+                        .gather(
+                            1,
+                            data.action.to(device).view(-1, 1).long(),
+                        )
+                        .squeeze(-1)
+                    )
+                    teacher_loss = f.mse_loss(teacher_old_val, teacher_old_val)
+
+                    # optimize the teacher new agent
+                    teacher_new_agent_optimizer.zero_grad()
+                    teacher_loss.backward()
+                    teacher_new_agent_optimizer.step()
+
             # update target network
             if global_step % args.target_network_frequency == 0:
                 for target_network_param, q_network_param in zip(target_network.parameters(), student_agent.parameters(), strict=False):
                     target_network_param.data.copy_(
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
+                # update teacher target network
+                for target_network_param, q_network_param in zip(teacher_target_network.parameters(), teacher_new_agent.parameters(), strict=False):
+                    target_network_param.data.copy_(
+                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
+                    )
 
                 writer.add_scalar("losses/actor_loss", loss.item(), global_step)
+                writer.add_scalar("losses/teacher_loss", teacher_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
