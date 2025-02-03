@@ -14,6 +14,9 @@ from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
+from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
+
 
 from typing import NamedTuple
 
@@ -147,21 +150,17 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> floa
     return max(slope * t + start_e, end_e)
 
 
-def write_to_tensorboard(writer: SummaryWriter, global_step: int, info: dict) -> None:
+def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict) -> None:
     """Write data to TensorBoard."""
-    if "episode" in info:
-        # Extract the mask for completed episodes
-        completed_mask = info["_episode"]
+    for _, info in enumerate(infos):
+        if "episode" in info:
+            ep_return = info["episode"]["r"]
+            ep_length = info["episode"]["l"]
 
-        # Filter the rewards and lengths for completed episodes
-        episodic_returns = info["episode"]["r"][completed_mask]
-        episodic_lengths = info["episode"]["l"][completed_mask]
-
-        # Log each completed episode
-        for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
             print(f"global_step={global_step}, episodic_return={ep_return}")
             writer.add_scalar("charts/episodic_return", ep_return, global_step)
             writer.add_scalar("charts/episodic_length", ep_length, global_step)
+            break
 
 
 class QNetwork(nn.Module):
@@ -169,7 +168,7 @@ class QNetwork(nn.Module):
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        c = envs.single_observation_space.shape[-1]
+        c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
             nn.Conv2d(c, 16, (2, 2)),
@@ -180,14 +179,14 @@ class QNetwork(nn.Module):
             nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU(),
         )
-        n = envs.single_observation_space.shape[0]
-        m = envs.single_observation_space.shape[1]
+        n = envs.observation_space.shape[0]
+        m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         self.critic = nn.Sequential(
             nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -199,16 +198,20 @@ class QNetwork(nn.Module):
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
-    model_dir = Path(f"../../pvcvolume/model/{run_name}")
-    model_dir.mkdir(parents=True, exist_ok=True)
-    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
-    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
+
+    # tensorboard
+    run_name = f"{args.gym_id}__{args.exp_name}"
+    log_dir = f"../../pvcvolume/runs2/{run_name}"
+    writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+
+    # model_dir
+    model_dir = Path(f"../../pvcvolume/models2/{run_name}")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -219,7 +222,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> gym.Env:
+    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> callable:
         """Create the environment."""
 
         def _init() -> gym.Env:
@@ -237,21 +240,22 @@ if __name__ == "__main__":
         return _init
 
     envs = [make_env(args.seed + i, i, args.capture_video, run_name, args.save_model_freq) for i in range(args.num_envs)]
-    envs = gym.vector.SyncVectorEnv(envs)
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    envs = SubprocVecEnv(envs)
+    assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported... for now"
+    envs = VecMonitor(envs, log_dir)
 
-    # Initialize teacher model
-    teacher_source_agent = QNetwork(envs).to(device)
-    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
-    for param in teacher_source_agent.parameters():
-        param.requires_grad = False
+    # teacher agent setup
+    teacher_agent = QNetwork(envs).to(device)
+    teacher_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_new_task = QNetwork(envs).to(device)  # new task
+    teacher_new_task.load_state_dict(torch.load(args.teacher_model))
 
     # student agent setup
-    agent = QNetwork(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    student_agent = QNetwork(envs).to(device)
+    optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     target_network = QNetwork(envs).to(device)
-    target_network.load_state_dict(agent.state_dict())
+    target_network.load_state_dict(student_agent.state_dict())
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size)
@@ -259,29 +263,39 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    obs, infos = envs.reset()
+    obs = envs.reset()
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
 
-    for global_step in range(args.total_timesteps):
+    for global_step in range(0, args.total_timesteps, args.num_envs):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         if rng.random() < epsilon:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
-            q_values = agent(obs)
+            q_values = student_agent(obs)
             actions = torch.argmax(q_values, dim=1).cpu().numpy()
 
-        next_obs, rewards, dones, truncations, infos = envs.step(actions)
-        dones = np.logical_or(dones, truncations)
+        # step the envs
+        next_obs, rewards, dones, infos = envs.step(actions)
         rewards = torch.tensor(rewards).to(device).view(-1)
-        next_obs, dones = preprocess(next_obs), torch.Tensor(dones).to(device)
+        dones = torch.Tensor(dones).to(device)
         write_to_tensorboard(writer, global_step, infos)
 
-        rb.push(obs, torch.tensor(actions), rewards, next_obs, dones)
+        # get terminal observation
+        real_next_obs = next_obs.copy()
+        for idx, done in enumerate(dones):
+            if done:
+                terminal_obs = infos[idx]["terminal_observation"]
+                real_next_obs[idx] = terminal_obs
+        real_next_obs = preprocess(real_next_obs)
+
+        # add to replay buffer
+        next_obs = preprocess(next_obs)
+        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones)
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
+        if global_step > args.learning_starts * args.num_envs:
             if global_step % args.train_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
@@ -291,7 +305,7 @@ if __name__ == "__main__":
                     with torch.no_grad():
                         next_q_values, _ = target_network(data.next_state).max(dim=1)
                         td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
-                    old_val = agent(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
+                    old_val = student_agent(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
                     loss = f.mse_loss(td_target, old_val)
 
                     # optimize the actor
@@ -301,7 +315,7 @@ if __name__ == "__main__":
 
             # update target network
             if global_step % args.target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), agent.parameters(), strict=False):
+                for target_network_param, q_network_param in zip(target_network.parameters(), student_agent.parameters(), strict=False):
                     target_network_param.data.copy_(
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
@@ -312,9 +326,9 @@ if __name__ == "__main__":
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-            if global_step % args.save_model_freq == 0:
+            if global_step % (args.save_model_freq - args.num_envs) == 0:
                 print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
-                torch.save(agent.state_dict(), actor_checkpoint_path)
+                torch.save(student_agent.state_dict(), actor_checkpoint_path)
 
     envs.close()
     writer.close()
