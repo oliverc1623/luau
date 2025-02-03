@@ -11,18 +11,14 @@ for ((run=1; run<=num_runs; run++)); do
   seed=${seeds[$((run-1))]}  # Get the seed for this run
   echo "Running experiment $run with seed $seed"
 
-  python luau/diaa.py \
-    --exp-name "DIAA_Student_Target_Run${run}" \
-    --gym-id "MiniGrid-Dynamic-Obstacles-8x8-v0" \
-    --learning-rate 0.0005 \
+  python luau/dqn.py \
+    --exp-name "DQN_Teacher_Source_Run${run}" \
+    --gym-id "MiniGrid-Empty-5x5-v0" \
     --total-timesteps 500_000 \
     --num-envs 10 \
-    --num-minibatches 8 \
-    --vf-coef 10.0 \
-    --target-kl 0.01 \
-    --kl-loss True \
+    --target-network-frequency 100 \
+    --tau 0.005 \
     --seed "$seed" \
-    --teacher-model "../../pvcvolume/model/MiniGrid-Empty-8x8-v0__PPO_Teacher_Source_Run2__1737604395/MiniGrid-Empty-8x8-v0__PPO_Teacher_Source_Run2__1737604395.pth"
 
   echo "Experiment $run completed"
   echo "----------------------------------------"

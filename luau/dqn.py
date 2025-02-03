@@ -160,6 +160,7 @@ def write_to_tensorboard(writer: SummaryWriter, global_step: int, info: dict) ->
             print(f"global_step={global_step}, episodic_return={ep_return}")
             writer.add_scalar("charts/episodic_return", ep_return, global_step)
             writer.add_scalar("charts/episodic_length", ep_length, global_step)
+            break
 
 
 class QNetwork(nn.Module):
@@ -197,9 +198,9 @@ class QNetwork(nn.Module):
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
-    model_dir = Path(f"../../pvcvolume/model/{run_name}")
+    run_name = f"{args.gym_id}__{args.exp_name}"
+    writer = SummaryWriter(f"../../pvcvolume/runs2/{run_name}", flush_secs=5)
+    model_dir = Path(f"../../pvcvolume/model2/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
     critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
@@ -255,7 +256,7 @@ if __name__ == "__main__":
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
 
-    for global_step in range(args.total_timesteps):
+    for global_step in range(0, args.total_timesteps, args.num_envs):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         if rng.random() < epsilon:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
@@ -273,7 +274,7 @@ if __name__ == "__main__":
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
+        if global_step > args.learning_starts * args.num_envs:
             if global_step % args.train_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
