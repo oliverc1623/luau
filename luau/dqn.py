@@ -207,7 +207,7 @@ if __name__ == "__main__":
     )
 
     # model_dir
-    model_dir = Path(f"../../pvcvolume/model2/{run_name}")
+    model_dir = Path(f"../../pvcvolume/models2/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
     critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
