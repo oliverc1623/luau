@@ -13,6 +13,7 @@ import torch
 from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
+from torch.distributions.bernoulli import Bernoulli
 from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
@@ -36,6 +37,7 @@ class Transition(NamedTuple):
     reward: torch.tensor
     next_state: torch.tensor
     done: torch.tensor
+    indicator: torch.tensor
 
 
 class DQNReplayBuffer:
@@ -63,6 +65,7 @@ class DQNReplayBuffer:
             reward=torch.stack(batch.reward),
             next_state=torch.cat(batch.next_state, dim=0),
             done=torch.stack(batch.done),
+            indicator=torch.stack(batch.indicator),
         )
 
     def __len__(self):
@@ -245,10 +248,12 @@ if __name__ == "__main__":
     envs = VecMonitor(envs, log_dir)
 
     # teacher agent setup
-    teacher_agent = QNetwork(envs).to(device)
-    teacher_agent.load_state_dict(torch.load(args.teacher_model))
-    teacher_new_task = QNetwork(envs).to(device)  # new task
-    teacher_new_task.load_state_dict(torch.load(args.teacher_model))
+    teacher_source_agent = QNetwork(envs).to(device)
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    for param in teacher_source_agent.parameters():
+        param.requires_grad = False
+    teacher_new_agent = QNetwork(envs).to(device)  # new task
+    teacher_new_agent.load_state_dict(torch.load(args.teacher_model))
 
     # student agent setup
     student_agent = QNetwork(envs).to(device)
@@ -266,14 +271,34 @@ if __name__ == "__main__":
     obs = envs.reset()
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
+    advice_counter = torch.zeros(args.num_envs).to(device)
 
     for global_step in range(0, args.total_timesteps, args.num_envs):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         if rng.random() < epsilon:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
-            q_values = student_agent(obs)
-            actions = torch.argmax(q_values, dim=1).cpu().numpy()
+            # Introspection
+            h_t = torch.zeros(args.num_envs).to(device)
+            probability = args.introspection_decay ** max(0, global_step - args.burn_in)
+            p = Bernoulli(probability).sample([args.num_envs]).to(device)
+            if global_step > args.burn_in:
+                teacher_source_vals, _ = teacher_source_agent(obs).max(dim=1)
+                teacher_target_vals, _ = teacher_new_agent(obs).max(dim=1)
+                # Calculate absolute differences for introspection across the batch
+                abs_diff = torch.abs(teacher_target_vals - teacher_source_vals)
+                # Update h_t based on the introspection threshold
+                h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
+            advice_counter += h_t
+
+            if h_t.sum() > 0:
+                # Get advice from the teacher for the environments where h_t is 1
+                teacher_actions = torch.argmax(teacher_source_agent(obs), dim=1)
+                student_actions = torch.argmax(student_agent(obs), dim=1)
+                actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
+            else:
+                # Get actions from the student agent
+                actions = torch.argmax(student_agent(obs), dim=1).cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
