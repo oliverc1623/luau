@@ -161,16 +161,18 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> floa
     return max(slope * t + start_e, end_e)
 
 
-def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict) -> None:
+def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict, advice_counter: torch.tensor) -> None:
     """Write data to TensorBoard."""
-    for _, info in enumerate(infos):
+    for i, info in enumerate(infos):
         if "episode" in info:
             ep_return = info["episode"]["r"]
             ep_length = info["episode"]["l"]
+            ep_advice = advice_counter[i]
 
             print(f"global_step={global_step}, episodic_return={ep_return}")
             writer.add_scalar("charts/episodic_return", ep_return, global_step)
             writer.add_scalar("charts/episodic_length", ep_length, global_step)
+            writer.add_scalar("charts/advice_issued", ep_advice, global_step)
             break
 
 
@@ -316,7 +318,7 @@ if __name__ == "__main__":
         next_obs, rewards, dones, infos = envs.step(actions)
         rewards = torch.tensor(rewards).to(device).view(-1)
         dones = torch.Tensor(dones).to(device)
-        write_to_tensorboard(writer, global_step, infos)
+        write_to_tensorboard(writer, global_step, infos, advice_counter)
 
         # get terminal observation
         real_next_obs = next_obs.copy()
@@ -324,6 +326,7 @@ if __name__ == "__main__":
             if done:
                 terminal_obs = infos[idx]["terminal_observation"]
                 real_next_obs[idx] = terminal_obs
+                advice_counter[idx] = 0
         real_next_obs = preprocess(real_next_obs)
 
         # add to replay buffer
@@ -364,7 +367,7 @@ if __name__ == "__main__":
                         )
                         .squeeze(-1)
                     )
-                    teacher_loss = f.mse_loss(teacher_old_val, teacher_old_val)
+                    teacher_loss = f.mse_loss(teacher_td_target, teacher_old_val)
 
                     # optimize the teacher new agent
                     teacher_new_agent_optimizer.zero_grad()
