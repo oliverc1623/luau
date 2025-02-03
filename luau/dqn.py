@@ -14,6 +14,9 @@ from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
+from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
+
 
 from typing import NamedTuple
 
@@ -168,7 +171,7 @@ class QNetwork(nn.Module):
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        c = envs.single_observation_space.shape[-1]
+        c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
             nn.Conv2d(c, 16, (2, 2)),
@@ -179,14 +182,14 @@ class QNetwork(nn.Module):
             nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU(),
         )
-        n = envs.single_observation_space.shape[0]
-        m = envs.single_observation_space.shape[1]
+        n = envs.observation_space.shape[0]
+        m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         self.critic = nn.Sequential(
             nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -198,16 +201,21 @@ class QNetwork(nn.Module):
 
 if __name__ == "__main__":
     args = parse_args()
+
+    # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    writer = SummaryWriter(f"../../pvcvolume/runs2/{run_name}", flush_secs=5)
-    model_dir = Path(f"../../pvcvolume/model2/{run_name}")
-    model_dir.mkdir(parents=True, exist_ok=True)
-    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
-    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
+    log_dir = f"../../pvcvolume/runs2/{run_name}"
+    writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+
+    # model_dir
+    model_dir = Path(f"../../pvcvolume/model2/{run_name}")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
+    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -218,7 +226,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> gym.Env:
+    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> callable:
         """Create the environment."""
 
         def _init() -> gym.Env:
@@ -236,8 +244,9 @@ if __name__ == "__main__":
         return _init
 
     envs = [make_env(args.seed + i, i, args.capture_video, run_name, args.save_model_freq) for i in range(args.num_envs)]
-    envs = gym.vector.SyncVectorEnv(envs)
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    envs = SubprocVecEnv(envs)
+    assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported... for now"
+    envs = VecMonitor(envs, log_dir)
 
     # agent setup
     agent = QNetwork(envs).to(device)
@@ -252,22 +261,22 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    obs, infos = envs.reset()
+    obs = envs.reset()
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
 
     for global_step in range(0, args.total_timesteps, args.num_envs):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         if rng.random() < epsilon:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             q_values = agent(obs)
             actions = torch.argmax(q_values, dim=1).cpu().numpy()
 
-        next_obs, rewards, dones, truncations, infos = envs.step(actions)
-        dones = np.logical_or(dones, truncations)
+        next_obs, rewards, dones, infos = envs.step(actions)
         rewards = torch.tensor(rewards).to(device).view(-1)
         next_obs, dones = preprocess(next_obs), torch.Tensor(dones).to(device)
+        print(infos)
         write_to_tensorboard(writer, global_step, infos)
 
         rb.push(obs, torch.tensor(actions), rewards, next_obs, dones)
