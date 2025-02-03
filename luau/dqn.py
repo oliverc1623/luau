@@ -148,18 +148,13 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> floa
     return max(slope * t + start_e, end_e)
 
 
-def write_to_tensorboard(writer: SummaryWriter, global_step: int, info: dict) -> None:
+def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict) -> None:
     """Write data to TensorBoard."""
-    if "episode" in info:
-        # Extract the mask for completed episodes
-        completed_mask = info["_episode"]
+    for _, info in enumerate(infos):
+        if "episode" in info:
+            ep_return = info["episode"]["r"]
+            ep_length = info["episode"]["l"]
 
-        # Filter the rewards and lengths for completed episodes
-        episodic_returns = info["episode"]["r"][completed_mask]
-        episodic_lengths = info["episode"]["l"][completed_mask]
-
-        # Log each completed episode
-        for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
             print(f"global_step={global_step}, episodic_return={ep_return}")
             writer.add_scalar("charts/episodic_return", ep_return, global_step)
             writer.add_scalar("charts/episodic_length", ep_length, global_step)
@@ -273,13 +268,23 @@ if __name__ == "__main__":
             q_values = agent(obs)
             actions = torch.argmax(q_values, dim=1).cpu().numpy()
 
+        # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
         rewards = torch.tensor(rewards).to(device).view(-1)
-        next_obs, dones = preprocess(next_obs), torch.Tensor(dones).to(device)
-        print(infos)
+        dones = torch.Tensor(dones).to(device)
         write_to_tensorboard(writer, global_step, infos)
 
-        rb.push(obs, torch.tensor(actions), rewards, next_obs, dones)
+        # get terminal observation
+        real_next_obs = next_obs.copy()
+        for idx, done in enumerate(dones):
+            if done:
+                terminal_obs = infos[idx]["terminal_observation"]
+                real_next_obs[idx] = terminal_obs
+        real_next_obs = preprocess(real_next_obs)
+
+        # add to replay buffer
+        next_obs = preprocess(next_obs)
+        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones)
         obs = next_obs
 
         # ALGO LOGIC: training.
@@ -314,7 +319,7 @@ if __name__ == "__main__":
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-            if global_step % args.save_model_freq == 0:
+            if global_step % (args.save_model_freq - args.num_envs) == 0:
                 print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
                 torch.save(agent.state_dict(), actor_checkpoint_path)
 
