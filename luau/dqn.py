@@ -162,43 +162,6 @@ def write_to_tensorboard(writer: SummaryWriter, global_step: int, info: dict) ->
             writer.add_scalar("charts/episodic_length", ep_length, global_step)
 
 
-class Actor(nn.Module):
-    """The agent class for the AC DQN algorithm."""
-
-    def __init__(self, envs: gym.vector.SyncVectorEnv):
-        super().__init__()
-        # Actor network
-        c = envs.single_observation_space.shape[-1]
-        # Define image embedding
-        self.image_conv = nn.Sequential(
-            nn.Conv2d(c, 16, (2, 2)),
-            nn.ReLU(),
-            nn.MaxPool2d((2, 2)),
-            nn.Conv2d(16, 32, (2, 2)),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, (2, 2)),
-            nn.ReLU(),
-        )
-        n = envs.single_observation_space.shape[0]
-        m = envs.single_observation_space.shape[1]
-        self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
-
-        # Define actor's model
-        self.actor = nn.Sequential(
-            nn.Linear(self.image_embedding_size, 64),
-            nn.Tanh(),
-            nn.Linear(64, envs.single_action_space.n),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass of the network."""
-        x = self.image_conv(x)
-        x = x.reshape(x.shape[0], -1)
-        embedding = x
-        linear_output = self.actor(embedding)
-        return torch.softmax(linear_output, dim=-1)
-
-
 class QNetwork(nn.Module):
     """The critic (QNetwork) class for the DQN algorithm."""
 
@@ -276,12 +239,11 @@ if __name__ == "__main__":
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
     # agent setup
-    agent = Actor(envs).to(device)
-    critic = QNetwork(envs).to(device)
+    agent = QNetwork(envs).to(device)
+    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
     target_network = QNetwork(envs).to(device)
-    target_network.load_state_dict(critic.state_dict())
-    actor_optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-    critic_optimizer = optim.Adam(critic.parameters(), lr=args.learning_rate, eps=1e-5)
+    target_network.load_state_dict(agent.state_dict())
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size)
@@ -321,33 +283,22 @@ if __name__ == "__main__":
                     with torch.no_grad():
                         next_q_values, _ = target_network(data.next_state).max(dim=1)
                         td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
-                    old_val = critic(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
-                    critic_loss = f.mse_loss(td_target, old_val)
-
-                    # optimize the critic QNetwork
-                    critic_optimizer.zero_grad()
-                    critic_loss.backward()
-                    critic_optimizer.step()
-
-                    # Policy gradient update for the actor
-                    action_probs = agent(data.state)
-                    chosen_action_probs = action_probs.gather(1, data.action.to(device).view(-1, 1)).squeeze(1)
-                    actor_loss = -torch.mean(torch.log(chosen_action_probs) * old_val.detach())
+                    old_val = agent(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
+                    loss = f.mse_loss(td_target, old_val)
 
                     # optimize the actor
-                    actor_optimizer.zero_grad()
-                    actor_loss.backward()
-                    actor_optimizer.step()
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
 
             # update target network
             if global_step % args.target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), critic.parameters(), strict=False):
+                for target_network_param, q_network_param in zip(target_network.parameters(), agent.parameters(), strict=False):
                     target_network_param.data.copy_(
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
 
-                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/critic_loss", critic_loss.item(), global_step)
+                writer.add_scalar("losses/actor_loss", loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
@@ -356,7 +307,6 @@ if __name__ == "__main__":
             if global_step % args.save_model_freq == 0:
                 print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
                 torch.save(agent.state_dict(), actor_checkpoint_path)
-                torch.save(critic.state_dict(), critic_checkpoint_path)
 
     envs.close()
     writer.close()
