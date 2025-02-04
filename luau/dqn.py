@@ -25,6 +25,8 @@ RGB_CHANNEL = 3
 gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
 gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
 gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
+gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKey")
+gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
 
 
 # Define a transition tuple for DQN
@@ -207,7 +209,7 @@ if __name__ == "__main__":
     )
 
     # model_dir
-    model_dir = Path(f"../../pvcvolume/model2/{run_name}")
+    model_dir = Path(f"../../pvcvolume/models2/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
     critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"

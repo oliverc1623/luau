@@ -13,7 +13,11 @@ import torch
 from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
+from torch.distributions.bernoulli import Bernoulli
 from torch.utils.tensorboard import SummaryWriter
+from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
+
 
 from typing import NamedTuple
 
@@ -22,6 +26,8 @@ RGB_CHANNEL = 3
 gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
 gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
 gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
+gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKey")
+gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
 
 
 # Define a transition tuple for DQN
@@ -33,6 +39,7 @@ class Transition(NamedTuple):
     reward: torch.tensor
     next_state: torch.tensor
     done: torch.tensor
+    indicator: torch.tensor
 
 
 class DQNReplayBuffer:
@@ -60,6 +67,7 @@ class DQNReplayBuffer:
             reward=torch.stack(batch.reward),
             next_state=torch.cat(batch.next_state, dim=0),
             done=torch.stack(batch.done),
+            indicator=torch.stack(batch.indicator),
         )
 
     def __len__(self):
@@ -117,6 +125,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-steps", type=int, default=1,
         help="the number of gradient steps to take per iteration")
 
+    # Introspection specific arguments
+    parser.add_argument("--introspection-threshold", type=float, default=0.9,
+        help="the threshold for introspection")
+    parser.add_argument("--introspection-decay", type=float, default=0.99999,
+        help="the decay rate for introspection")
+    parser.add_argument("--burn-in", type=int, default=0,
+        help="the burn-in period for introspection")
+
     args = parser.parse_args()
     # fmt: on
     return args
@@ -147,21 +163,19 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> floa
     return max(slope * t + start_e, end_e)
 
 
-def write_to_tensorboard(writer: SummaryWriter, global_step: int, info: dict) -> None:
+def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict, advice_counter: torch.tensor) -> None:
     """Write data to TensorBoard."""
-    if "episode" in info:
-        # Extract the mask for completed episodes
-        completed_mask = info["_episode"]
+    for i, info in enumerate(infos):
+        if "episode" in info:
+            ep_return = info["episode"]["r"]
+            ep_length = info["episode"]["l"]
+            ep_advice = advice_counter[i]
 
-        # Filter the rewards and lengths for completed episodes
-        episodic_returns = info["episode"]["r"][completed_mask]
-        episodic_lengths = info["episode"]["l"][completed_mask]
-
-        # Log each completed episode
-        for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
             print(f"global_step={global_step}, episodic_return={ep_return}")
             writer.add_scalar("charts/episodic_return", ep_return, global_step)
             writer.add_scalar("charts/episodic_length", ep_length, global_step)
+            writer.add_scalar("charts/advice_issued", ep_advice, global_step)
+            break
 
 
 class QNetwork(nn.Module):
@@ -169,7 +183,7 @@ class QNetwork(nn.Module):
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        c = envs.single_observation_space.shape[-1]
+        c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
             nn.Conv2d(c, 16, (2, 2)),
@@ -180,14 +194,14 @@ class QNetwork(nn.Module):
             nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU(),
         )
-        n = envs.single_observation_space.shape[0]
-        m = envs.single_observation_space.shape[1]
+        n = envs.observation_space.shape[0]
+        m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         self.critic = nn.Sequential(
             nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -199,16 +213,20 @@ class QNetwork(nn.Module):
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
-    model_dir = Path(f"../../pvcvolume/model/{run_name}")
-    model_dir.mkdir(parents=True, exist_ok=True)
-    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
-    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
+
+    # tensorboard
+    run_name = f"{args.gym_id}__{args.exp_name}"
+    log_dir = f"../../pvcvolume/runs2/{run_name}"
+    writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+
+    # model_dir
+    model_dir = Path(f"../../pvcvolume/models2/{run_name}")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -219,7 +237,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> gym.Env:
+    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> callable:
         """Create the environment."""
 
         def _init() -> gym.Env:
@@ -237,21 +255,28 @@ if __name__ == "__main__":
         return _init
 
     envs = [make_env(args.seed + i, i, args.capture_video, run_name, args.save_model_freq) for i in range(args.num_envs)]
-    envs = gym.vector.SyncVectorEnv(envs)
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    envs = SubprocVecEnv(envs)
+    assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported... for now"
+    envs = VecMonitor(envs, log_dir)
 
-    # Initialize teacher model
+    # teacher agent setup
     teacher_source_agent = QNetwork(envs).to(device)
-    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
     for param in teacher_source_agent.parameters():
         param.requires_grad = False
+    teacher_new_agent = QNetwork(envs).to(device)  # new task
+    teacher_new_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
+    teacher_new_agent_optimizer = optim.Adam(teacher_new_agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    teacher_target_network = QNetwork(envs).to(device)
+    teacher_target_network.load_state_dict(teacher_source_agent.state_dict())
 
     # student agent setup
-    agent = QNetwork(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    student_agent = QNetwork(envs).to(device)
+    optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     target_network = QNetwork(envs).to(device)
-    target_network.load_state_dict(agent.state_dict())
+    target_network.load_state_dict(student_agent.state_dict())
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size)
@@ -259,29 +284,60 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    obs, infos = envs.reset()
+    obs = envs.reset()
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
+    advice_counter = torch.zeros(args.num_envs).to(device)
 
-    for global_step in range(args.total_timesteps):
+    for global_step in range(0, args.total_timesteps, args.num_envs):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
+        h_t = torch.zeros(args.num_envs).to(device)
         if rng.random() < epsilon:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
-            q_values = agent(obs)
-            actions = torch.argmax(q_values, dim=1).cpu().numpy()
+            # Introspection
+            probability = args.introspection_decay ** max(0, global_step - args.burn_in)
+            p = Bernoulli(probability).sample([args.num_envs]).to(device)
+            if global_step > args.burn_in:
+                teacher_source_q, _ = teacher_source_agent(obs).max(dim=1)
+                teacher_target_q, _ = teacher_new_agent(obs).max(dim=1)
+                # Calculate absolute differences for introspection across the batch
+                abs_diff = torch.abs(teacher_source_q - teacher_target_q)
+                # Update h_t based on the introspection threshold
+                h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
+            advice_counter += h_t
 
-        next_obs, rewards, dones, truncations, infos = envs.step(actions)
-        dones = np.logical_or(dones, truncations)
+            if h_t.sum() > 0:
+                # Get advice from the teacher for the environments where h_t is 1
+                teacher_actions = torch.argmax(teacher_source_agent(obs), dim=1)
+                student_actions = torch.argmax(student_agent(obs), dim=1)
+                actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
+            else:
+                # Get actions from the student agent
+                actions = torch.argmax(student_agent(obs), dim=1).cpu().numpy()
+
+        # step the envs
+        next_obs, rewards, dones, infos = envs.step(actions)
         rewards = torch.tensor(rewards).to(device).view(-1)
-        next_obs, dones = preprocess(next_obs), torch.Tensor(dones).to(device)
-        write_to_tensorboard(writer, global_step, infos)
+        dones = torch.Tensor(dones).to(device)
+        write_to_tensorboard(writer, global_step, infos, advice_counter)
 
-        rb.push(obs, torch.tensor(actions), rewards, next_obs, dones)
+        # get terminal observation
+        real_next_obs = next_obs.copy()
+        for idx, done in enumerate(dones):
+            if done:
+                terminal_obs = infos[idx]["terminal_observation"]
+                real_next_obs[idx] = terminal_obs
+                advice_counter[idx] = 0
+        real_next_obs = preprocess(real_next_obs)
+
+        # add to replay buffer
+        next_obs = preprocess(next_obs)
+        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones, h_t)
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
+        if global_step > args.learning_starts * args.num_envs:
             if global_step % args.train_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
@@ -291,7 +347,7 @@ if __name__ == "__main__":
                     with torch.no_grad():
                         next_q_values, _ = target_network(data.next_state).max(dim=1)
                         td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
-                    old_val = agent(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
+                    old_val = student_agent(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
                     loss = f.mse_loss(td_target, old_val)
 
                     # optimize the actor
@@ -299,22 +355,49 @@ if __name__ == "__main__":
                     loss.backward()
                     optimizer.step()
 
+                    # update teacher new agent
+                    with torch.no_grad():
+                        teacher_next_q_values, _ = teacher_target_network(data.next_state).max(dim=1)
+                        teacher_td_target = data.reward.flatten().float() + args.gamma * teacher_next_q_values.float() * (
+                            1 - data.done.flatten().float()
+                        )
+                    teacher_old_val = (
+                        teacher_new_agent(data.state.to(device).float())
+                        .gather(
+                            1,
+                            data.action.to(device).view(-1, 1).long(),
+                        )
+                        .squeeze(-1)
+                    )
+                    teacher_loss = f.mse_loss(teacher_next_q_values, teacher_old_val)
+
+                    # optimize the teacher new agent
+                    teacher_new_agent_optimizer.zero_grad()
+                    teacher_loss.backward()
+                    teacher_new_agent_optimizer.step()
+
             # update target network
             if global_step % args.target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), agent.parameters(), strict=False):
+                for target_network_param, q_network_param in zip(target_network.parameters(), student_agent.parameters(), strict=False):
+                    target_network_param.data.copy_(
+                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
+                    )
+                # update teacher target network
+                for target_network_param, q_network_param in zip(teacher_target_network.parameters(), teacher_new_agent.parameters(), strict=False):
                     target_network_param.data.copy_(
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
 
                 writer.add_scalar("losses/actor_loss", loss.item(), global_step)
+                writer.add_scalar("losses/teacher_loss", teacher_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-            if global_step % args.save_model_freq == 0:
+            if global_step % (args.save_model_freq - args.num_envs) == 0:
                 print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
-                torch.save(agent.state_dict(), actor_checkpoint_path)
+                torch.save(student_agent.state_dict(), actor_checkpoint_path)
 
     envs.close()
     writer.close()

@@ -1,5 +1,4 @@
 # %%
-import gymnasium as gym
 import numpy as np
 from minigrid.core import world_object
 from minigrid.core.grid import Grid
@@ -135,7 +134,7 @@ class FourRoomDoorKeyLocked(MiniGridEnv):
         self.place_obj(Goal(), top=(0, 5), size=(8, 4))
 
 
-class SmallIntrospectiveEnv(MiniGridEnv):
+class SmallFourRoomDoorKey(MiniGridEnv):
     """Small Introspective Env."""
 
     def __init__(
@@ -181,7 +180,7 @@ class SmallIntrospectiveEnv(MiniGridEnv):
         self.put_obj(Goal(), width - 2, height - 2)
 
         # Create a vertical splitting wall
-        splitIdx = self._rand_int(2, width - 2)  # noqa: N806
+        splitIdx = 2  # self._rand_int(2, width - 2)  # noqa: N806
         self.grid.vert_wall(splitIdx, 0)
 
         # Place the agent at a random position and orientation
@@ -189,7 +188,7 @@ class SmallIntrospectiveEnv(MiniGridEnv):
         self.place_agent(size=(splitIdx, height))
 
         # Place a door in the wall
-        doorIdx = self._rand_int(1, height - 1)  # noqa: N806
+        doorIdx = 3  # self._rand_int(1, height - 1)  # noqa: N806
         if self.locked:
             self.put_obj(Door("red", is_locked=self.locked), splitIdx, doorIdx)
             # Place a yellow key on the left side
@@ -201,26 +200,71 @@ class SmallIntrospectiveEnv(MiniGridEnv):
 
 
 # %%
-def _make_env(seed: int) -> FourRoomDoorKey:
-    """Create the environment."""
-
-    def _init() -> FourRoomDoorKey:
-        rng = np.random.default_rng(seed)
-        env = FourRoomDoorKey(rng=rng, size=9, locked=False, render_mode="rgb_array")
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.reset(seed=seed)
-        env.action_space.seed(seed)
-        env.observation_space.seed(seed)
-        return env
-
-    return _init
 
 
-def get_env(seed: int, num_envs: int) -> FourRoomDoorKey:
-    """Get the environment."""
-    envs = [_make_env(seed + i) for i in range(num_envs)]  # Different seed per env
-    envs = gym.vector.AsyncVectorEnv(envs, shared_memory=False)
-    return envs
+class SmallFourRoomDoorKeyLocked(MiniGridEnv):
+    """Small Introspective Env."""
+
+    def __init__(
+        self,
+        size: int = 6,
+        agent_start_pos: tuple[int, int] | None = None,
+        agent_start_dir: int = 0,
+        max_steps: int | None = None,
+        *,
+        locked: bool = True,
+        **kwargs: str,
+    ):
+        self.agent_start_pos = agent_start_pos
+        self.agent_start_dir = agent_start_dir
+        self.locked = locked
+
+        mission_space = MissionSpace(mission_func=self._gen_mission)
+
+        if max_steps is None:
+            max_steps = 10 * size**2
+
+        super().__init__(
+            mission_space=mission_space,
+            grid_size=size,
+            # Set this to True for maximum speed
+            see_through_walls=True,
+            max_steps=max_steps,
+            **kwargs,
+        )
+
+    @staticmethod
+    def _gen_mission() -> str:
+        return "get to the green goal square"
+
+    def _gen_grid(self, width: int, height: int) -> None:
+        # Create an empty grid
+        self.grid = Grid(width, height)
+
+        # Generate the surrounding walls
+        self.grid.wall_rect(0, 0, width, height)
+
+        # Place a goal in the bottom-right corner
+        self.put_obj(Goal(), width - 2, height - 2)
+
+        # Create a vertical splitting wall
+        splitIdx = 2  # self._rand_int(2, width - 2)  # noqa: N806
+        self.grid.vert_wall(splitIdx, 0)
+
+        # Place the agent at a random position and orientation
+        # on the left side of the splitting wall
+        self.place_agent(size=(splitIdx, height))
+
+        # Place a door in the wall
+        doorIdx = 3  # self._rand_int(1, height - 1)  # noqa: N806
+        if self.locked:
+            self.put_obj(Door("red", is_locked=self.locked), splitIdx, doorIdx)
+            # Place a yellow key on the left side
+            self.place_obj(obj=Key("red"), top=(0, 0), size=(splitIdx, height))
+        else:
+            self.put_obj(Floor("blue"), splitIdx, doorIdx)
+
+        self.mission = "use the key to open the door and then get to the goal"
 
 
 # %%

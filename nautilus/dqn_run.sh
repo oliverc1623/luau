@@ -18,6 +18,7 @@ for ((run=1; run<=num_runs; run++)); do
     --num-envs 10 \
     --target-network-frequency 100 \
     --tau 0.005 \
+    --save-model-freq 100_000 \
     --seed "$seed" \
 
   echo "Experiment $run completed"
