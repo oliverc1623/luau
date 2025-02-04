@@ -367,7 +367,7 @@ if __name__ == "__main__":
                         )
                         .squeeze(-1)
                     )
-                    teacher_loss = f.mse_loss(teacher_td_target, teacher_old_val)
+                    teacher_loss = f.mse_loss(teacher_next_q_values, teacher_old_val)
 
                     # optimize the teacher new agent
                     teacher_new_agent_optimizer.zero_grad()
