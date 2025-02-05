@@ -126,8 +126,10 @@ def parse_args() -> argparse.Namespace:
         help="the number of gradient steps to take per iteration")
 
     # Introspection specific arguments
-    parser.add_argument("--introspection-threshold", type=float, default=0.9,
-        help="the threshold for introspection")
+    parser.add_argument("--lagrange_lambda", type=float, default=9.0,
+        help="the lagrange multiplier for estimating performance difference")
+    parser.add_argument("--balance_coeff", type=float, default=3.0,
+        help="the coefficient for balancing the two policies")
     parser.add_argument("--introspection-decay", type=float, default=0.99999,
         help="the decay rate for introspection")
     parser.add_argument("--burn-in", type=int, default=0,
