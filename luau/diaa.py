@@ -1,24 +1,77 @@
-import argparse
+# Actor-Critic DQN
+
+import argparse  # noqa: I001
 import random
 import time
 from distutils.util import strtobool
 from pathlib import Path
 
+import minigrid  # import minigrid before gym to register envs  # noqa: F401
 import gymnasium as gym
 import numpy as np
 import torch
 from minigrid.wrappers import ImgObsWrapper
+from torch.nn import functional as f
 from torch import nn, optim
 from torch.distributions.bernoulli import Bernoulli
-from torch.distributions.categorical import Categorical
-from torch.nn import functional as f
 from torch.utils.tensorboard import SummaryWriter
+from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
+
+from typing import NamedTuple
 
 RGB_CHANNEL = 3
 
+gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
 gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
 gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
+gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKey")
+gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
+
+
+# Define a transition tuple for DQN
+class Transition(NamedTuple):
+    """A named tuple representing a single transition in the environment."""
+
+    state: torch.tensor
+    action: torch.tensor
+    reward: torch.tensor
+    next_state: torch.tensor
+    done: torch.tensor
+    indicator: torch.tensor
+
+
+class DQNReplayBuffer:
+    """Replay buffer for storing transitions experienced by the agent."""
+
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args: tuple) -> None:
+        """Save a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Transition(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size: int) -> Transition:
+        """Sample a batch of transitions from the replay buffer."""
+        batch = random.sample(self.memory, batch_size)
+        batch = Transition(*zip(*batch, strict=False))
+        return Transition(
+            state=torch.cat(batch.state, dim=0),
+            action=torch.stack(batch.action),
+            reward=torch.stack(batch.reward),
+            next_state=torch.cat(batch.next_state, dim=0),
+            done=torch.stack(batch.done),
+            indicator=torch.stack(batch.indicator),
+        )
+
+    def __len__(self):
+        return len(self.memory)
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default=str(Path(__file__).stem),
         help="the name of this experiment")
-    parser.add_argument("--gym-id", type=str, default="CartPole-v1",
+    parser.add_argument("--gym-id", type=str, default="MiniGrid-Empty-5x5-v0",
         help="the id of the gym environment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
         help="the learning rate of the optimizer")
@@ -41,57 +94,46 @@ def parse_args() -> argparse.Namespace:
         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="weather to capture videos of the agent performances (check out `videos` folder)")
+    parser.add_argument("--save-model-freq", type=int, default=1000,
+        help="the frequency of saving the model")
+    parser.add_argument("--teacher-model", type=str, default="",
+        help="the path to the teacher model")
 
     # Algorithm specific arguments
+    parser.add_argument("--buffer-size", type=int, default=10000,
+        help="the size of the replay buffer")
+    parser.add_argument("--tau", type=float, default=1.0,
+        help="the soft update rate")
+    parser.add_argument("--target-network-frequency", type=int, default=500,
+        help="the frequency of updating the target network")
+    parser.add_argument("--batch-size", type=int, default=128,
+        help="the batch size of the training")
+    parser.add_argument("--start-e", type=float, default=1,
+        help="the starting exploration rate")
+    parser.add_argument("--end-e", type=float, default=0.05,
+        help="the final exploration rate")
+    parser.add_argument("--exploration-fraction", type=float, default=0.5,
+        help="the fraction of the total timesteps for exploration")
+    parser.add_argument("--learning-starts", type=int, default=1000,
+        help="the number of steps to take before learning starts")
+    parser.add_argument("--train-frequency", type=int, default=10,
+        help="the frequency of training the agent")
     parser.add_argument("--num-envs", type=int, default=4,
         help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128,
-        help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggle learning rate annealing for policy and value networks")
-    parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Use GAE for advantage computation")
     parser.add_argument("--gamma", type=float, default=0.99,
         help="the discount factor gamma")
-    parser.add_argument("--gae-lambda", type=float, default=0.95,
-        help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=4,
-        help="the number of mini-batches")
-    parser.add_argument("--update-epochs", type=int, default=4,
-        help="the K epochs to update the policy")
-    parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggles advantages normalization")
-    parser.add_argument("--clip-coef", type=float, default=0.2,
-        help="the surrogate clipping coefficient")
-    parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
-    parser.add_argument("--ent-coef", type=float, default=0.01,
-        help="coefficient of the entropy")
-    parser.add_argument("--vf-coef", type=float, default=0.5,
-        help="coefficient of the value function")
-    parser.add_argument("--max-grad-norm", type=float, default=0.5,
-        help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=None,
-        help="the target KL divergence threshold")
-    parser.add_argument("--grid-size", type=int, default=6,
-        help="the size of the grid")
-    parser.add_argument("--vf-clip-coef", type=float, default=10.0,
-        help="the coefficient for the value clipping")
-    parser.add_argument("--teacher-model", type=str, required=True,
-        help="the path to the teacher model")
+    parser.add_argument("--gradient-steps", type=int, default=1,
+        help="the number of gradient steps to take per iteration")
+
+    # Introspection specific arguments
     parser.add_argument("--introspection-threshold", type=float, default=0.9,
         help="the threshold for introspection")
     parser.add_argument("--introspection-decay", type=float, default=0.99999,
         help="the decay rate for introspection")
     parser.add_argument("--burn-in", type=int, default=0,
         help="the burn-in period for introspection")
-    parser.add_argument("--kl-loss", type=bool, default=False,
-        help="Toggle kl loss")
-    parser.add_argument("--kl-coef", type=float, default=0.5,
-        help="kl coefficient for the loss")
+
     args = parser.parse_args()
-    args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
     # fmt: on
     return args
 
@@ -115,30 +157,33 @@ def preprocess(image: np.array) -> dict:
     return image
 
 
-def largest_divisor(n: int) -> int:
-    """Find the largest divisor of batch_size that is less than or equal to horizon."""
-    for i in range(n // 2, 0, -1):
-        if n % i == 0:
-            return i
-    return 1  # If no divisors found, return 1
+def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
+    """Calculate the linear schedule for exploration rate."""
+    slope = (end_e - start_e) / duration
+    return max(slope * t + start_e, end_e)
 
 
-def adjust_beta(beta: float, kl: float, target_kl: float) -> float:
-    """Adjust the beta parameter based on the KL divergence."""
-    if kl > 1.5 * target_kl:
-        beta *= 2  # Increase beta (reduce updates)
-    elif kl < 0.5 * target_kl:
-        beta /= 2  # Decrease beta (allow larger updates)
-    return beta
+def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict, advice_counter: torch.tensor) -> None:
+    """Write data to TensorBoard."""
+    for i, info in enumerate(infos):
+        if "episode" in info:
+            ep_return = info["episode"]["r"]
+            ep_length = info["episode"]["l"]
+            ep_advice = advice_counter[i]
+
+            print(f"global_step={global_step}, episodic_return={ep_return}")
+            writer.add_scalar("charts/episodic_return", ep_return, global_step)
+            writer.add_scalar("charts/episodic_length", ep_length, global_step)
+            writer.add_scalar("charts/advice_issued", ep_advice, global_step)
+            break
 
 
-class Agent(nn.Module):
-    """The agent class for the PPO algorithm."""
+class QNetwork(nn.Module):
+    """The critic (QNetwork) class for the DQN algorithm."""
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        # Actor network
-        c = envs.single_observation_space.shape[-1]
+        c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
             nn.Conv2d(c, 16, (2, 2)),
@@ -149,54 +194,39 @@ class Agent(nn.Module):
             nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU(),
         )
-        n = envs.single_observation_space.shape[0]
-        m = envs.single_observation_space.shape[1]
+        n = envs.observation_space.shape[0]
+        m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
-        # Define actor's model
-        self.actor = nn.Sequential(
-            nn.Linear(self.image_embedding_size, 64),
-            nn.Tanh(),
-            nn.Linear(64, envs.single_action_space.n),
-        )
-
-        # Define critic's model
         self.critic = nn.Sequential(
             nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            nn.Linear(64, 1),
+            nn.Linear(64, envs.action_space.n),
         )
 
-    def get_value(self, x: torch.tensor) -> torch.tensor:
-        """Get the value of the state."""
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the critic network."""
         x = self.image_conv(x)
         x = x.reshape(x.shape[0], -1)
         return self.critic(x)
 
-    def get_action_and_value(self, x: torch.tensor, action: int | None = None) -> tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
-        """Get the action and value of the state."""
-        x = self.image_conv(x)
-        x = x.reshape(x.shape[0], -1)
-        embedding = x
-        logits = self.actor(embedding)
-        probs = Categorical(logits=logits)
-        if action is None:
-            action = probs.sample()
-        critic_val = self.critic(embedding)
-        return action, probs.log_prob(action), probs.entropy(), critic_val
-
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
-    model_dir = Path(f"../../pvcvolume/model/{run_name}")
-    model_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = f"{model_dir}/{run_name}.pth"
+
+    # tensorboard
+    run_name = f"{args.gym_id}__{args.exp_name}"
+    log_dir = f"../../pvcvolume/runs2/{run_name}"
+    writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+
+    # model_dir
+    model_dir = Path(f"../../pvcvolume/models2/{run_name}")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -207,7 +237,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> gym.Env:
+    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> callable:
         """Create the environment."""
 
         def _init() -> gym.Env:
@@ -224,279 +254,160 @@ if __name__ == "__main__":
 
         return _init
 
-    num_updates = args.total_timesteps // args.batch_size
-    save_model_freq = largest_divisor(num_updates)
+    envs = [make_env(args.seed + i, i, args.capture_video, run_name, args.save_model_freq) for i in range(args.num_envs)]
+    envs = SubprocVecEnv(envs)
+    assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported... for now"
+    envs = VecMonitor(envs, log_dir)
 
-    envs = [make_env(args.seed + i, i, args.capture_video, run_name, save_model_freq) for i in range(args.num_envs)]
-    envs = gym.vector.SyncVectorEnv(envs)
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
-
-    agent = Agent(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-
-    # Initialize teacher model
-    teacher_source_agent = Agent(envs).to(device)
-    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    # teacher agent setup Q^I
+    teacher_source_agent = QNetwork(envs).to(device)
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
     for param in teacher_source_agent.parameters():
         param.requires_grad = False
 
-    teacher_target_agent = Agent(envs).to(device)
-    teacher_target_agent.load_state_dict(torch.load(args.teacher_model))
-    for param in list(teacher_target_agent.actor.parameters()) + list(teacher_target_agent.image_conv.parameters()):
-        param.requires_grad = False
-    for param in teacher_target_agent.critic.parameters():
-        param.requires_grad = True
-    teacher_optimizer = torch.optim.Adam(teacher_target_agent.critic.parameters(), lr=0.00001, eps=1e-5)
+    # Q_teacher^new
+    teacher_new_agent = QNetwork(envs).to(device)  # new task
+    teacher_new_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
+    teacher_new_agent_optimizer = optim.Adam(teacher_new_agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    teacher_target_network = QNetwork(envs).to(device)
+    teacher_target_network.load_state_dict(teacher_source_agent.state_dict())
+
+    # student agent setup Q^R
+    student_agent = QNetwork(envs).to(device)
+    collect_from_pi = False
+    optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-5)
+
+    target_network = QNetwork(envs).to(device)
+    target_network.load_state_dict(student_agent.state_dict())
+
+    # replay buffer
+    rb = DQNReplayBuffer(args.buffer_size)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, info = envs.reset()
-    next_obs = preprocess(next_obs)
+    obs = envs.reset()
+    obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
     advice_counter = torch.zeros(args.num_envs).to(device)
 
-    # ALGO Logic: Storage setup
-    observation_shape = next_obs.shape[1:]
-    obs = torch.zeros((args.num_steps, args.num_envs, *observation_shape)).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs, *envs.single_action_space.shape), dtype=torch.int64).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    reward = torch.zeros(args.num_envs).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    indicators = torch.zeros((args.num_steps, args.num_envs)).to(device)
-
-    # Initialize EMA for teacher and self-rewards
-    ema_teacher_reward = torch.zeros(args.num_envs).to(device)
-    ema_self_reward = torch.zeros(args.num_envs).to(device)
-
-    for update in range(1, num_updates + 1):
-        # Annealing the rate if instructed to do so.
-        if args.anneal_lr:
-            frac = 1.0 - (update - 1.0) / num_updates
-            lrnow = frac * args.learning_rate
-            optimizer.param_groups[0]["lr"] = lrnow
-
-        for step in range(args.num_steps):
-            global_step += 1 * args.num_envs
-            obs[step] = next_obs
-            dones[step] = next_done
-
+    for global_step in range(0, args.total_timesteps, args.num_envs):
+        epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
+        h_t = torch.zeros(args.num_envs).to(device)
+        if rng.random() < epsilon:
+            actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
+        elif collect_from_pi:
             # Introspection
-            h_t = torch.zeros(args.num_envs).to(device)
             probability = args.introspection_decay ** max(0, global_step - args.burn_in)
             p = Bernoulli(probability).sample([args.num_envs]).to(device)
             if global_step > args.burn_in:
-                teacher_source_vals = teacher_source_agent.get_value(next_obs).flatten()
-                teacher_target_vals = teacher_target_agent.get_value(next_obs).flatten()
+                teacher_source_q, _ = teacher_source_agent(obs).max(dim=1)
+                teacher_target_q, _ = teacher_new_agent(obs).max(dim=1)
                 # Calculate absolute differences for introspection across the batch
-                abs_diff = torch.abs(teacher_target_vals - teacher_source_vals)
+                abs_diff = torch.abs(teacher_source_q - teacher_target_q)
                 # Update h_t based on the introspection threshold
                 h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
             advice_counter += h_t
-            indicators[step] = h_t
 
-            with torch.no_grad():
-                teacher_mask = h_t == 1
-                student_mask = h_t == 0
-                num_envs = next_obs.shape[0]
-                action = torch.zeros((num_envs, *envs.single_action_space.shape), dtype=torch.int64, device=device)
-                logprob = torch.zeros(num_envs, device=device)
-                value = torch.zeros(num_envs, 1, device=device)
-                # If any environment needs teacher actions, run teacher forward pass for that subset
-                teacher_indices = teacher_mask.nonzero(as_tuple=True)[0]
-                if teacher_indices.numel() > 0:
-                    teacher_obs = next_obs[teacher_indices]
-                    t_action, t_logprob, _, t_value = teacher_source_agent.get_action_and_value(teacher_obs)
-                    action[teacher_indices] = t_action
-                    logprob[teacher_indices] = t_logprob
-                    value[teacher_indices] = t_value
-                # If any environment needs student actions, run student forward pass for that subset
-                student_indices = student_mask.nonzero(as_tuple=True)[0]
-                if student_indices.numel() > 0:
-                    student_obs = next_obs[student_indices]
-                    s_action, s_logprob, _, s_value = agent.get_action_and_value(student_obs)
-                    action[student_indices] = s_action
-                    logprob[student_indices] = s_logprob
-                    value[student_indices] = s_value
-                # Store the final values
-                values[step] = value.flatten()
-            actions[step] = action
-            logprobs[step] = logprob
-
-            # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, done, truncated, info = envs.step(action.cpu().numpy())
-            rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = preprocess(next_obs), torch.Tensor(done).to(device)
-
-            if "episode" in info:
-                # Extract the mask for completed episodes
-                completed_mask = info["_episode"]
-
-                # Filter the rewards and lengths for completed episodes
-                episodic_returns = info["episode"]["r"][completed_mask]
-                episodic_lengths = info["episode"]["l"][completed_mask]
-
-                # Log each completed episode
-                for ep_return, ep_length, ep_advice in zip(episodic_returns, episodic_lengths, advice_counter, strict=False):
-                    print(f"global_step={global_step}, episodic_return={ep_return}, advice_counter={ep_advice}")
-                    writer.add_scalar("charts/episodic_return", ep_return, global_step)
-                    writer.add_scalar("charts/episodic_length", ep_length, global_step)
-                    writer.add_scalar("charts/advice_issued", ep_advice, global_step)
-                advice_counter[completed_mask] = 0
-
-        # bootstrap value if not done
-        with torch.no_grad():
-            next_value = agent.get_value(next_obs).reshape(1, -1)
-            if args.gae:
-                advantages = torch.zeros_like(rewards).to(device)
-                lastgaelam = 0
-                for t in reversed(range(args.num_steps)):
-                    if t == args.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
-                        nextvalues = next_value
-                    else:
-                        nextnonterminal = 1.0 - dones[t + 1]
-                        nextvalues = values[t + 1]
-                    delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                    advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-                returns = advantages + values
+            if h_t.sum() > 0:
+                # Get advice from the teacher for the environments where h_t is 1
+                teacher_actions = torch.argmax(teacher_source_agent(obs), dim=1)  # Q^I
+                student_actions = torch.argmax(student_agent(obs) + teacher_new_agent(obs), dim=1)  # Q^R + Q^I
+                actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
             else:
-                returns = torch.zeros_like(rewards).to(device)
-                for t in reversed(range(args.num_steps)):
-                    if t == args.num_steps - 1:
-                        nextnonterminal = 1.0 - next_done
-                        next_return = next_value
-                    else:
-                        nextnonterminal = 1.0 - dones[t + 1]
-                        next_return = returns[t + 1]
-                    returns[t] = rewards[t] + args.gamma * nextnonterminal * next_return
-                advantages = returns - values
+                # Get actions from Q^R + Q^I
+                actions = torch.argmax(student_agent(obs) + teacher_new_agent(obs), dim=1).cpu().numpy()
+        else:
+            # Get actions from Q^R
+            actions = torch.argmax(student_agent(obs), dim=1).cpu().numpy()
 
-        # flatten the batch
-        b_obs = obs.reshape((-1), *observation_shape)
-        b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1, *envs.single_action_space.shape))
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
-        b_values = values.reshape(-1)
+        # step the envs
+        next_obs, rewards, dones, infos = envs.step(actions)
+        rewards = torch.tensor(rewards).to(device).view(-1)
+        dones = torch.Tensor(dones).to(device)
+        write_to_tensorboard(writer, global_step, infos, advice_counter)
 
-        # Initialize corrections
-        student_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
-        teacher_correction = torch.ones((args.num_steps, args.num_envs)).to(device)
+        # get terminal observation
+        real_next_obs = next_obs.copy()
+        for idx, done in enumerate(dones):
+            if done:
+                terminal_obs = infos[idx]["terminal_observation"]
+                real_next_obs[idx] = terminal_obs
+                advice_counter[idx] = 0
+        real_next_obs = preprocess(real_next_obs)
 
-        with torch.no_grad():
-            for s in range(args.num_steps):
-                # Extract batch of indicators, actions, and states for the current step across all environments
-                h = indicators[s]  # Shape: (num_envs,)
-                a = actions[s]  # Shape: (num_envs,)
-                states = obs[s]  # Shape: (num_envs, ...)
-                # Evaluate student and teacher log probabilities as a batch
-                _, student_logprobs, _, _ = agent.get_action_and_value(states, a.long())  # Assuming batched input is supported
-                _, teacher_logprobs, _, _ = teacher_source_agent.get_action_and_value(states, a.long())  # Assuming batched input is supported)
+        # update collect_from_pi to ensure buffer has data from Q^R and Q^R + Q^I
+        if dones.any():
+            collect_from_pi = not collect_from_pi
 
-                # Calculate corrections using vectorized operations
-                teacher_ratio = torch.clamp(torch.exp(teacher_logprobs - student_logprobs), -0.2, 0.2)
-                student_ratio = torch.clamp(torch.exp(student_logprobs - teacher_logprobs), -0.2, 0.2)
-                teacher_correction[s] = torch.where(h == 1, torch.ones_like(teacher_correction[s]), teacher_ratio)
-                student_correction[s] = torch.where(h == 1, student_ratio, torch.ones_like(student_correction[s]))
+        # add to replay buffer
+        next_obs = preprocess(next_obs)
+        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones, h_t)
+        obs = next_obs
 
-        b_student_correction = student_correction.reshape(-1)
-        b_teacher_correction = teacher_correction.reshape(-1)
+        # ALGO LOGIC: training.
+        if global_step > args.learning_starts * args.num_envs:
+            if global_step % args.train_frequency == 0:
+                for _ in range(args.gradient_steps):
+                    # sample a batch of data
+                    data = rb.sample(args.batch_size)
 
-        # Optimizing the policy and value network
-        b_inds = np.arange(args.batch_size)
-        clipfracs = []
-        for _epoch in range(args.update_epochs):
-            rng.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
-                mb_inds = b_inds[start:end]
-                mb_rho_s = b_student_correction[mb_inds]
+                    # compute advantages
+                    with torch.no_grad():
+                        next_q_values, _ = target_network(data.next_state).max(dim=1)
+                        td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
+                    old_val = student_agent(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
+                    loss = f.mse_loss(td_target, old_val)
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
-                logratio = newlogprob - b_logprobs[mb_inds]
-                ratio = logratio.exp()
+                    # optimize the actor
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
 
-                with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    old_approx_kl = (-logratio).mean()
-                    approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
-
-                mb_advantages = b_advantages[mb_inds]
-                if args.norm_adv:
-                    mb_advantages = mb_advantages * mb_rho_s
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-
-                # Policy loss
-                pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss = torch.max(pg_loss1 * mb_rho_s, pg_loss2 * mb_rho_s).mean()
-
-                # KL divergence regularization
-                kl_div = f.kl_div(b_logprobs[mb_inds], newlogprob, reduction="batchmean", log_target=True)
-
-                # Value loss
-                newvalue = newvalue.view(-1)
-                if args.clip_vloss:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2 * mb_rho_s
-                    v_clipped = b_values[mb_inds] + torch.clamp(
-                        newvalue - b_values[mb_inds],
-                        -args.vf_clip_coef,
-                        args.vf_clip_coef,
+                    # update teacher new agent
+                    with torch.no_grad():
+                        teacher_next_q_values, _ = teacher_target_network(data.next_state).max(dim=1)
+                        teacher_td_target = data.reward.flatten().float() + args.gamma * teacher_next_q_values.float() * (
+                            1 - data.done.flatten().float()
+                        )
+                    teacher_old_val = (
+                        teacher_new_agent(data.state.to(device).float())
+                        .gather(
+                            1,
+                            data.action.to(device).view(-1, 1).long(),
+                        )
+                        .squeeze(-1)
                     )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2 * mb_rho_s
-                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
-                else:
-                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                    teacher_loss = f.mse_loss(teacher_next_q_values, teacher_old_val)
 
-                entropy_loss = (entropy * mb_rho_s).mean()
+                    # optimize the teacher new agent
+                    teacher_new_agent_optimizer.zero_grad()
+                    teacher_loss.backward()
+                    teacher_new_agent_optimizer.step()
 
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
-                if args.kl_loss:
-                    loss = loss + args.kl_coef * kl_div
-                    args.kl_coeff = adjust_beta(args.kl_coef, kl_div.item(), args.target_kl)
+            # update target network
+            if global_step % args.target_network_frequency == 0:
+                for target_network_param, q_network_param in zip(target_network.parameters(), student_agent.parameters(), strict=False):
+                    target_network_param.data.copy_(
+                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
+                    )
+                # update teacher target network
+                for target_network_param, q_network_param in zip(teacher_target_network.parameters(), teacher_new_agent.parameters(), strict=False):
+                    target_network_param.data.copy_(
+                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
+                    )
 
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
-                optimizer.step()
+                writer.add_scalar("losses/actor_loss", loss.item(), global_step)
+                writer.add_scalar("losses/teacher_loss", teacher_loss.item(), global_step)
+                writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                writer.add_scalar("losses/epsilon", epsilon, global_step)
+                print("SPS:", int(global_step / (time.time() - start_time)))
+                writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-                # Teacher loss
-                mb_rho_t = b_teacher_correction[mb_inds]
-                teacher_newvalue = teacher_target_agent.get_value(b_obs[mb_inds].detach()).view(-1)
-                teacher_v_loss = ((teacher_newvalue - b_returns[mb_inds].detach()) ** 2 * mb_rho_t).mean()
-
-                teacher_optimizer.zero_grad()
-                teacher_v_loss.backward()
-                teacher_optimizer.step()
-
-            if args.target_kl is not None and approx_kl > args.target_kl:
-                break
-
-        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-        var_y = np.var(y_true)
-        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
-        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/teacher_value_loss", teacher_v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
-        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
-        if update % save_model_freq == 0:
-            print(f"Saving model checkpoint at step {global_step} to {checkpoint_path}")
-            torch.save(agent.state_dict(), checkpoint_path)
+            if global_step % (args.save_model_freq - args.num_envs) == 0:
+                print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
+                torch.save(student_agent.state_dict(), actor_checkpoint_path)
 
     envs.close()
     writer.close()
