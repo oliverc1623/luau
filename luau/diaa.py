@@ -324,7 +324,7 @@ if __name__ == "__main__":
                 actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
             else:
                 # Get actions from Q^R + Q^I
-                actions = torch.argmax(student_agent(obs) + teacher_new_agent(obs), dim=1).cpu().numpy()
+                actions = torch.argmax(student_agent(obs) + effective_coeff * teacher_new_agent(obs), dim=1).cpu().numpy()
         else:
             # Get actions from Q^R
             actions = torch.argmax(student_agent(obs), dim=1).cpu().numpy()
@@ -420,15 +420,17 @@ if __name__ == "__main__":
         if len(rb) > 0:
             batch = Transition(*zip(*rb.memory, strict=False))
 
-            states = batch.state
-            actions = torch.stack(batch.action)
-            timesteps = torch.stack(batch.timestep).float()
+            states = torch.cat(batch.state, dim=0)
+            timesteps = batch.timestep[0]
 
-            A_pi = (student_agent(data.next_state) + teacher_new_agent(states)).max(dim=1)
-            A_pi_R = student_agent(data.next_state).max(dim=1)
-            gamma_t = torch.pow(args.gamma, timesteps)
-            performance_difference = args.coeff_learning_rate * (gamma_t * (A_pi_R - A_pi)).mean()
-            effective_coeff = effective_coeff + performance_difference
+            with torch.no_grad():
+                q_r = student_agent(states)
+                q_i = effective_coeff * teacher_new_agent(states)
+                A_pi, _ = (q_r + q_i).max(dim=1)
+                A_pi_R, _ = q_r.max(dim=1)
+                gamma_t = torch.pow(args.gamma, timesteps).to(device)
+                performance_difference = args.coeff_learning_rate * (gamma_t * (A_pi_R - A_pi)).mean()
+                args.lagrange_lambda = args.lagrange_lambda + performance_difference
 
     envs.close()
     writer.close()
