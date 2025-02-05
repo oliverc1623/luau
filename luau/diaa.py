@@ -350,7 +350,7 @@ if __name__ == "__main__":
 
         # add to replay buffer
         next_obs = preprocess(next_obs)
-        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones, h_t, torch.tensor(global_step))
+        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones, h_t, torch.tensor(global_step + args.num_envs))
         obs = next_obs
 
         # ALGO LOGIC: training.
@@ -423,14 +423,15 @@ if __name__ == "__main__":
             batch = Transition(*zip(*rb.memory, strict=False))
 
             states = torch.cat(batch.state, dim=0)
-            timesteps = batch.timestep[0]
+            timesteps = torch.stack(batch.timestep)
+            timesteps = torch.repeat_interleave(timesteps, repeats=args.num_envs)
 
             with torch.no_grad():
                 q_r = student_agent(states)
                 q_i = effective_coeff * teacher_new_agent(states)
                 A_pi, _ = (q_r + q_i).max(dim=1)
                 A_pi_R, _ = q_r.max(dim=1)
-                gamma_t = torch.pow(args.gamma, timesteps).to(device)
+                gamma_t = (args.gamma**timesteps).to(device)
                 performance_difference = args.coeff_learning_rate * (gamma_t * (A_pi_R - A_pi)).mean()
                 args.lagrange_lambda = args.lagrange_lambda + performance_difference
                 effective_coeff = args.balance_coeff / (1 + args.lagrange_lambda)
