@@ -409,6 +409,8 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/teacher_loss", teacher_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
+                writer.add_scalar("losses/lagrane_lambda", args.lagrange_lambda, global_step)
+                writer.add_scalar("losses/effective_coeff_aka_ithreshold", effective_coeff, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
@@ -431,6 +433,7 @@ if __name__ == "__main__":
                 gamma_t = torch.pow(args.gamma, timesteps).to(device)
                 performance_difference = args.coeff_learning_rate * (gamma_t * (A_pi_R - A_pi)).mean()
                 args.lagrange_lambda = args.lagrange_lambda + performance_difference
+                effective_coeff = args.balance_coeff / (1 + args.lagrange_lambda)
 
     envs.close()
     writer.close()
