@@ -40,6 +40,7 @@ class Transition(NamedTuple):
     next_state: torch.tensor
     done: torch.tensor
     indicator: torch.tensor
+    timestep: torch.tensor
 
 
 class DQNReplayBuffer:
@@ -68,6 +69,7 @@ class DQNReplayBuffer:
             next_state=torch.cat(batch.next_state, dim=0),
             done=torch.stack(batch.done),
             indicator=torch.stack(batch.indicator),
+            timestep=torch.stack(batch.timestep),
         )
 
     def __len__(self):
@@ -130,6 +132,8 @@ def parse_args() -> argparse.Namespace:
         help="the lagrange multiplier for estimating performance difference")
     parser.add_argument("--balance_coeff", type=float, default=3.0,
         help="the coefficient for balancing the two policies")
+    parser.add_argument("--coeff_learning_rate", type=float, default=0.0003,
+        help="the learning rate for the lagrange multiplier")
     parser.add_argument("--introspection-decay", type=float, default=0.99999,
         help="the decay rate for introspection")
     parser.add_argument("--burn-in", type=int, default=0,
@@ -293,6 +297,7 @@ if __name__ == "__main__":
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
     advice_counter = torch.zeros(args.num_envs).to(device)
+    effective_coeff = args.balance_coeff / (1 + args.lagrange_lambda)
 
     for global_step in range(0, args.total_timesteps, args.num_envs):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
@@ -309,7 +314,7 @@ if __name__ == "__main__":
                 # Calculate absolute differences for introspection across the batch
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q)
                 # Update h_t based on the introspection threshold
-                h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
+                h_t = (abs_diff <= effective_coeff).int() * (p == 1).int()
             advice_counter += h_t
 
             if h_t.sum() > 0:
@@ -345,7 +350,7 @@ if __name__ == "__main__":
 
         # add to replay buffer
         next_obs = preprocess(next_obs)
-        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones, h_t)
+        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones, h_t, torch.tensor(global_step))
         obs = next_obs
 
         # ALGO LOGIC: training.
@@ -410,6 +415,20 @@ if __name__ == "__main__":
             if global_step % (args.save_model_freq - args.num_envs) == 0:
                 print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
                 torch.save(student_agent.state_dict(), actor_checkpoint_path)
+
+        # compute performance difference
+        if len(rb) > 0:
+            batch = Transition(*zip(*rb.memory, strict=False))
+
+            states = batch.state
+            actions = torch.stack(batch.action)
+            timesteps = torch.stack(batch.timestep).float()
+
+            A_pi = (student_agent(data.next_state) + teacher_new_agent(states)).max(dim=1)
+            A_pi_R = student_agent(data.next_state).max(dim=1)
+            gamma_t = torch.pow(args.gamma, timesteps)
+            performance_difference = args.coeff_learning_rate * (gamma_t * (A_pi_R - A_pi)).mean()
+            effective_coeff = effective_coeff + performance_difference
 
     envs.close()
     writer.close()
