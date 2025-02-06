@@ -129,11 +129,11 @@ def parse_args() -> argparse.Namespace:
         help="the number of gradient steps to take per iteration")
 
     # Introspection specific arguments
-    parser.add_argument("--lagrange_lambda", type=float, default=9.0,
+    parser.add_argument("--lagrange-lambda", type=float, default=9.0,
         help="the lagrange multiplier for estimating performance difference")
-    parser.add_argument("--balance_coeff", type=float, default=3.0,
+    parser.add_argument("--balance-coeff", type=float, default=3.0,
         help="the coefficient for balancing the two policies")
-    parser.add_argument("--coeff_learning_rate", type=float, default=0.0003,
+    parser.add_argument("--coeff-learning_rate", type=float, default=0.0003,
         help="the learning rate for the lagrange multiplier")
     parser.add_argument("--introspection-decay", type=float, default=0.99999,
         help="the decay rate for introspection")
