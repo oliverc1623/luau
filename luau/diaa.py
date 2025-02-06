@@ -1,6 +1,7 @@
 # Actor-Critic DQN
 
 import argparse  # noqa: I001
+import collections
 import random
 import time
 from distutils.util import strtobool
@@ -138,6 +139,10 @@ def parse_args() -> argparse.Namespace:
         help="the decay rate for introspection")
     parser.add_argument("--burn-in", type=int, default=0,
         help="the burn-in period for introspection")
+    parser.add_argument("--history-length", type=int, default=20,
+        help="number of previous rewards to take into account for TGRL update")
+    parser.add_argument("--performance-coefficient-frequency", type=int, default=1000,
+        help="the frequency of updates for performance coefficient")
 
     args = parser.parse_args()
     # fmt: on
@@ -167,21 +172,6 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> floa
     """Calculate the linear schedule for exploration rate."""
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
-
-
-def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict, advice_counter: torch.tensor) -> None:
-    """Write data to TensorBoard."""
-    for i, info in enumerate(infos):
-        if "episode" in info:
-            ep_return = info["episode"]["r"]
-            ep_length = info["episode"]["l"]
-            ep_advice = advice_counter[i]
-
-            print(f"global_step={global_step}, episodic_return={ep_return}")
-            writer.add_scalar("charts/episodic_return", ep_return, global_step)
-            writer.add_scalar("charts/episodic_length", ep_length, global_step)
-            writer.add_scalar("charts/advice_issued", ep_advice, global_step)
-            break
 
 
 class QNetwork(nn.Module):
@@ -275,17 +265,19 @@ if __name__ == "__main__":
     teacher_new_agent = QNetwork(envs).to(device)  # new task
     teacher_new_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
     teacher_new_agent_optimizer = optim.Adam(teacher_new_agent.parameters(), lr=args.learning_rate, eps=1e-5)
-
     teacher_target_network = QNetwork(envs).to(device)
     teacher_target_network.load_state_dict(teacher_source_agent.state_dict())
 
     # student agent setup Q^R
     student_agent = QNetwork(envs).to(device)
-    collect_from_pi = False
     optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-5)
-
     target_network = QNetwork(envs).to(device)
     target_network.load_state_dict(student_agent.state_dict())
+
+    collect_from_pi = False
+    actor_performance = collections.deque(args.history_length * [0], args.history_length)
+    actor_aux_performance = collections.deque(args.history_length * [0], args.history_length)
+    performance_difference = 0
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size)
@@ -333,7 +325,25 @@ if __name__ == "__main__":
         next_obs, rewards, dones, infos = envs.step(actions)
         rewards = torch.tensor(rewards).to(device).view(-1)
         dones = torch.Tensor(dones).to(device)
-        write_to_tensorboard(writer, global_step, infos, advice_counter)
+
+        for i, info in enumerate(infos):
+            if "episode" in info:
+                ep_return = info["episode"]["r"]
+                ep_length = info["episode"]["l"]
+                ep_advice = advice_counter[i]
+                print(f"global_step={global_step}, episodic_return={ep_return}")
+                if collect_from_pi:
+                    writer.add_scalar("charts/episodic_return", ep_return, global_step)
+                    writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                    writer.add_scalar("charts/advice_issued", ep_advice, global_step)
+                    actor_performance.appendleft(ep_return)
+                    collect_from_pi = False
+                else:
+                    writer.add_scalar("charts/episodic_return_aux", ep_return, global_step)
+                    writer.add_scalar("charts/episodic_length_aux", ep_length, global_step)
+                    actor_aux_performance.appendleft(ep_return)
+                    collect_from_pi = True
+                break
 
         # get terminal observation
         real_next_obs = next_obs.copy()
@@ -343,10 +353,6 @@ if __name__ == "__main__":
                 real_next_obs[idx] = terminal_obs
                 advice_counter[idx] = 0
         real_next_obs = preprocess(real_next_obs)
-
-        # update collect_from_pi to ensure buffer has data from Q^R and Q^R + Q^I
-        if dones.any():
-            collect_from_pi = not collect_from_pi
 
         # add to replay buffer
         next_obs = preprocess(next_obs)
@@ -359,7 +365,6 @@ if __name__ == "__main__":
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
                     data = rb.sample(args.batch_size)
-
                     # compute advantages
                     with torch.no_grad():
                         next_q_values, _ = target_network(data.next_state).max(dim=1)
@@ -409,8 +414,9 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/teacher_loss", teacher_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
-                writer.add_scalar("losses/lagrane_lambda", args.lagrange_lambda, global_step)
+                writer.add_scalar("losses/lagrange_lambda", args.lagrange_lambda, global_step)
                 writer.add_scalar("losses/effective_coeff_aka_ithreshold", effective_coeff, global_step)
+                writer.add_scalar("losses/performance_difference", performance_difference, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
@@ -419,22 +425,10 @@ if __name__ == "__main__":
                 torch.save(student_agent.state_dict(), actor_checkpoint_path)
 
         # compute performance difference
-        if len(rb) > 0:
-            batch = Transition(*zip(*rb.memory, strict=False))
-
-            states = torch.cat(batch.state, dim=0)
-            timesteps = torch.stack(batch.timestep)
-            timesteps = torch.repeat_interleave(timesteps, repeats=args.num_envs)
-
-            with torch.no_grad():
-                q_r = student_agent(states)
-                q_i = effective_coeff * teacher_new_agent(states)
-                A_pi, _ = (q_r + q_i).max(dim=1)
-                A_pi_R, _ = q_r.max(dim=1)
-                gamma_t = (args.gamma**timesteps).to(device)
-                performance_difference = args.coeff_learning_rate * (gamma_t * (A_pi_R - A_pi)).mean()
-                args.lagrange_lambda = args.lagrange_lambda + performance_difference
-                effective_coeff = args.balance_coeff / (1 + args.lagrange_lambda)
+        if global_step % args.performance_coefficient_frequency == 0:
+            performance_difference = np.mean(actor_performance) - np.mean(actor_aux_performance)
+            args.lagrange_lambda = args.lagrange_lambda + performance_difference
+            effective_coeff = args.balance_coeff / (1 + args.lagrange_lambda)
 
     envs.close()
     writer.close()
