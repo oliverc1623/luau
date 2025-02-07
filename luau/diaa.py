@@ -133,8 +133,6 @@ def parse_args() -> argparse.Namespace:
         help="the lagrange multiplier for estimating performance difference")
     parser.add_argument("--alpha", type=float, default=3.0,
         help="the coefficient for balancing the two policies")
-    # parser.add_argument("--mu", type=float, default=0.0003,
-    #     help="the learning rate for the lagrange multiplier")
     parser.add_argument("--introspection-decay", type=float, default=0.99999,
         help="the decay rate for introspection")
     parser.add_argument("--burn-in", type=int, default=0,
@@ -312,7 +310,7 @@ if __name__ == "__main__":
             if h_t.sum() > 0:
                 # Get advice from the teacher for the environments where h_t is 1
                 teacher_actions = torch.argmax(teacher_source_agent(obs), dim=1)  # Q^I
-                student_actions = torch.argmax(student_agent(obs) + teacher_new_agent(obs), dim=1)  # Q^R + Q^I
+                student_actions = torch.argmax(student_agent(obs) + effective_coeff * teacher_new_agent(obs), dim=1)  # Q^R + Q^I
                 actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
             else:
                 # Get actions from Q^R + Q^I
@@ -415,7 +413,7 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
                 writer.add_scalar("losses/lagrange_lambda", args.lagrange_lambda, global_step)
-                writer.add_scalar("losses/effective_coeff_aka_ithreshold", effective_coeff, global_step)
+                writer.add_scalar("losses/balance_coeff_aka_ithreshold", effective_coeff, global_step)
                 writer.add_scalar("losses/performance_difference", performance_difference, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
