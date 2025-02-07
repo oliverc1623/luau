@@ -1,4 +1,4 @@
-# Actor-Critic DQN
+# Dynamically Introspective Action Advising (DIAA)
 
 import argparse  # noqa: I001
 import collections
@@ -131,10 +131,10 @@ def parse_args() -> argparse.Namespace:
     # Introspection specific arguments
     parser.add_argument("--lagrange-lambda", type=float, default=9.0,
         help="the lagrange multiplier for estimating performance difference")
-    parser.add_argument("--balance-coeff", type=float, default=3.0,
+    parser.add_argument("--alpha", type=float, default=3.0,
         help="the coefficient for balancing the two policies")
-    parser.add_argument("--coeff-learning_rate", type=float, default=0.0003,
-        help="the learning rate for the lagrange multiplier")
+    # parser.add_argument("--mu", type=float, default=0.0003,
+    #     help="the learning rate for the lagrange multiplier")
     parser.add_argument("--introspection-decay", type=float, default=0.99999,
         help="the decay rate for introspection")
     parser.add_argument("--burn-in", type=int, default=0,
@@ -289,7 +289,7 @@ if __name__ == "__main__":
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
     advice_counter = torch.zeros(args.num_envs).to(device)
-    effective_coeff = args.balance_coeff / (1 + args.lagrange_lambda)
+    effective_coeff = args.alpha / (1 + args.lagrange_lambda)
 
     for global_step in range(0, args.total_timesteps, args.num_envs):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
@@ -426,9 +426,9 @@ if __name__ == "__main__":
 
         # compute performance difference
         if global_step % args.performance_coefficient_frequency == 0:
-            performance_difference = np.mean(actor_performance) - np.mean(actor_aux_performance)
+            performance_difference = np.mean(actor_aux_performance) - np.mean(actor_performance)
             args.lagrange_lambda = args.lagrange_lambda + performance_difference
-            effective_coeff = args.balance_coeff / (1 + args.lagrange_lambda)
+            effective_coeff = args.alpha / (1 + args.lagrange_lambda)
 
     envs.close()
     writer.close()
