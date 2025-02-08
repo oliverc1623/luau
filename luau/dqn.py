@@ -27,6 +27,7 @@ gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:Fou
 gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
 gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKey")
 gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
+gym.register(id="MediumFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:MediumFourRoomDoorKeyLocked")
 
 
 # Define a transition tuple for DQN
