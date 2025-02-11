@@ -305,17 +305,37 @@ if __name__ == "__main__":
         if rng.random() < epsilon:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            q_values = agent(obs)
-            actions = torch.argmax(q_values, dim=1).cpu().numpy()
+            actions, _, _ = agent.get_action(obs).cpu().numpy()
 
+        # step the envs
         next_obs, rewards, dones, truncations, infos = envs.step(actions)
-        dones = np.logical_or(dones, truncations)
-        rewards = torch.tensor(rewards).to(device).view(-1)
-        next_obs, dones = preprocess(next_obs), torch.Tensor(dones).to(device)
-        write_to_tensorboard(writer, global_step, infos)
 
-        rb.push(obs, torch.tensor(actions), rewards, next_obs, dones)
-        obs = next_obs
+        # process rewards and dones
+        rewards = torch.tensor(rewards).to(device).view(-1)
+        dones = torch.Tensor(dones).to(device)
+
+        # record metrics for plotting
+        for _, info in enumerate(infos):
+            if "episode" in info:
+                ep_return = info["episode"]["r"]
+                ep_length = info["episode"]["l"]
+
+                print(f"global_step={global_step}, episodic_return={ep_return}")
+                writer.add_scalar("charts/episodic_return", ep_return, global_step)
+                writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                break
+
+        # get real terminal observation
+        real_next_obs = next_obs.copy()
+        for idx, trunc in enumerate(truncations):
+            if trunc:
+                print(infos)
+                terminal_obs = infos[idx]["terminal_observation"]
+                real_next_obs[idx] = terminal_obs
+        real_next_obs = preprocess(real_next_obs)
+
+        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones)
+        obs = preprocess(next_obs)
 
         # ALGO LOGIC: training.
         if len(rb) > args.batch_size:
