@@ -197,7 +197,7 @@ class Actor(nn.Module):
         return self.actor(embedding)
 
     def get_action(self, x: torch.Tensor) -> torch.Tensor:
-        """Get the action from the actor network."""
+        """Get the action, log probs, and probs for all actions from the actor network."""
         logits = self(x)
         policy_dist = Categorical(logits=logits)
         action = policy_dist.sample()
