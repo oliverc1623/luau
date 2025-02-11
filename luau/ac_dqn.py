@@ -15,6 +15,8 @@ from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
+from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from typing import NamedTuple
 
@@ -167,7 +169,7 @@ class Actor(nn.Module):
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
         # Actor network
-        c = envs.single_observation_space.shape[-1]
+        c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
             nn.Conv2d(c, 16, (2, 2)),
@@ -178,15 +180,15 @@ class Actor(nn.Module):
             nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU(),
         )
-        n = envs.single_observation_space.shape[0]
-        m = envs.single_observation_space.shape[1]
+        n = envs.observation_space.shape[0]
+        m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         # Define actor's model
         self.actor = nn.Sequential(
             nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -211,7 +213,7 @@ class QNetwork(nn.Module):
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        c = envs.single_observation_space.shape[-1]
+        c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
             nn.Conv2d(c, 16, (2, 2)),
@@ -222,14 +224,14 @@ class QNetwork(nn.Module):
             nn.Conv2d(32, 64, (2, 2)),
             nn.ReLU(),
         )
-        n = envs.single_observation_space.shape[0]
-        m = envs.single_observation_space.shape[1]
+        n = envs.observation_space.shape[0]
+        m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         self.critic = nn.Sequential(
             nn.Linear(self.image_embedding_size, 64),
             nn.Tanh(),
-            nn.Linear(64, envs.single_action_space.n),
+            nn.Linear(64, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -241,16 +243,21 @@ class QNetwork(nn.Module):
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
-    writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
-    model_dir = Path(f"../../pvcvolume/model/{run_name}")
-    model_dir.mkdir(parents=True, exist_ok=True)
-    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
-    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
+
+    # tensorboard
+    run_name = f"{args.gym_id}__{args.exp_name}"
+    log_dir = f"../../pvcvolume/runs2/{run_name}"
+    writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+
+    # model_dir
+    model_dir = Path(f"../../pvcvolume/models2/{run_name}")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
+    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -279,8 +286,9 @@ if __name__ == "__main__":
         return _init
 
     envs = [make_env(args.seed + i, i, args.capture_video, run_name, args.save_model_freq) for i in range(args.num_envs)]
-    envs = gym.vector.SyncVectorEnv(envs)
-    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    envs = SubprocVecEnv(envs)
+    assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported"
+    envs = VecMonitor(envs, log_dir)
 
     # agent setup
     agent = Actor(envs).to(device)
@@ -296,19 +304,19 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    obs, infos = envs.reset()
+    obs = envs.reset()
     obs = preprocess(obs)
     next_done = torch.zeros(args.num_envs).to(device)
 
     for global_step in range(args.total_timesteps):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
-        if rng.random() < epsilon:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
-        else:
-            actions, _, _ = agent.get_action(obs).cpu().numpy()
+
+        # ALGO LOGIC: select action
+        actions, _, _ = agent.get_action(obs)
+        actions = actions.cpu().numpy()
 
         # step the envs
-        next_obs, rewards, dones, truncations, infos = envs.step(actions)
+        next_obs, rewards, dones, infos = envs.step(actions)
 
         # process rewards and dones
         rewards = torch.tensor(rewards).to(device).view(-1)
@@ -327,9 +335,8 @@ if __name__ == "__main__":
 
         # get real terminal observation
         real_next_obs = next_obs.copy()
-        for idx, trunc in enumerate(truncations):
-            if trunc:
-                print(infos)
+        for idx, done in enumerate(dones):
+            if done:
                 terminal_obs = infos[idx]["terminal_observation"]
                 real_next_obs[idx] = terminal_obs
         real_next_obs = preprocess(real_next_obs)
@@ -338,7 +345,7 @@ if __name__ == "__main__":
         obs = preprocess(next_obs)
 
         # ALGO LOGIC: training.
-        if len(rb) > args.batch_size:
+        if global_step > args.learning_starts * args.num_envs:
             if global_step % args.train_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
