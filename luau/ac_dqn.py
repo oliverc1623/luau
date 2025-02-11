@@ -10,6 +10,7 @@ import minigrid  # import minigrid before gym to register envs  # noqa: F401
 import gymnasium as gym
 import numpy as np
 import torch
+from torch.distributions.categorical import Categorical
 from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
@@ -18,10 +19,6 @@ from torch.utils.tensorboard import SummaryWriter
 from typing import NamedTuple
 
 RGB_CHANNEL = 3
-
-gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
-gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
-gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
 
 
 # Define a transition tuple for DQN
@@ -198,6 +195,15 @@ class Actor(nn.Module):
         x = x.reshape(x.shape[0], -1)
         embedding = x
         return self.actor(embedding)
+
+    def get_action(self, x: torch.Tensor) -> torch.Tensor:
+        """Get the action from the actor network."""
+        logits = self(x)
+        policy_dist = Categorical(logits=logits)
+        action = policy_dist.sample()
+        action_probs = policy_dist.probs
+        log_prob = f.log_softmax(logits, dim=1)
+        return action, log_prob, action_probs
 
 
 class QNetwork(nn.Module):
