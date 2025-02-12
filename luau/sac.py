@@ -17,6 +17,7 @@ from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.buffers import ReplayBuffer
 
 
 RGB_CHANNEL = 3
@@ -188,6 +189,7 @@ class Actor(nn.Module):
 
     def get_action(self, x: torch.Tensor) -> torch.Tensor:
         """Get the action, log probs, and probs for all actions from the actor network."""
+        print(x.shape)
         logits = self(x)
         policy_dist = Categorical(logits=logits)
         action = policy_dist.sample()
@@ -289,7 +291,14 @@ if __name__ == "__main__":
     q_optimizer = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.ql_lr, eps=1e-4)
 
     # replay buffer
-    rb = DQNReplayBuffer(args.buffer_size)
+    rb = ReplayBuffer(
+        buffer_size=args.buffer_size,
+        observation_space=envs.observation_space,
+        action_space=envs.action_space,
+        device=device,
+        n_envs=args.num_envs,
+    )  # DQNReplayBuffer(args.buffer_size)
+    rb.obs_shape = (3, 7, 7)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -329,30 +338,30 @@ if __name__ == "__main__":
                 real_next_obs[idx] = terminal_obs
 
         # add transition to replay buffer
-        rb.push(obs, actions, rewards, real_next_obs, dones)
+        rb.add(obs, real_next_obs, actions, rewards, dones, infos)
         obs = real_next_obs
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts and global_step % args.update_frequency == 0:
             for _ in range(args.gradient_steps):
                 # sample a batch of data
-                states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                data = rb.sample(args.batch_size)
 
                 # compute advantages
                 with torch.no_grad():
-                    _, next_state_log_pi, next_state_action_probs = agent.get_action(next_states)
-                    qf1_next_target = qf1_target(next_states)
-                    qf2_next_target = qf2_target(next_states)
+                    _, next_state_log_pi, next_state_action_probs = agent.get_action(data.next_observations)
+                    qf1_next_target = qf1_target(data.next_observations)
+                    qf2_next_target = qf2_target(data.next_observations)
 
                     min_qf_next_target = next_state_action_probs * (torch.min(qf1_next_target, qf2_next_target) - args.alpha * next_state_log_pi)
                     min_qf_next_target = min_qf_next_target.sum(dim=1)
-                    next_q_value = rewards_t.flatten() + (1 - dones_t.flatten()) * args.gamma * (min_qf_next_target)
+                    next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (min_qf_next_target)
 
-                qf1_values = qf1(states)
-                qf2_values = qf2(states)
+                qf1_values = qf1(data.observations)
+                qf2_values = qf2(data.observations)
 
-                qf1_a_values = qf1_values.gather(1, actions_t.long()).view(-1)
-                qf2_a_values = qf2_values.gather(1, actions_t.long()).view(-1)
+                qf1_a_values = qf1_values.gather(1, data.actions.long()).view(-1)
+                qf2_a_values = qf2_values.gather(1, data.actions.long()).view(-1)
                 qf1_loss = f.mse_loss(qf1_a_values, next_q_value)
                 qf2_loss = f.mse_loss(qf2_a_values, next_q_value)
                 qf_loss = qf1_loss + qf2_loss
@@ -363,10 +372,10 @@ if __name__ == "__main__":
                 q_optimizer.step()
 
                 # Policy gradient update for the actor
-                _, log_pi, action_probs = agent.get_action(states)
+                _, log_pi, action_probs = agent.get_action(data.observations)
                 with torch.no_grad():
-                    qf1_values = qf1(states)
-                    qf2_values = qf2(states)
+                    qf1_values = qf1(data.observations)
+                    qf2_values = qf2(data.observations)
                     min_qf_values = torch.min(qf1_values, qf2_values)
                 actor_loss = (action_probs * ((args.alpha * log_pi) - min_qf_values)).mean()
 
