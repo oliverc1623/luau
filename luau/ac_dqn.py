@@ -293,7 +293,7 @@ if __name__ == "__main__":
     start_time = time.time()
     obs = envs.reset()
 
-    for global_step in range(args.total_timesteps):
+    for global_step in range(0, args.total_timesteps, args.num_envs):
         # ALGO LOGIC: select action
         if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
@@ -330,40 +330,39 @@ if __name__ == "__main__":
         obs = real_next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
-            if global_step % args.train_frequency == 0:
-                for _ in range(args.gradient_steps):
-                    # sample a batch of data
-                    states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
-                    states = states.permute(0, 3, 1, 2)
-                    next_states = next_states.permute(0, 3, 1, 2)
+        if global_step > args.learning_starts and global_step % args.train_frequency == 0:
+            for _ in range(args.num_envs):
+                # sample a batch of data
+                states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                states = states.permute(0, 3, 1, 2)
+                next_states = next_states.permute(0, 3, 1, 2)
 
-                    # compute advantages
-                    with torch.no_grad():
-                        _, next_state_log_pi, next_state_action_probs = agent.get_action(next_states)
-                        next_q_values1 = target_network(next_states)
-                        qf_next_target = next_state_action_probs * (next_q_values1)
-                        qf_next_target = qf_next_target.sum(dim=1)
-                        td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
-                    old_val = critic(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
-                    critic_loss = f.mse_loss(td_target, old_val)
+                # compute advantages
+                with torch.no_grad():
+                    _, next_state_log_pi, next_state_action_probs = agent.get_action(next_states)
+                    next_q_values1 = target_network(next_states)
+                    qf_next_target = next_state_action_probs * (next_q_values1)
+                    qf_next_target = qf_next_target.sum(dim=1)
+                    td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
+                old_val = critic(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
+                critic_loss = f.mse_loss(td_target, old_val)
 
-                    # optimize the critic QNetwork
-                    critic_optimizer.zero_grad()
-                    critic_loss.backward()
-                    critic_optimizer.step()
+                # optimize the critic QNetwork
+                critic_optimizer.zero_grad()
+                critic_loss.backward()
+                critic_optimizer.step()
 
-                    # Policy gradient update for the actor
-                    _, _, action_probs = agent.get_action(states)
-                    with torch.no_grad():
-                        q_values = critic(states)
-                    expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
-                    actor_loss = -torch.mean(expected_q)
+                # Policy gradient update for the actor
+                _, _, action_probs = agent.get_action(states)
+                with torch.no_grad():
+                    q_values = critic(states)
+                expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
+                actor_loss = -torch.mean(expected_q)
 
-                    # optimize the actor
-                    actor_optimizer.zero_grad()
-                    actor_loss.backward()
-                    actor_optimizer.step()
+                # optimize the actor
+                actor_optimizer.zero_grad()
+                actor_loss.backward()
+                actor_optimizer.step()
 
             # update target network
             if global_step % args.target_network_frequency == 0:
