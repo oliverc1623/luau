@@ -175,8 +175,8 @@ class Actor(nn.Module):
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         # Define actor's model
-        self.fc1 = layer_init(nn.Linear(self.image_embedding_size, 64))
-        self.fc_logits = layer_init(nn.Linear(64, envs.action_space.n))
+        self.fc1 = layer_init(nn.Linear(self.image_embedding_size, 512))
+        self.fc_logits = layer_init(nn.Linear(512, envs.action_space.n))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the network."""
@@ -215,8 +215,8 @@ class QNetwork(nn.Module):
         m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
-        self.fc1 = layer_init(nn.Linear(self.image_embedding_size, 64))
-        self.fc_q = layer_init(nn.Linear(64, envs.action_space.n))
+        self.fc1 = layer_init(nn.Linear(self.image_embedding_size, 512))
+        self.fc_q = layer_init(nn.Linear(512, envs.action_space.n))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the critic network."""
