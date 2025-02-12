@@ -73,6 +73,8 @@ def parse_args() -> argparse.Namespace:
         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="weather to capture videos of the agent performances (check out `videos` folder)")
+    parser.add_argument("--save-video-freq", type=int, default=100_000,
+            help="the frequency of saving the video")
 
     # Algorithm specific arguments
     parser.add_argument("--ql-lr", type=float, default=0.0003,
@@ -254,14 +256,14 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> gym.Env:
+    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str) -> gym.Env:
         """Create the environment."""
 
         def _init() -> gym.Env:
             env = gym.make(args.gym_id, render_mode="rgb_array")
             env.action_space = gym.spaces.Discrete(7)  # make all 7 actions available
             if capture_video and idx == 0:
-                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda x: x % save_model_freq == 0)
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda x: x % args.save_video_freq == 0)
             env = gym.wrappers.RecordEpisodeStatistics(env)
             env = ImgObsWrapper(env)
             env.reset(seed=subenv_seed)
@@ -271,7 +273,7 @@ if __name__ == "__main__":
 
         return _init
 
-    envs = [make_env(args.seed + i, i, args.capture_video, run_name, args.save_model_freq) for i in range(args.num_envs)]
+    envs = [make_env(args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)]
     envs = SubprocVecEnv(envs)
     assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported"
     envs = VecMonitor(envs, log_dir)
