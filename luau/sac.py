@@ -25,6 +25,7 @@ gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:Smal
 gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
 
 
+# TODO: use SB3 Replay Buffer
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
