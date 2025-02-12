@@ -22,6 +22,8 @@ from typing import NamedTuple
 
 RGB_CHANNEL = 3
 
+gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
+
 
 # Define a transition tuple for DQN
 class Transition(NamedTuple):
@@ -309,11 +311,12 @@ if __name__ == "__main__":
     next_done = torch.zeros(args.num_envs).to(device)
 
     for global_step in range(args.total_timesteps):
-        epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
-
         # ALGO LOGIC: select action
-        actions, _, _ = agent.get_action(obs)
-        actions = actions.cpu().numpy()
+        if global_step < args.learning_starts:
+            actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
+        else:
+            actions, _, _ = agent.get_action(obs)
+            actions = actions.cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
@@ -345,7 +348,7 @@ if __name__ == "__main__":
         obs = preprocess(next_obs)
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts * args.num_envs:
+        if global_step > args.learning_starts:
             if global_step % args.train_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
@@ -363,18 +366,19 @@ if __name__ == "__main__":
                     critic_loss.backward()
                     critic_optimizer.step()
 
-                    if global_step % args.actor_update_frequency == 0:
-                        # Policy gradient update for the actor
-                        _, _, action_probs = agent.get_action(data.state)
-                        with torch.no_grad():
-                            q_values = critic(data.state)
-                        actor_loss = -torch.mean(action_probs * q_values)
+                    # if global_step % args.actor_update_frequency == 0:
+                    # Policy gradient update for the actor
+                    _, _, action_probs = agent.get_action(data.state)
+                    with torch.no_grad():
+                        q_values = critic(data.state)
+                    expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
+                    actor_loss = -torch.mean(expected_q)
 
-                        # optimize the actor
-                        actor_optimizer.zero_grad()
-                        actor_loss.backward()
-                        actor_optimizer.step()
-                        writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
+                    # optimize the actor
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
+                    writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
 
             # update target network
             if global_step % args.target_network_frequency == 0:
@@ -385,7 +389,6 @@ if __name__ == "__main__":
 
                 writer.add_scalar("losses/critic_loss", critic_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
-                writer.add_scalar("losses/epsilon", epsilon, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
