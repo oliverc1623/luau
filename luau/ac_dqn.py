@@ -91,6 +91,8 @@ def parse_args() -> argparse.Namespace:
         help="the frequency of saving the model")
 
     # Algorithm specific arguments
+    parser.add_argument("--ql-lr", type=float, default=0.0003,
+        help="the learning rate of the ql optimizer")
     parser.add_argument("--buffer-size", type=int, default=10000,
         help="the size of the replay buffer")
     parser.add_argument("--tau", type=float, default=1.0,
@@ -108,8 +110,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-starts", type=int, default=1000,
         help="the number of steps to take before learning starts")
     parser.add_argument("--train-frequency", type=int, default=10,
-        help="the frequency of training the agent")
-    parser.add_argument("--actor-update-frequency", type=int, default=20,
         help="the frequency of training the agent")
     parser.add_argument("--num-envs", type=int, default=4,
         help="the number of parallel game environments")
@@ -297,8 +297,8 @@ if __name__ == "__main__":
     critic = QNetwork(envs).to(device)
     target_network = QNetwork(envs).to(device)
     target_network.load_state_dict(critic.state_dict())
-    actor_optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-    critic_optimizer = optim.Adam(critic.parameters(), lr=args.learning_rate, eps=1e-5)
+    actor_optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-4)
+    critic_optimizer = optim.Adam(critic.parameters(), lr=args.ql_lr, eps=1e-4)
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size)
@@ -356,8 +356,11 @@ if __name__ == "__main__":
 
                     # compute advantages
                     with torch.no_grad():
-                        next_q_values, _ = target_network(data.next_state).max(dim=1)
-                        td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
+                        _, next_state_log_pi, next_state_action_probs = agent.get_action(data.next_state)
+                        next_q_values1 = target_network(data.next_state)
+                        qf_next_target = next_state_action_probs * (next_q_values1)
+                        qf_next_target = qf_next_target.sum(dim=1)
+                        td_target = data.reward.flatten().float() + args.gamma * qf_next_target.float() * (1 - data.done.flatten().float())
                     old_val = critic(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
                     critic_loss = f.mse_loss(td_target, old_val)
 
@@ -366,7 +369,6 @@ if __name__ == "__main__":
                     critic_loss.backward()
                     critic_optimizer.step()
 
-                    # if global_step % args.actor_update_frequency == 0:
                     # Policy gradient update for the actor
                     _, _, action_probs = agent.get_action(data.state)
                     with torch.no_grad():
@@ -378,7 +380,6 @@ if __name__ == "__main__":
                     actor_optimizer.zero_grad()
                     actor_loss.backward()
                     actor_optimizer.step()
-                    writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
 
             # update target network
             if global_step % args.target_network_frequency == 0:
@@ -387,6 +388,7 @@ if __name__ == "__main__":
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
 
+                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/critic_loss", critic_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
