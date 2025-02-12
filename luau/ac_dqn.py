@@ -365,10 +365,10 @@ if __name__ == "__main__":
 
                     if global_step % args.actor_update_frequency == 0:
                         # Policy gradient update for the actor
-                        action_probs = agent(data.state)
-                        chosen_action_probs = action_probs.gather(1, data.action.to(device).view(-1, 1)).squeeze(1)
-                        advantages = td_target - old_val
-                        actor_loss = -torch.mean(torch.log(chosen_action_probs) * advantages.detach())
+                        _, _, action_probs = agent.get_action(data.state)
+                        with torch.no_grad():
+                            q_values = critic(data.state)
+                        actor_loss = -torch.mean(action_probs * q_values)
 
                         # optimize the actor
                         actor_optimizer.zero_grad()
