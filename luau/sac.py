@@ -95,7 +95,7 @@ def parse_args() -> argparse.Namespace:
         help="the fraction of the total timesteps for exploration")
     parser.add_argument("--learning-starts", type=int, default=10000,
         help="the number of steps to take before learning starts")
-    parser.add_argument("--train-frequency", type=int, default=10,
+    parser.add_argument("--update-frequency", type=int, default=4,
         help="the frequency of training the agent")
     parser.add_argument("--num-envs", type=int, default=4,
         help="the number of parallel game environments")
@@ -103,6 +103,8 @@ def parse_args() -> argparse.Namespace:
         help="the discount factor gamma")
     parser.add_argument("--gradient-steps", type=int, default=1,
         help="the number of gradient steps to take per iteration")
+    parser.add_argument("--alpha", type=float, default=0.2,
+        help="entropy regularization coefficient")
 
     args = parser.parse_args()
     # fmt: on
@@ -204,29 +206,27 @@ class QNetwork(nn.Module):
         c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
-            nn.Conv2d(c, 16, (2, 2)),
+            layer_init(nn.Conv2d(c, 16, (2, 2))),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
-            nn.Conv2d(16, 32, (2, 2)),
+            layer_init(nn.Conv2d(16, 32, (2, 2))),
             nn.ReLU(),
-            nn.Conv2d(32, 64, (2, 2)),
-            nn.ReLU(),
+            layer_init(nn.Conv2d(32, 64, (2, 2))),
+            nn.Flatten(),
         )
         n = envs.observation_space.shape[0]
         m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
-        self.critic = nn.Sequential(
-            nn.Linear(self.image_embedding_size, 64),
-            nn.Tanh(),
-            nn.Linear(64, envs.action_space.n),
-        )
+        self.fc1 = layer_init(nn.Linear(self.image_embedding_size, 64))
+        self.fc_q = layer_init(nn.Linear(64, envs.action_space.n))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the critic network."""
-        x = self.image_conv(x)
-        x = x.reshape(x.shape[0], -1)
-        return self.critic(x)
+        x = f.relu(self.image_conv(x))
+        x = f.relu(self.fc1(x))
+        q_vals = self.fc_q(x)
+        return q_vals
 
 
 if __name__ == "__main__":
@@ -280,11 +280,15 @@ if __name__ == "__main__":
 
     # agent setup
     agent = Actor(envs).to(device)
-    critic = QNetwork(envs).to(device)
-    target_network = QNetwork(envs).to(device)
-    target_network.load_state_dict(critic.state_dict())
+    qf1 = QNetwork(envs).to(device)
+    qf2 = QNetwork(envs).to(device)
+    qf1_target = QNetwork(envs).to(device)
+    qf2_target = QNetwork(envs).to(device)
+    qf1_target.load_state_dict(qf1.state_dict())
+    qf2_target.load_state_dict(qf2.state_dict())
+
     actor_optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-4)
-    critic_optimizer = optim.Adam(critic.parameters(), lr=args.ql_lr, eps=1e-4)
+    q_optimizer = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.ql_lr, eps=1e-4)
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size)
@@ -296,15 +300,14 @@ if __name__ == "__main__":
 
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: select action
-        epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
-        if rng.random() < epsilon:
+        if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             # Convert obs to torch only for the policy's forward pass
             obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
             with torch.no_grad():
                 actions, _, _ = agent.get_action(obs_torch)
-            actions = actions.cpu().numpy()
+            actions = actions.detach().cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
@@ -332,7 +335,7 @@ if __name__ == "__main__":
         obs = real_next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts and global_step % args.train_frequency == 0:
+        if global_step > args.learning_starts and global_step % args.update_frequency == 0:
             for _ in range(args.gradient_steps):
                 # sample a batch of data
                 states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
@@ -342,24 +345,33 @@ if __name__ == "__main__":
                 # compute advantages
                 with torch.no_grad():
                     _, next_state_log_pi, next_state_action_probs = agent.get_action(next_states)
-                    next_q_values1 = target_network(next_states)
-                    qf_next_target = next_state_action_probs * (next_q_values1)
-                    qf_next_target = qf_next_target.sum(dim=1)
-                    td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
-                old_val = critic(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
-                critic_loss = f.mse_loss(td_target, old_val)
+                    qf1_next_target = qf1_target(next_states)
+                    qf2_next_target = qf2_target(next_states)
+
+                    min_qf_next_target = next_state_action_probs * (torch.min(qf1_next_target, qf2_next_target) - args.alpha * next_state_log_pi)
+                    min_qf_next_target = min_qf_next_target.sum(dim=1)
+                    next_q_value = rewards_t.flatten() + args.gamma * min_qf_next_target * (1 - dones_t.flatten())
+
+                qf1_values = qf1(states)
+                qf2_values = qf2(states)
+                qf1_a_values = qf1_values.gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
+                qf2_a_values = qf2_values.gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
+                qf1_loss = f.mse_loss(qf1_a_values, next_q_value)
+                qf2_loss = f.mse_loss(qf2_a_values, next_q_value)
+                qf_loss = qf1_loss + qf2_loss
 
                 # optimize the critic QNetwork
-                critic_optimizer.zero_grad()
-                critic_loss.backward()
-                critic_optimizer.step()
+                q_optimizer.zero_grad()
+                qf_loss.backward()
+                q_optimizer.step()
 
                 # Policy gradient update for the actor
-                _, _, action_probs = agent.get_action(states)
+                _, log_pi, action_probs = agent.get_action(states)
                 with torch.no_grad():
-                    q_values = critic(states)
-                expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
-                actor_loss = -torch.mean(expected_q)
+                    qf1_values = qf1(states)
+                    qf2_values = qf2(states)
+                    min_qf_values = torch.min(qf1_values, qf2_values)
+                actor_loss = (action_probs * ((args.alpha * log_pi) - min_qf_values)).mean()
 
                 # optimize the actor
                 actor_optimizer.zero_grad()
@@ -368,22 +380,28 @@ if __name__ == "__main__":
 
             # update target network
             if global_step % args.target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), critic.parameters(), strict=False):
+                for target_network_param, q_network_param in zip(qf1.parameters(), qf1_target.parameters(), strict=False):
+                    target_network_param.data.copy_(
+                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
+                    )
+                for target_network_param, q_network_param in zip(qf2.parameters(), qf2_target.parameters(), strict=False):
                     target_network_param.data.copy_(
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
 
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/critic_loss", critic_loss.item(), global_step)
-                writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                writer.add_scalar("losses/qf1_values", qf1_values.mean().item(), global_step)
+                writer.add_scalar("losses/qf2_values", qf2_values.mean().item(), global_step)
+                writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
+                writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
+                writer.add_scalar("losses/qf_loss", qf_loss.item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-                writer.add_scalar("losses/exploration_rate", epsilon, global_step)
 
     # save model
     print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
     torch.save(agent.state_dict(), actor_checkpoint_path)
-    torch.save(critic.state_dict(), critic_checkpoint_path)
+    torch.save(qf1.state_dict(), critic_checkpoint_path)
 
     envs.close()
     writer.close()
