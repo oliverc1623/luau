@@ -345,10 +345,11 @@ if __name__ == "__main__":
 
                     min_qf_next_target = next_state_action_probs * (torch.min(qf1_next_target, qf2_next_target) - args.alpha * next_state_log_pi)
                     min_qf_next_target = min_qf_next_target.sum(dim=1)
-                    next_q_value = rewards_t.flatten() + args.gamma * min_qf_next_target * (1 - dones_t.flatten())
+                    next_q_value = rewards_t.flatten() + (1 - dones_t.flatten()) * args.gamma * (min_qf_next_target)
 
                 qf1_values = qf1(states)
                 qf2_values = qf2(states)
+
                 qf1_a_values = qf1_values.gather(1, actions_t.long()).view(-1)
                 qf2_a_values = qf2_values.gather(1, actions_t.long()).view(-1)
                 qf1_loss = f.mse_loss(qf1_a_values, next_q_value)
