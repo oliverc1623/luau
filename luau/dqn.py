@@ -10,6 +10,7 @@ import minigrid  # import minigrid before gym to register envs  # noqa: F401
 import gymnasium as gym
 import numpy as np
 import torch
+from torch.distributions.categorical import Categorical
 from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
@@ -18,27 +19,10 @@ from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 
-from typing import NamedTuple
-
 RGB_CHANNEL = 3
 
-gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
-gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
-gym.register(id="TrafficLight5x5-v0", entry_point="luau.traffic_light_env:TrafficLightEnv")
 gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKey")
 gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
-gym.register(id="MediumFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:MediumFourRoomDoorKeyLocked")
-
-
-# Define a transition tuple for DQN
-class Transition(NamedTuple):
-    """A named tuple representing a single transition in the environment."""
-
-    state: torch.tensor
-    action: torch.tensor
-    reward: torch.tensor
-    next_state: torch.tensor
-    done: torch.tensor
 
 
 class DQNReplayBuffer:
@@ -49,27 +33,24 @@ class DQNReplayBuffer:
         self.memory = []
         self.position = 0
 
-    def push(self, *args: tuple) -> None:
+    def push(self, state: np.array, action: np.array, reward: np.array, next_state: np.array, done: np.array) -> None:
         """Save a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
+        self.memory[self.position] = (state, action, reward, next_state, done)
         self.position = (self.position + 1) % self.capacity
 
-    def sample(self, batch_size: int) -> Transition:
+    def sample(self, batch_size: int) -> tuple:
         """Sample a batch of transitions from the replay buffer."""
         batch = random.sample(self.memory, batch_size)
-        batch = Transition(*zip(*batch, strict=False))
-        return Transition(
-            state=torch.cat(batch.state, dim=0),
-            action=torch.stack(batch.action),
-            reward=torch.stack(batch.reward),
-            next_state=torch.cat(batch.next_state, dim=0),
-            done=torch.stack(batch.done),
-        )
-
-    def __len__(self):
-        return len(self.memory)
+        s, a, r, ns, d = zip(*batch, strict=False)
+        w, h, c = s[0].shape[1], s[0].shape[2], s[0].shape[3]
+        s_t = torch.as_tensor(np.stack(s), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
+        a_t = torch.as_tensor(np.array(a), device=device).long().view(-1)
+        r_t = torch.as_tensor(np.array(r), device=device).float().view(-1)
+        ns_t = torch.as_tensor(np.stack(ns), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
+        d_t = torch.as_tensor(np.array(d), device=device).float().view(-1)
+        return s_t, a_t, r_t, ns_t, d_t
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,10 +73,10 @@ def parse_args() -> argparse.Namespace:
         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="weather to capture videos of the agent performances (check out `videos` folder)")
-    parser.add_argument("--save-model-freq", type=int, default=1000,
-        help="the frequency of saving the model")
 
     # Algorithm specific arguments
+    parser.add_argument("--ql-lr", type=float, default=0.0003,
+        help="the learning rate of the ql optimizer")
     parser.add_argument("--buffer-size", type=int, default=10000,
         help="the size of the replay buffer")
     parser.add_argument("--tau", type=float, default=1.0,
@@ -110,7 +91,7 @@ def parse_args() -> argparse.Namespace:
         help="the final exploration rate")
     parser.add_argument("--exploration-fraction", type=float, default=0.5,
         help="the fraction of the total timesteps for exploration")
-    parser.add_argument("--learning-starts", type=int, default=1000,
+    parser.add_argument("--learning-starts", type=int, default=10000,
         help="the number of steps to take before learning starts")
     parser.add_argument("--train-frequency", type=int, default=10,
         help="the frequency of training the agent")
@@ -151,17 +132,66 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> floa
     return max(slope * t + start_e, end_e)
 
 
-def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict) -> None:
+def write_to_tensorboard(writer: SummaryWriter, global_step: int, info: dict) -> None:
     """Write data to TensorBoard."""
-    for _, info in enumerate(infos):
-        if "episode" in info:
-            ep_return = info["episode"]["r"]
-            ep_length = info["episode"]["l"]
+    if "episode" in info:
+        # Extract the mask for completed episodes
+        completed_mask = info["_episode"]
 
+        # Filter the rewards and lengths for completed episodes
+        episodic_returns = info["episode"]["r"][completed_mask]
+        episodic_lengths = info["episode"]["l"][completed_mask]
+
+        # Log each completed episode
+        for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
             print(f"global_step={global_step}, episodic_return={ep_return}")
             writer.add_scalar("charts/episodic_return", ep_return, global_step)
             writer.add_scalar("charts/episodic_length", ep_length, global_step)
-            break
+
+
+class Actor(nn.Module):
+    """The agent class for the AC DQN algorithm."""
+
+    def __init__(self, envs: gym.vector.SyncVectorEnv):
+        super().__init__()
+        # Actor network
+        c = envs.observation_space.shape[-1]
+        # Define image embedding
+        self.image_conv = nn.Sequential(
+            nn.Conv2d(c, 16, (2, 2)),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 2)),
+            nn.Conv2d(16, 32, (2, 2)),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, (2, 2)),
+            nn.ReLU(),
+        )
+        n = envs.observation_space.shape[0]
+        m = envs.observation_space.shape[1]
+        self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
+
+        # Define actor's model
+        self.actor = nn.Sequential(
+            nn.Linear(self.image_embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, envs.action_space.n),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the network."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        embedding = x
+        return self.actor(embedding)
+
+    def get_action(self, x: torch.Tensor) -> torch.Tensor:
+        """Get the action, log probs, and probs for all actions from the actor network."""
+        logits = self(x)
+        policy_dist = Categorical(logits=logits)
+        action = policy_dist.sample()
+        action_probs = policy_dist.probs
+        log_prob = f.log_softmax(logits, dim=1)
+        return action, log_prob, action_probs
 
 
 class QNetwork(nn.Module):
@@ -202,7 +232,7 @@ if __name__ == "__main__":
 
     # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    log_dir = f"../../pvcvolume/runs2/{run_name}"
+    log_dir = f"runs/{run_name}"
     writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
@@ -224,7 +254,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> callable:
+    def make_env(subenv_seed: int, idx: int, capture_video: int, run_name: str, save_model_freq: int) -> gym.Env:
         """Create the environment."""
 
         def _init() -> gym.Env:
@@ -243,15 +273,16 @@ if __name__ == "__main__":
 
     envs = [make_env(args.seed + i, i, args.capture_video, run_name, args.save_model_freq) for i in range(args.num_envs)]
     envs = SubprocVecEnv(envs)
-    assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported... for now"
+    assert isinstance(envs.action_space, gym.spaces.Discrete), "only discrete action space is supported"
     envs = VecMonitor(envs, log_dir)
 
     # agent setup
-    agent = QNetwork(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-
+    agent = Actor(envs).to(device)
+    critic = QNetwork(envs).to(device)
     target_network = QNetwork(envs).to(device)
-    target_network.load_state_dict(agent.state_dict())
+    target_network.load_state_dict(critic.state_dict())
+    actor_optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-4)
+    critic_optimizer = optim.Adam(critic.parameters(), lr=args.ql_lr, eps=1e-4)
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size)
@@ -260,71 +291,97 @@ if __name__ == "__main__":
     global_step = 0
     start_time = time.time()
     obs = envs.reset()
-    obs = preprocess(obs)
-    next_done = torch.zeros(args.num_envs).to(device)
 
-    for global_step in range(0, args.total_timesteps, args.num_envs):
+    for global_step in range(args.total_timesteps):
+        # ALGO LOGIC: select action
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         if rng.random() < epsilon:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
-            q_values = agent(obs)
-            actions = torch.argmax(q_values, dim=1).cpu().numpy()
+            # Convert obs to torch only for the policy's forward pass
+            obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
+            with torch.no_grad():
+                actions, _, _ = agent.get_action(obs_torch)
+            actions = actions.cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
-        rewards = torch.tensor(rewards).to(device).view(-1)
-        dones = torch.Tensor(dones).to(device)
-        write_to_tensorboard(writer, global_step, infos)
 
-        # get terminal observation
+        # record metrics for plotting
+        for _, info in enumerate(infos):
+            if "episode" in info:
+                ep_return = info["episode"]["r"]
+                ep_length = info["episode"]["l"]
+
+                print(f"global_step={global_step}, episodic_return={ep_return}")
+                writer.add_scalar("charts/episodic_return", ep_return, global_step)
+                writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                break
+
+        # get real terminal observation
         real_next_obs = next_obs.copy()
         for idx, done in enumerate(dones):
             if done:
                 terminal_obs = infos[idx]["terminal_observation"]
                 real_next_obs[idx] = terminal_obs
-        real_next_obs = preprocess(real_next_obs)
 
-        # add to replay buffer
-        next_obs = preprocess(next_obs)
-        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones)
-        obs = next_obs
+        # add transition to replay buffer
+        rb.push(obs, actions, rewards, real_next_obs, dones)
+        obs = real_next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts * args.num_envs:
-            if global_step % args.train_frequency == 0:
-                for _ in range(args.gradient_steps):
-                    # sample a batch of data
-                    data = rb.sample(args.batch_size)
+        if global_step > args.learning_starts and global_step % args.train_frequency == 0:
+            for _ in range(args.gradient_steps):
+                # sample a batch of data
+                states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                states = states.permute(0, 3, 1, 2)
+                next_states = next_states.permute(0, 3, 1, 2)
 
-                    # compute advantages
-                    with torch.no_grad():
-                        next_q_values, _ = target_network(data.next_state).max(dim=1)
-                        td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
-                    old_val = agent(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
-                    loss = f.mse_loss(td_target, old_val)
+                # compute advantages
+                with torch.no_grad():
+                    _, next_state_log_pi, next_state_action_probs = agent.get_action(next_states)
+                    next_q_values1 = target_network(next_states)
+                    qf_next_target = next_state_action_probs * (next_q_values1)
+                    qf_next_target = qf_next_target.sum(dim=1)
+                    td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
+                old_val = critic(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
+                critic_loss = f.mse_loss(td_target, old_val)
 
-                    # optimize the actor
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
+                # optimize the critic QNetwork
+                critic_optimizer.zero_grad()
+                critic_loss.backward()
+                critic_optimizer.step()
+
+                # Policy gradient update for the actor
+                _, _, action_probs = agent.get_action(states)
+                with torch.no_grad():
+                    q_values = critic(states)
+                expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
+                actor_loss = -torch.mean(expected_q)
+
+                # optimize the actor
+                actor_optimizer.zero_grad()
+                actor_loss.backward()
+                actor_optimizer.step()
 
             # update target network
             if global_step % args.target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), agent.parameters(), strict=False):
+                for target_network_param, q_network_param in zip(target_network.parameters(), critic.parameters(), strict=False):
                     target_network_param.data.copy_(
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
 
-                writer.add_scalar("losses/actor_loss", loss.item(), global_step)
+                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
+                writer.add_scalar("losses/critic_loss", critic_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
-                writer.add_scalar("losses/epsilon", epsilon, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+                writer.add_scalar("losses/exploration_rate", epsilon, global_step)
 
-            if global_step % (args.save_model_freq - args.num_envs) == 0:
-                print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
-                torch.save(agent.state_dict(), actor_checkpoint_path)
+    # save model
+    print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
+    torch.save(agent.state_dict(), actor_checkpoint_path)
+    torch.save(critic.state_dict(), critic_checkpoint_path)
 
     envs.close()
     writer.close()
