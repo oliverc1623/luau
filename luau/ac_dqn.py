@@ -18,22 +18,10 @@ from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-from typing import NamedTuple
 
 RGB_CHANNEL = 3
 
 gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
-
-
-# Define a transition tuple for DQN
-class Transition(NamedTuple):
-    """A named tuple representing a single transition in the environment."""
-
-    state: torch.tensor
-    action: torch.tensor
-    reward: torch.tensor
-    next_state: torch.tensor
-    done: torch.tensor
 
 
 class DQNReplayBuffer:
@@ -44,27 +32,24 @@ class DQNReplayBuffer:
         self.memory = []
         self.position = 0
 
-    def push(self, *args: tuple) -> None:
+    def push(self, state: np.array, action: np.array, reward: np.array, next_state: np.array, done: np.array) -> None:
         """Save a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
+        self.memory[self.position] = (state, action, reward, next_state, done)
         self.position = (self.position + 1) % self.capacity
 
-    def sample(self, batch_size: int) -> Transition:
+    def sample(self, batch_size: int) -> tuple:
         """Sample a batch of transitions from the replay buffer."""
         batch = random.sample(self.memory, batch_size)
-        batch = Transition(*zip(*batch, strict=False))
-        return Transition(
-            state=torch.cat(batch.state, dim=0),
-            action=torch.stack(batch.action),
-            reward=torch.stack(batch.reward),
-            next_state=torch.cat(batch.next_state, dim=0),
-            done=torch.stack(batch.done),
-        )
-
-    def __len__(self):
-        return len(self.memory)
+        s, a, r, ns, d = zip(*batch, strict=False)
+        w, h, c = s[0].shape[1], s[0].shape[2], s[0].shape[3]
+        s_t = torch.as_tensor(np.stack(s), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
+        a_t = torch.as_tensor(np.array(a), device=device).long().view(-1)
+        r_t = torch.as_tensor(np.array(r), device=device).float().view(-1)
+        ns_t = torch.as_tensor(np.stack(ns), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
+        d_t = torch.as_tensor(np.array(d), device=device).float().view(-1)
+        return s_t, a_t, r_t, ns_t, d_t
 
 
 def parse_args() -> argparse.Namespace:
@@ -307,23 +292,20 @@ if __name__ == "__main__":
     global_step = 0
     start_time = time.time()
     obs = envs.reset()
-    obs = preprocess(obs)
-    next_done = torch.zeros(args.num_envs).to(device)
 
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: select action
         if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
-            actions, _, _ = agent.get_action(obs)
+            # Convert obs to torch only for the policy's forward pass
+            obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
+            with torch.no_grad():
+                actions, _, _ = agent.get_action(obs_torch)
             actions = actions.cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
-
-        # process rewards and dones
-        rewards = torch.tensor(rewards).to(device).view(-1)
-        dones = torch.Tensor(dones).to(device)
 
         # record metrics for plotting
         for _, info in enumerate(infos):
@@ -342,26 +324,28 @@ if __name__ == "__main__":
             if done:
                 terminal_obs = infos[idx]["terminal_observation"]
                 real_next_obs[idx] = terminal_obs
-        real_next_obs = preprocess(real_next_obs)
 
-        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones)
-        obs = preprocess(next_obs)
+        # add transition to replay buffer
+        rb.push(obs, actions, rewards, real_next_obs, dones)
+        obs = real_next_obs
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             if global_step % args.train_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
-                    data = rb.sample(args.batch_size)
+                    states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                    states = states.permute(0, 3, 1, 2)
+                    next_states = next_states.permute(0, 3, 1, 2)
 
                     # compute advantages
                     with torch.no_grad():
-                        _, next_state_log_pi, next_state_action_probs = agent.get_action(data.next_state)
-                        next_q_values1 = target_network(data.next_state)
+                        _, next_state_log_pi, next_state_action_probs = agent.get_action(next_states)
+                        next_q_values1 = target_network(next_states)
                         qf_next_target = next_state_action_probs * (next_q_values1)
                         qf_next_target = qf_next_target.sum(dim=1)
-                        td_target = data.reward.flatten().float() + args.gamma * qf_next_target.float() * (1 - data.done.flatten().float())
-                    old_val = critic(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
+                        td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
+                    old_val = critic(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
                     critic_loss = f.mse_loss(td_target, old_val)
 
                     # optimize the critic QNetwork
@@ -370,9 +354,9 @@ if __name__ == "__main__":
                     critic_optimizer.step()
 
                     # Policy gradient update for the actor
-                    _, _, action_probs = agent.get_action(data.state)
+                    _, _, action_probs = agent.get_action(states)
                     with torch.no_grad():
-                        q_values = critic(data.state)
+                        q_values = critic(states)
                     expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
                     actor_loss = -torch.mean(expected_q)
 
