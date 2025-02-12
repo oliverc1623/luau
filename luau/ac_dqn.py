@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
         help="the final exploration rate")
     parser.add_argument("--exploration-fraction", type=float, default=0.5,
         help="the fraction of the total timesteps for exploration")
-    parser.add_argument("--learning-starts", type=int, default=1000,
+    parser.add_argument("--learning-starts", type=int, default=10000,
         help="the number of steps to take before learning starts")
     parser.add_argument("--train-frequency", type=int, default=10,
         help="the frequency of training the agent")
@@ -293,9 +293,10 @@ if __name__ == "__main__":
     start_time = time.time()
     obs = envs.reset()
 
-    for global_step in range(0, args.total_timesteps, args.num_envs):
+    for global_step in range(args.total_timesteps):
         # ALGO LOGIC: select action
-        if global_step < args.learning_starts:
+        epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
+        if rng.random() < epsilon:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             # Convert obs to torch only for the policy's forward pass
@@ -376,6 +377,7 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+                writer.add_scalar("losses/exploration_rate", epsilon, global_step)
 
     # save model
     print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
