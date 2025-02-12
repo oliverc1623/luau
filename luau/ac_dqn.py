@@ -233,7 +233,7 @@ if __name__ == "__main__":
 
     # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    log_dir = f"../../pvcvolume/runs2/{run_name}"
+    log_dir = f"runs/{run_name}"
     writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
@@ -331,7 +331,7 @@ if __name__ == "__main__":
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts and global_step % args.train_frequency == 0:
-            for _ in range(args.num_envs):
+            for _ in range(args.gradient_steps):
                 # sample a batch of data
                 states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
                 states = states.permute(0, 3, 1, 2)
@@ -377,10 +377,10 @@ if __name__ == "__main__":
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-            if global_step % args.save_model_freq == 0:
-                print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
-                torch.save(agent.state_dict(), actor_checkpoint_path)
-                torch.save(critic.state_dict(), critic_checkpoint_path)
+    # save model
+    print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
+    torch.save(agent.state_dict(), actor_checkpoint_path)
+    torch.save(critic.state_dict(), critic_checkpoint_path)
 
     envs.close()
     writer.close()
