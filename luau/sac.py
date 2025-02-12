@@ -45,11 +45,11 @@ class DQNReplayBuffer:
         batch = random.sample(self.memory, batch_size)
         s, a, r, ns, d = zip(*batch, strict=False)
         w, h, c = s[0].shape[1], s[0].shape[2], s[0].shape[3]
-        s_t = torch.as_tensor(np.stack(s), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
-        a_t = torch.as_tensor(np.array(a), device=device).long().view(-1)
-        r_t = torch.as_tensor(np.array(r), device=device).float().view(-1)
-        ns_t = torch.as_tensor(np.stack(ns), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
-        d_t = torch.as_tensor(np.array(d), device=device).float().view(-1)
+        s_t = torch.as_tensor(np.stack(s), device=device).float().view(args.batch_size * args.num_envs, w, h, c).permute(0, 3, 1, 2)
+        a_t = torch.as_tensor(np.array(a), device=device).long()
+        r_t = torch.as_tensor(np.array(r), device=device).float()
+        ns_t = torch.as_tensor(np.stack(ns), device=device).float().view(args.batch_size * args.num_envs, w, h, c).permute(0, 3, 1, 2)
+        d_t = torch.as_tensor(np.array(d), device=device).float()
         return s_t, a_t, r_t, ns_t, d_t
 
 
@@ -79,11 +79,11 @@ def parse_args() -> argparse.Namespace:
     # Algorithm specific arguments
     parser.add_argument("--ql-lr", type=float, default=0.0003,
         help="the learning rate of the ql optimizer")
-    parser.add_argument("--buffer-size", type=int, default=10000,
+    parser.add_argument("--buffer-size", type=int, default=1_000_000,
         help="the size of the replay buffer")
     parser.add_argument("--tau", type=float, default=1.0,
         help="the soft update rate")
-    parser.add_argument("--target-network-frequency", type=int, default=500,
+    parser.add_argument("--target-network-frequency", type=int, default=8_000,
         help="the frequency of updating the target network")
     parser.add_argument("--batch-size", type=int, default=128,
         help="the batch size of the training")
@@ -162,31 +162,28 @@ class Actor(nn.Module):
         c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
-            nn.Conv2d(c, 16, (2, 2)),
+            layer_init(nn.Conv2d(c, 16, (2, 2))),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
-            nn.Conv2d(16, 32, (2, 2)),
+            layer_init(nn.Conv2d(16, 32, (2, 2))),
             nn.ReLU(),
-            nn.Conv2d(32, 64, (2, 2)),
-            nn.ReLU(),
+            layer_init(nn.Conv2d(32, 64, (2, 2))),
+            nn.Flatten(),
         )
         n = envs.observation_space.shape[0]
         m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         # Define actor's model
-        self.actor = nn.Sequential(
-            nn.Linear(self.image_embedding_size, 64),
-            nn.Tanh(),
-            nn.Linear(64, envs.action_space.n),
-        )
+        self.fc1 = layer_init(nn.Linear(self.image_embedding_size, 64))
+        self.fc_logits = layer_init(nn.Linear(64, envs.action_space.n))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the network."""
-        x = self.image_conv(x)
-        x = x.reshape(x.shape[0], -1)
-        embedding = x
-        return self.actor(embedding)
+        x = f.relu(self.image_conv(x))
+        x = f.relu(self.fc1(x))
+        logits = self.fc_logits(x)
+        return logits
 
     def get_action(self, x: torch.Tensor) -> torch.Tensor:
         """Get the action, log probs, and probs for all actions from the actor network."""
@@ -339,8 +336,6 @@ if __name__ == "__main__":
             for _ in range(args.gradient_steps):
                 # sample a batch of data
                 states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
-                states = states.permute(0, 3, 1, 2)
-                next_states = next_states.permute(0, 3, 1, 2)
 
                 # compute advantages
                 with torch.no_grad():
@@ -354,8 +349,8 @@ if __name__ == "__main__":
 
                 qf1_values = qf1(states)
                 qf2_values = qf2(states)
-                qf1_a_values = qf1_values.gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
-                qf2_a_values = qf2_values.gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
+                qf1_a_values = qf1_values.gather(1, actions_t.long()).view(-1)
+                qf2_a_values = qf2_values.gather(1, actions_t.long()).view(-1)
                 qf1_loss = f.mse_loss(qf1_a_values, next_q_value)
                 qf2_loss = f.mse_loss(qf2_a_values, next_q_value)
                 qf_loss = qf1_loss + qf2_loss
