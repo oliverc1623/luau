@@ -308,7 +308,7 @@ if __name__ == "__main__":
         action_space=envs.action_space,
         device=device,
         n_envs=args.num_envs,
-    )  # DQNReplayBuffer(args.buffer_size)
+    )
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -364,7 +364,7 @@ if __name__ == "__main__":
                     qf1_next_target = qf1_target(data.next_observations.permute(0, 3, 1, 2).float())
                     qf2_next_target = qf2_target(data.next_observations.permute(0, 3, 1, 2).float())
 
-                    min_qf_next_target = next_state_action_probs * (torch.min(qf1_next_target, qf2_next_target) - args.alpha * next_state_log_pi)
+                    min_qf_next_target = next_state_action_probs * (torch.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_pi)
                     min_qf_next_target = min_qf_next_target.sum(dim=1)
                     next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (min_qf_next_target)
 
@@ -388,7 +388,7 @@ if __name__ == "__main__":
                     qf1_values = qf1(data.observations.permute(0, 3, 1, 2).float())
                     qf2_values = qf2(data.observations.permute(0, 3, 1, 2).float())
                     min_qf_values = torch.min(qf1_values, qf2_values)
-                actor_loss = (action_probs * ((args.alpha * log_pi) - min_qf_values)).mean()
+                actor_loss = (action_probs * ((alpha * log_pi) - min_qf_values)).mean()
 
                 # optimize the actor
                 actor_optimizer.zero_grad()
