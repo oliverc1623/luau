@@ -399,10 +399,14 @@ if __name__ == "__main__":
                         q_values = student_qnetwork(states)
                         aux_q_values = student_aux(states)
                         qi_values = kl_qnetwork(states)
-                    pi_actor_loss = -torch.mean(action_probs * q_values)
-                    aux_actor_loss = -torch.mean(aux_action_probs * aux_q_values)
-                    cross_entropy_loss = torch.mean(cross_entropy - qi_values)
-                    overall_loss = pi_actor_loss + effective_coeff * cross_entropy_loss + aux_actor_loss
+                    expected_q_values = torch.sum(action_probs * q_values, dim=1)  # shape: [B]
+                    expected_aux_q_values = torch.sum(aux_action_probs * aux_q_values, dim=1)  # shape: [B]
+                    expected_qi = torch.sum(action_probs * qi_values, dim=1)  # shape: [B]
+
+                    pi_actor_loss = -torch.mean(expected_q_values)
+                    aux_actor_loss = -torch.mean(expected_aux_q_values)
+                    cross_entropy_loss = torch.mean(cross_entropy - expected_qi)
+                    overall_loss = pi_actor_loss + effective_coeff * cross_entropy_loss + aux_actor_loss - student_dist.entropy().mean() * 0.01
 
                     # optimize the actor
                     optimizer.zero_grad()
@@ -421,13 +425,8 @@ if __name__ == "__main__":
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
 
-                for target_network_param, q_network_param in zip(student_target_qnetwork.parameters(), student_qnetwork.parameters(), strict=False):
-                    target_network_param.data.copy_(
-                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
-                    )
-
-                writer.add_scalar("losses/overall_loss", overall_loss.item(), global_step)
-                writer.add_scalar("losses/teacher_loss", q_loss.item(), global_step)
+                writer.add_scalar("losses/actor_loss", overall_loss.item(), global_step)
+                writer.add_scalar("losses/critic_loss", q_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
                 writer.add_scalar("losses/lagrange_lambda", args.lagrange_lambda, global_step)
