@@ -232,7 +232,7 @@ if __name__ == "__main__":
 
     # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    log_dir = f"runs/{run_name}"
+    log_dir = f"../../pvcvolume/runs/{run_name}"
     writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     )
 
     # model_dir
-    model_dir = Path(f"../../pvcvolume/models2/{run_name}")
+    model_dir = Path(f"../../pvcvolume/models/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
     critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
@@ -426,9 +426,9 @@ if __name__ == "__main__":
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-            if global_step % (args.save_model_freq - args.num_envs) == 0:
-                print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
-                torch.save(student_agent.state_dict(), actor_checkpoint_path)
+    print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
+    torch.save(student_agent.state_dict(), actor_checkpoint_path)
+    torch.save(student_qnetwork.state_dict(), critic_checkpoint_path)
 
     envs.close()
     writer.close()
