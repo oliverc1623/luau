@@ -463,6 +463,12 @@ if __name__ == "__main__":
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
+        # compute performance difference
+        if global_step % args.performance_coefficient_frequency == 0:
+            performance_difference = np.mean(actor_aux_performance) - np.mean(actor_performance)
+            args.lagrange_lambda = args.lagrange_lambda + performance_difference
+            effective_coeff = args.alpha / (1 + args.lagrange_lambda)
+
     print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
     torch.save(student_agent.state_dict(), actor_checkpoint_path)
     torch.save(student_qnetwork.state_dict(), actor_checkpoint_path)
