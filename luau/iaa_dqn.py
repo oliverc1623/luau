@@ -224,7 +224,7 @@ class Actor(nn.Module):
         action = policy_dist.sample()
         action_probs = policy_dist.probs
         log_prob = f.log_softmax(logits, dim=1)
-        return action, log_prob, action_probs
+        return action, log_prob, action_probs, policy_dist
 
 
 if __name__ == "__main__":
@@ -313,7 +313,7 @@ if __name__ == "__main__":
     for global_step in range(args.total_timesteps):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         h_t = torch.zeros(args.num_envs).to(device)
-        if rng.random() < epsilon:
+        if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
@@ -331,12 +331,12 @@ if __name__ == "__main__":
 
             if h_t.sum() > 0:
                 # Get advice from the teacher for the environments where h_t is 1
-                teacher_actions, _, _ = teacher_source_agent.get_action(obs_torch)
-                student_actions, _, _ = student_agent.get_action(obs_torch)
+                teacher_actions, _, _, _ = teacher_source_agent.get_action(obs_torch)
+                student_actions, _, _, _ = student_agent.get_action(obs_torch)
                 actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
             else:
                 # Get actions from the student agent
-                actions, _, _ = student_agent.get_action(obs_torch)
+                actions, _, _, _ = student_agent.get_action(obs_torch)
                 actions = actions.cpu().numpy()
 
         # step the envs
@@ -378,7 +378,7 @@ if __name__ == "__main__":
 
                     # compute advantages
                     with torch.no_grad():
-                        _, next_state_log_pi, next_state_action_probs = student_agent.get_action(next_states)
+                        _, next_state_log_pi, next_state_action_probs, _ = student_agent.get_action(next_states)
                         next_q_values1 = student_target_qnetwork(next_states)
                         qf_next_target = next_state_action_probs * (next_q_values1)
                         qf_next_target = qf_next_target.sum(dim=1)
@@ -392,11 +392,12 @@ if __name__ == "__main__":
                     q_optimizer.step()
 
                     # Policy gradient update for the actor
-                    _, _, action_probs = student_agent.get_action(states)
+                    _, _, action_probs, dist = student_agent.get_action(states)
                     with torch.no_grad():
                         q_values = student_qnetwork(states)
                     expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
-                    actor_loss = -torch.mean(expected_q)
+                    entropy_loss = dist.entropy().mean()
+                    actor_loss = -torch.mean(expected_q) - entropy_loss * 0.01
 
                     # optimize the actor
                     optimizer.zero_grad()
