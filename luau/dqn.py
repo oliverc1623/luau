@@ -193,7 +193,7 @@ class Actor(nn.Module):
         action = policy_dist.sample()
         action_probs = policy_dist.probs
         log_prob = f.log_softmax(logits, dim=1)
-        return action, log_prob, action_probs
+        return action, log_prob, action_probs, policy_dist
 
 
 class QNetwork(nn.Module):
@@ -297,13 +297,14 @@ if __name__ == "__main__":
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: select action
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
-        if rng.random() < epsilon:
+        # if rng.random() < epsilon:
+        if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             # Convert obs to torch only for the policy's forward pass
             obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
             with torch.no_grad():
-                actions, _, _ = agent.get_action(obs_torch)
+                actions, _, _, _ = agent.get_action(obs_torch)
             actions = actions.cpu().numpy()
 
         # step the envs
@@ -341,7 +342,7 @@ if __name__ == "__main__":
 
                 # compute advantages
                 with torch.no_grad():
-                    _, next_state_log_pi, next_state_action_probs = agent.get_action(next_states)
+                    _, next_state_log_pi, next_state_action_probs, _ = agent.get_action(next_states)
                     next_q_values1 = target_network(next_states)
                     qf_next_target = next_state_action_probs * (next_q_values1)
                     qf_next_target = qf_next_target.sum(dim=1)
@@ -355,11 +356,12 @@ if __name__ == "__main__":
                 critic_optimizer.step()
 
                 # Policy gradient update for the actor
-                _, _, action_probs = agent.get_action(states)
+                _, _, action_probs, dist = agent.get_action(states)
                 with torch.no_grad():
                     q_values = critic(states)
                 expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
-                actor_loss = -torch.mean(expected_q)
+                entropy_loss = dist.entropy().mean()
+                actor_loss = -torch.mean(expected_q) - entropy_loss * 0.01
 
                 # optimize the actor
                 actor_optimizer.zero_grad()
