@@ -222,7 +222,7 @@ class Actor(nn.Module):
         action = policy_dist.sample()
         action_probs = policy_dist.probs
         log_prob = f.log_softmax(logits, dim=1)
-        return action, log_prob, action_probs
+        return action, log_prob, action_probs, policy_dist
 
 
 if __name__ == "__main__":
@@ -328,10 +328,10 @@ if __name__ == "__main__":
     for global_step in range(args.total_timesteps):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         h_t = torch.zeros(args.num_envs).to(device)
+        obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
         if rng.random() < epsilon:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         elif collect_from_pi:
-            obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
             # Introspection
             probability = args.introspection_decay ** max(0, global_step - args.burn_in)
             p = Bernoulli(probability).sample([args.num_envs]).to(device)
@@ -341,20 +341,20 @@ if __name__ == "__main__":
                 # Calculate absolute differences for introspection across the batch
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q)
                 # Update h_t based on the introspection threshold
-                h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
+                h_t = (abs_diff <= effective_coeff).int() * (p == 1).int()
             advice_counter += h_t
 
             if h_t.sum() > 0:
                 # Get advice from the teacher for the environments where h_t is 1
-                teacher_actions, _, _ = teacher_source_agent.get_action(obs_torch)
-                student_actions, _, _ = student_agent.get_action(obs_torch)
+                teacher_actions, _, _, _ = teacher_source_agent.get_action(obs_torch)
+                student_actions, _, _, _ = student_agent.get_action(obs_torch)
                 actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
             else:
                 # Get actions from the student agent
-                actions, _, _ = student_agent.get_action(obs_torch)
+                actions, _, _, _ = student_agent.get_action(obs_torch)
                 actions = actions.cpu().numpy()
         else:
-            actions, _, _ = student_aux.get_action(obs_torch)
+            actions, _, _, _ = student_aux.get_action(obs_torch)
             actions = actions.cpu().numpy()
 
         # step the envs
@@ -368,9 +368,17 @@ if __name__ == "__main__":
                 ep_advice = advice_counter[i]
 
                 print(f"global_step={global_step}, episodic_return={ep_return}")
-                writer.add_scalar("charts/episodic_return", ep_return, global_step)
-                writer.add_scalar("charts/episodic_length", ep_length, global_step)
-                writer.add_scalar("charts/advice_issued", ep_advice, global_step)
+                if collect_from_pi:
+                    writer.add_scalar("charts/episodic_return", ep_return, global_step)
+                    writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                    writer.add_scalar("charts/advice_issued", ep_advice, global_step)
+                    actor_performance.appendleft(ep_return)
+                    collect_from_pi = False
+                else:
+                    writer.add_scalar("charts/episodic_return_aux", ep_return, global_step)
+                    writer.add_scalar("charts/episodic_length_aux", ep_length, global_step)
+                    actor_aux_performance.appendleft(ep_return)
+                    collect_from_pi = True
                 break
 
         # get real terminal observation
@@ -397,15 +405,15 @@ if __name__ == "__main__":
                     # compute advantages
                     with torch.no_grad():
                         # Q_R mext states
-                        _, next_state_log_pi, next_state_action_probs = student_agent.get_action(next_states)
+                        _, next_state_log_pi, next_state_action_probs, next_student_dist = student_agent.get_action(next_states)
                         next_q_values1 = student_target_qnetwork(next_states)
                         qf_next_target = next_state_action_probs * (next_q_values1)
                         qf_next_target = qf_next_target.sum(dim=1)
                         td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
 
                         # compute Q_I next states
-                        _, _, teacher_dist_next_obs = teacher_source_agent.get_action(next_states)
-                        kl_next_obs = kl_divergence(next_state_action_probs, teacher_dist_next_obs).sum(1)
+                        _, _, _, netx_teacher_dist = teacher_source_agent.get_action(next_states)
+                        kl_next_obs = kl_divergence(next_student_dist, netx_teacher_dist).sum(dim=0)
                         next_q_kl_value = (1 - dones_t.flatten()) * args.gamma * (td_target + kl_next_obs)
 
                     old_val = student_qnetwork(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
@@ -422,10 +430,10 @@ if __name__ == "__main__":
                     q_optimizer.step()
 
                     # Policy gradient update for the actor
-                    _, _, action_probs = student_agent.get_action(states)
-                    _, _, aux_action_probs = student_aux.get_action(states)
-                    _, _, teacher_action_probs = teacher_source_agent.get_actions(states)
-                    cross_entropy = kl_divergence(action_probs, teacher_action_probs).sum(1)
+                    _, _, action_probs, student_dist = student_agent.get_action(states)
+                    _, _, aux_action_probs, _ = student_aux.get_action(states)
+                    _, _, _, teacher_dist = teacher_source_agent.get_action(states)
+                    cross_entropy = kl_divergence(student_dist, teacher_dist).sum(0)
                     with torch.no_grad():
                         q_values = student_qnetwork(states)
                         aux_q_values = student_aux(states)
@@ -460,6 +468,9 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/teacher_loss", q_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
+                writer.add_scalar("losses/lagrange_lambda", args.lagrange_lambda, global_step)
+                writer.add_scalar("losses/balance_coeff_aka_ithreshold", effective_coeff, global_step)
+                writer.add_scalar("losses/performance_difference", performance_difference, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
