@@ -361,6 +361,7 @@ if __name__ == "__main__":
             if done:
                 terminal_obs = infos[idx]["terminal_observation"]
                 real_next_obs[idx] = terminal_obs
+                advice_counter[idx] = 0
 
         # add to replay buffer
         rb.push(obs, actions, rewards, real_next_obs, dones)
