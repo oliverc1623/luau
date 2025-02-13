@@ -12,14 +12,13 @@ import numpy as np
 import torch
 from minigrid.wrappers import ImgObsWrapper
 from torch.nn import functional as f
+from torch.distributions.categorical import Categorical
 from torch import nn, optim
 from torch.distributions.bernoulli import Bernoulli
 from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
-
-from typing import NamedTuple
 
 RGB_CHANNEL = 3
 
@@ -31,18 +30,6 @@ gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_en
 gym.register(id="MediumFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:MediumFourRoomDoorKeyLocked")
 
 
-# Define a transition tuple for DQN
-class Transition(NamedTuple):
-    """A named tuple representing a single transition in the environment."""
-
-    state: torch.tensor
-    action: torch.tensor
-    reward: torch.tensor
-    next_state: torch.tensor
-    done: torch.tensor
-    indicator: torch.tensor
-
-
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
@@ -51,28 +38,24 @@ class DQNReplayBuffer:
         self.memory = []
         self.position = 0
 
-    def push(self, *args: tuple) -> None:
+    def push(self, state: np.array, action: np.array, reward: np.array, next_state: np.array, done: np.array) -> None:
         """Save a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
+        self.memory[self.position] = (state, action, reward, next_state, done)
         self.position = (self.position + 1) % self.capacity
 
-    def sample(self, batch_size: int) -> Transition:
+    def sample(self, batch_size: int) -> tuple:
         """Sample a batch of transitions from the replay buffer."""
         batch = random.sample(self.memory, batch_size)
-        batch = Transition(*zip(*batch, strict=False))
-        return Transition(
-            state=torch.cat(batch.state, dim=0),
-            action=torch.stack(batch.action),
-            reward=torch.stack(batch.reward),
-            next_state=torch.cat(batch.next_state, dim=0),
-            done=torch.stack(batch.done),
-            indicator=torch.stack(batch.indicator),
-        )
-
-    def __len__(self):
-        return len(self.memory)
+        s, a, r, ns, d = zip(*batch, strict=False)
+        w, h, c = s[0].shape[1], s[0].shape[2], s[0].shape[3]
+        s_t = torch.as_tensor(np.stack(s), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
+        a_t = torch.as_tensor(np.array(a), device=device).long().view(-1)
+        r_t = torch.as_tensor(np.array(r), device=device).float().view(-1)
+        ns_t = torch.as_tensor(np.stack(ns), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
+        d_t = torch.as_tensor(np.array(d), device=device).float().view(-1)
+        return s_t, a_t, r_t, ns_t, d_t
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,6 +82,8 @@ def parse_args() -> argparse.Namespace:
         help="the frequency of saving the model")
     parser.add_argument("--teacher-model", type=str, default="",
         help="the path to the teacher model")
+    parser.add_argument("--teacher-qnetwork", type=str, default="",
+        help="the path to the teacher qnetwork")
 
     # Algorithm specific arguments
     parser.add_argument("--buffer-size", type=int, default=10000,
@@ -164,21 +149,6 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> floa
     return max(slope * t + start_e, end_e)
 
 
-def write_to_tensorboard(writer: SummaryWriter, global_step: int, infos: dict, advice_counter: torch.tensor) -> None:
-    """Write data to TensorBoard."""
-    for i, info in enumerate(infos):
-        if "episode" in info:
-            ep_return = info["episode"]["r"]
-            ep_length = info["episode"]["l"]
-            ep_advice = advice_counter[i]
-
-            print(f"global_step={global_step}, episodic_return={ep_return}")
-            writer.add_scalar("charts/episodic_return", ep_return, global_step)
-            writer.add_scalar("charts/episodic_length", ep_length, global_step)
-            writer.add_scalar("charts/advice_issued", ep_advice, global_step)
-            break
-
-
 class QNetwork(nn.Module):
     """The critic (QNetwork) class for the DQN algorithm."""
 
@@ -212,12 +182,57 @@ class QNetwork(nn.Module):
         return self.critic(x)
 
 
+class Actor(nn.Module):
+    """The agent class for the AC DQN algorithm."""
+
+    def __init__(self, envs: gym.vector.SyncVectorEnv):
+        super().__init__()
+        # Actor network
+        c = envs.observation_space.shape[-1]
+        # Define image embedding
+        self.image_conv = nn.Sequential(
+            nn.Conv2d(c, 16, (2, 2)),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 2)),
+            nn.Conv2d(16, 32, (2, 2)),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, (2, 2)),
+            nn.ReLU(),
+        )
+        n = envs.observation_space.shape[0]
+        m = envs.observation_space.shape[1]
+        self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
+
+        # Define actor's model
+        self.actor = nn.Sequential(
+            nn.Linear(self.image_embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, envs.action_space.n),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the network."""
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        embedding = x
+        return self.actor(embedding)
+
+    def get_action(self, x: torch.Tensor) -> torch.Tensor:
+        """Get the action, log probs, and probs for all actions from the actor network."""
+        logits = self(x)
+        policy_dist = Categorical(logits=logits)
+        action = policy_dist.sample()
+        action_probs = policy_dist.probs
+        log_prob = f.log_softmax(logits, dim=1)
+        return action, log_prob, action_probs
+
+
 if __name__ == "__main__":
     args = parse_args()
 
     # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    log_dir = f"../../pvcvolume/runs2/{run_name}"
+    log_dir = f"runs/{run_name}"
     writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
@@ -228,6 +243,7 @@ if __name__ == "__main__":
     model_dir = Path(f"../../pvcvolume/models2/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
+    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -261,23 +277,29 @@ if __name__ == "__main__":
     envs = VecMonitor(envs, log_dir)
 
     # teacher agent setup
-    teacher_source_agent = QNetwork(envs).to(device)
+    teacher_source_agent = Actor(envs).to(device)
+    teacher_source_qnetwork = QNetwork(envs).to(device)
     teacher_source_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
+    teacher_source_qnetwork.load_state_dict(torch.load(args.teacher_qnetwork, weights_only=True))
     for param in teacher_source_agent.parameters():
         param.requires_grad = False
-    teacher_new_agent = QNetwork(envs).to(device)  # new task
-    teacher_new_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
-    teacher_new_agent_optimizer = optim.Adam(teacher_new_agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    for param in teacher_source_qnetwork.parameters():
+        param.requires_grad = False
 
-    teacher_target_network = QNetwork(envs).to(device)
-    teacher_target_network.load_state_dict(teacher_source_agent.state_dict())
+    teacher_new_qnetwork = QNetwork(envs).to(device)  # new task
+    teacher_new_qnetwork.load_state_dict(torch.load(args.teacher_qnetwork, weights_only=True))
+
+    teacher_target_qnetwork = QNetwork(envs).to(device)
+    teacher_target_qnetwork.load_state_dict(teacher_new_qnetwork.state_dict())
 
     # student agent setup
-    student_agent = QNetwork(envs).to(device)
-    optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    student_agent = Actor(envs).to(device)
+    student_qnetwork = QNetwork(envs).to(device)
+    student_target_qnetwork = QNetwork(envs).to(device)
+    student_qnetwork.load_state_dict(student_qnetwork.state_dict())
 
-    target_network = QNetwork(envs).to(device)
-    target_network.load_state_dict(student_agent.state_dict())
+    optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    q_optimizer = optim.Adam(list(student_qnetwork.parameters()) + list(teacher_new_qnetwork.parameters()), lr=args.learning_rate, eps=1e-5)
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size)
@@ -286,22 +308,21 @@ if __name__ == "__main__":
     global_step = 0
     start_time = time.time()
     obs = envs.reset()
-    obs = preprocess(obs)
-    next_done = torch.zeros(args.num_envs).to(device)
     advice_counter = torch.zeros(args.num_envs).to(device)
 
-    for global_step in range(0, args.total_timesteps, args.num_envs):
+    for global_step in range(args.total_timesteps):
         epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         h_t = torch.zeros(args.num_envs).to(device)
         if rng.random() < epsilon:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
+            obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
             # Introspection
             probability = args.introspection_decay ** max(0, global_step - args.burn_in)
             p = Bernoulli(probability).sample([args.num_envs]).to(device)
             if global_step > args.burn_in:
-                teacher_source_q, _ = teacher_source_agent(obs).max(dim=1)
-                teacher_target_q, _ = teacher_new_agent(obs).max(dim=1)
+                teacher_source_q, _ = teacher_source_qnetwork(obs_torch).max(dim=1)
+                teacher_target_q, _ = teacher_new_qnetwork(obs_torch).max(dim=1)
                 # Calculate absolute differences for introspection across the batch
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q)
                 # Update h_t based on the introspection threshold
@@ -310,87 +331,95 @@ if __name__ == "__main__":
 
             if h_t.sum() > 0:
                 # Get advice from the teacher for the environments where h_t is 1
-                teacher_actions = torch.argmax(teacher_source_agent(obs), dim=1)
-                student_actions = torch.argmax(student_agent(obs), dim=1)
+                teacher_actions, _, _ = teacher_source_agent.get_action(obs_torch)
+                student_actions, _, _ = student_agent.get_action(obs_torch)
                 actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
             else:
                 # Get actions from the student agent
-                actions = torch.argmax(student_agent(obs), dim=1).cpu().numpy()
+                actions, _, _ = student_agent.get_action(obs_torch)
+                actions = actions.cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
-        rewards = torch.tensor(rewards).to(device).view(-1)
-        dones = torch.Tensor(dones).to(device)
-        write_to_tensorboard(writer, global_step, infos, advice_counter)
 
-        # get terminal observation
+        # record metrics for plotting
+        for i, info in enumerate(infos):
+            if "episode" in info:
+                ep_return = info["episode"]["r"]
+                ep_length = info["episode"]["l"]
+                ep_advice = advice_counter[i]
+
+                print(f"global_step={global_step}, episodic_return={ep_return}")
+                writer.add_scalar("charts/episodic_return", ep_return, global_step)
+                writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                writer.add_scalar("charts/advice_issued", ep_advice, global_step)
+                break
+
+        # get real terminal observation
         real_next_obs = next_obs.copy()
         for idx, done in enumerate(dones):
             if done:
                 terminal_obs = infos[idx]["terminal_observation"]
                 real_next_obs[idx] = terminal_obs
-                advice_counter[idx] = 0
-        real_next_obs = preprocess(real_next_obs)
 
         # add to replay buffer
-        next_obs = preprocess(next_obs)
-        rb.push(obs, torch.tensor(actions), rewards, real_next_obs, dones, h_t)
+        rb.push(obs, actions, rewards, real_next_obs, dones)
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts * args.num_envs:
+        if global_step > args.learning_starts:
             if global_step % args.train_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
-                    data = rb.sample(args.batch_size)
+                    states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                    states = states.permute(0, 3, 1, 2)
+                    next_states = next_states.permute(0, 3, 1, 2)
 
                     # compute advantages
                     with torch.no_grad():
-                        next_q_values, _ = target_network(data.next_state).max(dim=1)
-                        td_target = data.reward.flatten().float() + args.gamma * next_q_values.float() * (1 - data.done.flatten().float())
-                    old_val = student_agent(data.state.to(device).float()).gather(1, data.action.to(device).view(-1, 1).long()).squeeze(-1)
-                    loss = f.mse_loss(td_target, old_val)
+                        _, next_state_log_pi, next_state_action_probs = student_agent.get_action(next_states)
+                        next_q_values1 = student_target_qnetwork(next_states)
+                        qf_next_target = next_state_action_probs * (next_q_values1)
+                        qf_next_target = qf_next_target.sum(dim=1)
+                        td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
+                    old_val = student_qnetwork(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
+                    qloss = f.mse_loss(td_target, old_val)
+
+                    # optimize the q networks TODO: might need to update teacher's qnetwork individually
+                    q_optimizer.zero_grad()
+                    qloss.backward()
+                    q_optimizer.step()
+
+                    # Policy gradient update for the actor
+                    _, _, action_probs = student_agent.get_action(states)
+                    with torch.no_grad():
+                        q_values = student_qnetwork(states)
+                    expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
+                    actor_loss = -torch.mean(expected_q)
 
                     # optimize the actor
                     optimizer.zero_grad()
-                    loss.backward()
+                    actor_loss.backward()
                     optimizer.step()
-
-                    # update teacher new agent
-                    with torch.no_grad():
-                        teacher_next_q_values, _ = teacher_target_network(data.next_state).max(dim=1)
-                        teacher_td_target = data.reward.flatten().float() + args.gamma * teacher_next_q_values.float() * (
-                            1 - data.done.flatten().float()
-                        )
-                    teacher_old_val = (
-                        teacher_new_agent(data.state.to(device).float())
-                        .gather(
-                            1,
-                            data.action.to(device).view(-1, 1).long(),
-                        )
-                        .squeeze(-1)
-                    )
-                    teacher_loss = f.mse_loss(teacher_next_q_values, teacher_old_val)
-
-                    # optimize the teacher new agent
-                    teacher_new_agent_optimizer.zero_grad()
-                    teacher_loss.backward()
-                    teacher_new_agent_optimizer.step()
 
             # update target network
             if global_step % args.target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(target_network.parameters(), student_agent.parameters(), strict=False):
+                for target_network_param, q_network_param in zip(student_target_qnetwork.parameters(), student_qnetwork.parameters(), strict=False):
                     target_network_param.data.copy_(
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
                 # update teacher target network
-                for target_network_param, q_network_param in zip(teacher_target_network.parameters(), teacher_new_agent.parameters(), strict=False):
+                for target_network_param, q_network_param in zip(
+                    teacher_target_qnetwork.parameters(),
+                    teacher_new_qnetwork.parameters(),
+                    strict=False,
+                ):
                     target_network_param.data.copy_(
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
 
-                writer.add_scalar("losses/actor_loss", loss.item(), global_step)
-                writer.add_scalar("losses/teacher_loss", teacher_loss.item(), global_step)
+                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
+                writer.add_scalar("losses/teacher_loss", qloss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
