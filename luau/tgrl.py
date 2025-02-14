@@ -406,7 +406,9 @@ if __name__ == "__main__":
                     pi_actor_loss = -torch.mean(expected_q_values)
                     aux_actor_loss = -torch.mean(expected_aux_q_values)
                     cross_entropy_loss = torch.mean(cross_entropy - expected_qi)
-                    overall_loss = pi_actor_loss + effective_coeff * cross_entropy_loss + aux_actor_loss - student_dist.entropy().mean() * 0.01
+                    teacher_cross_entropy_loss = effective_coeff * cross_entropy_loss
+                    entropy_bonus = student_dist.entropy().mean() * 0.01
+                    overall_loss = pi_actor_loss + teacher_cross_entropy_loss + aux_actor_loss - entropy_bonus
 
                     # optimize the actor
                     optimizer.zero_grad()
@@ -425,8 +427,13 @@ if __name__ == "__main__":
                         args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
                     )
 
-                writer.add_scalar("losses/actor_loss", overall_loss.item(), global_step)
-                writer.add_scalar("losses/critic_loss", q_loss.item(), global_step)
+                writer.add_scalar("losses/actor_loss", pi_actor_loss.item(), global_step)
+                writer.add_scalar("losses/teacher_cross_entropy_loss", teacher_cross_entropy_loss.item(), global_step)
+                writer.add_scalar("losses/expected_qi", expected_qi.mean().item(), global_step)
+                writer.add_scalar("losses/aux_actor_loss", aux_actor_loss.item(), global_step)
+                writer.add_scalar("losses/entropy_bonus", entropy_bonus.item(), global_step)
+                writer.add_scalar("losses/QR_loss", qf1loss.item(), global_step)
+                writer.add_scalar("losses/QI_loss", q_kl_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
                 writer.add_scalar("losses/lagrange_lambda", args.lagrange_lambda, global_step)
