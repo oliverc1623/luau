@@ -306,9 +306,8 @@ if __name__ == "__main__":
                     _, next_state_log_pi, next_state_action_probs, _ = agent.get_action(next_states)
                     next_q_values1 = target_network(next_states)
                     qf_next_target = next_state_action_probs * (next_q_values1)
-                    qf_next_target = qf_next_target.sum(dim=1)
+                    qf_next_target, _ = qf_next_target.max(dim=1)
                     next_q_vals = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
-
                 q_vals = critic(states)
                 q_vals = q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
                 critic_loss = f.mse_loss(next_q_vals, q_vals)
@@ -319,7 +318,7 @@ if __name__ == "__main__":
                 critic_optimizer.step()
 
                 # Policy gradient update for the actor
-                _, _, action_probs, _ = agent.get_action(states)
+                _, _, action_probs, dist = agent.get_action(states)
                 with torch.no_grad():
                     q_vals = critic(states)
                 actor_loss = -(action_probs * q_vals).mean()
