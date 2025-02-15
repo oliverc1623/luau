@@ -22,6 +22,7 @@ from torch.distributions import kl_divergence
 
 
 RGB_CHANNEL = 3
+EPS = 1e-10
 
 gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
 gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
@@ -121,6 +122,8 @@ def parse_args() -> argparse.Namespace:
         help="the lagrange multiplier for estimating performance difference")
     parser.add_argument("--alpha", type=float, default=3.0,
         help="the coefficient for balancing the two policies")
+    parser.add_argument("--mu", type=float, default=0.0003,
+        help="learning rate for lagrange lambda")
 
     args = parser.parse_args()
     # fmt: on
@@ -373,8 +376,8 @@ if __name__ == "__main__":
                         td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
 
                         # compute Q_I next states
-                        _, _, _, netx_teacher_dist = teacher_source_agent.get_action(next_states)
-                        kl_next_obs = kl_divergence(next_student_dist, netx_teacher_dist)
+                        _, _, _, next_teacher_dist = teacher_source_agent.get_action(next_states)
+                        kl_next_obs = kl_divergence(next_student_dist, next_teacher_dist)
                         next_q_kl_value = (1 - dones_t.flatten()) * args.gamma * (td_target + kl_next_obs)
 
                     old_val = student_qnetwork(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
@@ -434,6 +437,8 @@ if __name__ == "__main__":
                 writer.add_scalar("losses/entropy_bonus", entropy_bonus.item(), global_step)
                 writer.add_scalar("losses/QR_loss", qf1loss.item(), global_step)
                 writer.add_scalar("losses/QI_loss", q_kl_loss.item(), global_step)
+                writer.add_scalar("losses/q_kl_a_values", q_kl_a_values.mean().item(), global_step)
+                writer.add_scalar("losses/kl_next_obs", kl_next_obs.mean().item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 writer.add_scalar("losses/epsilon", epsilon, global_step)
                 writer.add_scalar("losses/lagrange_lambda", args.lagrange_lambda, global_step)
@@ -442,11 +447,11 @@ if __name__ == "__main__":
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-        # compute performance difference
-        if global_step % args.performance_coefficient_frequency == 0:
-            performance_difference = np.mean(actor_aux_performance) - np.mean(actor_performance)
-            args.lagrange_lambda = args.lagrange_lambda + performance_difference
-            effective_coeff = args.alpha / (1 + args.lagrange_lambda)
+            # compute performance difference
+            if global_step % args.performance_coefficient_frequency == 0:
+                performance_difference = np.mean(actor_aux_performance) - np.mean(actor_performance)
+                args.lagrange_lambda = args.lagrange_lambda + performance_difference
+                effective_coeff = args.alpha / (1 + args.lagrange_lambda)
 
     print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
     torch.save(student_agent.state_dict(), actor_checkpoint_path)
