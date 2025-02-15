@@ -118,12 +118,6 @@ def layer_init(layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.
     return layer
 
 
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
-    """Calculate the linear schedule for exploration rate."""
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
-
-
 class Actor(nn.Module):
     """The agent class for the AC DQN algorithm."""
 
