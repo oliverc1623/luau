@@ -89,12 +89,6 @@ def parse_args() -> argparse.Namespace:
         help="the frequency of updating the target network")
     parser.add_argument("--batch-size", type=int, default=128,
         help="the batch size of the training")
-    parser.add_argument("--start-e", type=float, default=1,
-        help="the starting exploration rate")
-    parser.add_argument("--end-e", type=float, default=0.05,
-        help="the final exploration rate")
-    parser.add_argument("--exploration-fraction", type=float, default=0.5,
-        help="the fraction of the total timesteps for exploration")
     parser.add_argument("--learning-starts", type=int, default=10000,
         help="the number of steps to take before learning starts")
     parser.add_argument("--update-frequency", type=int, default=4,
@@ -200,7 +194,7 @@ if __name__ == "__main__":
 
     # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    log_dir = f"../../pvcvolume/runs/{run_name}"
+    log_dir = f"runs/{run_name}"
     writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
@@ -208,7 +202,7 @@ if __name__ == "__main__":
     )
 
     # model_dir
-    model_dir = Path(f"../../pvcvolume/models/{run_name}")
+    model_dir = Path(f"models/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
     critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
@@ -296,37 +290,38 @@ if __name__ == "__main__":
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             if global_step % args.update_frequency == 0:
-                # sample a batch of data
-                states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
-                states = states.permute(0, 3, 1, 2)
-                next_states = next_states.permute(0, 3, 1, 2)
+                for _ in range(args.gradient_steps):
+                    # sample a batch of data
+                    states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                    states = states.permute(0, 3, 1, 2)
+                    next_states = next_states.permute(0, 3, 1, 2)
 
-                # compute advantages
-                with torch.no_grad():
-                    _, next_state_log_pi, next_state_action_probs, _ = agent.get_action(next_states)
-                    next_q_values1 = target_network(next_states)
-                    qf_next_target = next_state_action_probs * (next_q_values1)
-                    qf_next_target, _ = qf_next_target.max(dim=1)
-                    next_q_vals = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
-                q_vals = critic(states)
-                q_vals = q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
-                critic_loss = f.mse_loss(next_q_vals, q_vals)
-
-                # optimize the critic QNetwork
-                critic_optimizer.zero_grad()
-                critic_loss.backward()
-                critic_optimizer.step()
-
-                # Policy gradient update for the actor
-                _, _, action_probs, dist = agent.get_action(states)
-                with torch.no_grad():
+                    # compute advantages
+                    with torch.no_grad():
+                        _, next_state_log_pi, next_state_action_probs, _ = agent.get_action(next_states)
+                        next_q_values1 = target_network(next_states)
+                        qf_next_target = next_state_action_probs * (next_q_values1)
+                        qf_next_target = qf_next_target.sum(dim=1)
+                        next_q_vals = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
                     q_vals = critic(states)
-                actor_loss = -(action_probs * q_vals).mean()
+                    q_vals = q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    critic_loss = f.mse_loss(next_q_vals, q_vals)
 
-                # optimize the actor
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
+                    # optimize the critic QNetwork
+                    critic_optimizer.zero_grad()
+                    critic_loss.backward()
+                    critic_optimizer.step()
+
+                    # Policy gradient update for the actor
+                    _, _, action_probs, dist = agent.get_action(states)
+                    with torch.no_grad():
+                        q_vals = critic(states)
+                    actor_loss = -(action_probs * q_vals).mean()
+
+                    # optimize the actor
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
 
             # update target network
             if global_step % args.target_network_frequency == 0:
