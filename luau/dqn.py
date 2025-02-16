@@ -316,6 +316,7 @@ if __name__ == "__main__":
                     _, _, action_probs, dist = agent.get_action(states)
                     with torch.no_grad():
                         q_vals = critic(states)
+                    entropy = dist.entropy().mean()
                     actor_loss = -(action_probs * q_vals).mean()
 
                     # optimize the actor
