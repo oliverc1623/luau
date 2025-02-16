@@ -98,13 +98,7 @@ def parse_args() -> argparse.Namespace:
         help="the frequency of updating the target network")
     parser.add_argument("--batch-size", type=int, default=128,
         help="the batch size of the training")
-    parser.add_argument("--start-e", type=float, default=1,
-        help="the starting exploration rate")
-    parser.add_argument("--end-e", type=float, default=0.05,
-        help="the final exploration rate")
-    parser.add_argument("--exploration-fraction", type=float, default=0.5,
-        help="the fraction of the total timesteps for exploration")
-    parser.add_argument("--learning-starts", type=int, default=1000,
+    parser.add_argument("--learning-starts", type=int, default=10000,
         help="the number of steps to take before learning starts")
     parser.add_argument("--update-frequency", type=int, default=10,
         help="the frequency of training the agent")
@@ -217,7 +211,7 @@ if __name__ == "__main__":
 
     # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    log_dir = f"../../pvcvolume/runs/{run_name}"
+    log_dir = f"runs/{run_name}"
     writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
@@ -225,7 +219,7 @@ if __name__ == "__main__":
     )
 
     # model_dir
-    model_dir = Path(f"../../pvcvolume/models/{run_name}")
+    model_dir = Path(f"models/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
     critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
@@ -354,52 +348,54 @@ if __name__ == "__main__":
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             if global_step % args.update_frequency == 0:
-                # sample a batch of data
-                states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
-                states = states.permute(0, 3, 1, 2)
-                next_states = next_states.permute(0, 3, 1, 2)
+                for _ in range(args.gradient_steps):
+                    # sample a batch of data
+                    states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                    states = states.permute(0, 3, 1, 2)
+                    next_states = next_states.permute(0, 3, 1, 2)
 
-                # compute advantages
-                with torch.no_grad():
-                    _, _, next_state_action_probs, _ = student_agent.get_action(next_states)
-                    next_q_values1 = student_target_qnetwork(next_states)
-                    qf_next_target = next_state_action_probs * (next_q_values1)
-                    qf_next_target = qf_next_target.sum(dim=1)
-                    next_q_vals = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
+                    # compute advantages
+                    with torch.no_grad():
+                        _, _, next_state_action_probs, _ = student_agent.get_action(next_states)
+                        next_q_values1 = student_target_qnetwork(next_states)
+                        qf_next_target = next_state_action_probs * (next_q_values1)
+                        qf_next_target = qf_next_target.sum(dim=1)
+                        next_q_vals = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
 
-                    # # optimize the teacher's q network
-                    _, _, teacher_next_state_action_probs, _ = teacher_source_agent.get_action(states)
-                    teacher_next_q_values1 = teacher_target_qnetwork(states)
-                    teacher_qf_next_target = teacher_next_state_action_probs * (teacher_next_q_values1)
-                    teacher_qf_next_target = teacher_qf_next_target.sum(dim=1)
-                    teacher_next_q_vals = rewards_t.flatten() + args.gamma * teacher_qf_next_target * (1 - dones_t.flatten())
+                        # optimize the teacher's q network
+                        teacher_next_q_values1 = teacher_target_qnetwork(states)
+                        teacher_qf_next_target = next_state_action_probs * (teacher_next_q_values1)
+                        teacher_qf_next_target = teacher_qf_next_target.sum(dim=1)
+                        teacher_next_q_vals = rewards_t.flatten() + args.gamma * teacher_qf_next_target * (1 - dones_t.flatten())
 
-                # teacher q network update
-                teacher_q_vals = teacher_new_qnetwork(states)
-                teacher_q_vals = teacher_q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
-                teacher_qloss = f.mse_loss(teacher_next_q_vals, teacher_q_vals)
+                    # teacher q network update
+                    teacher_q_vals = teacher_new_qnetwork(states)
+                    teacher_q_vals = teacher_q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    teacher_qloss = f.mse_loss(teacher_next_q_vals, teacher_q_vals)
 
-                # student q network update
-                student_q_vals = student_qnetwork(states)
-                student_q_vals = student_q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
-                student_qloss = f.mse_loss(next_q_vals, student_q_vals)
+                    # student q network update
+                    student_q_vals = student_qnetwork(states)
+                    student_q_vals = student_q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    student_qloss = f.mse_loss(next_q_vals, student_q_vals)
 
-                # optimize the q networks TODO: might need to update teacher's qnetwork individually
-                q_loss = student_qloss + teacher_qloss
-                q_optimizer.zero_grad()
-                q_loss.backward()
-                q_optimizer.step()
+                    # optimize the q networks TODO: might need to update teacher's qnetwork individually
+                    q_loss = student_qloss  # + teacher_qloss
+                    q_optimizer.zero_grad()
+                    q_loss.backward()
+                    nn.utils.clip_grad_norm_(student_qnetwork.parameters(), 0.5)
+                    q_optimizer.step()
 
-                # Policy gradient update for the actor
-                _, _, action_probs, _ = student_agent.get_action(states)
-                with torch.no_grad():
-                    q_vals = student_qnetwork(states)
-                actor_loss = -(action_probs * q_vals).mean()
+                    # Policy gradient update for the actor
+                    _, _, action_probs, _ = student_agent.get_action(states)
+                    with torch.no_grad():
+                        q_vals = student_qnetwork(states)
+                    actor_loss = -(action_probs * q_vals).mean()
 
-                # optimize the actor
-                optimizer.zero_grad()
-                actor_loss.backward()
-                optimizer.step()
+                    # optimize the actor
+                    optimizer.zero_grad()
+                    actor_loss.backward()
+                    nn.utils.clip_grad_norm_(student_agent.parameters(), 0.5)
+                    optimizer.step()
 
             # update target network
             if global_step % args.target_network_frequency == 0:
