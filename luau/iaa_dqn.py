@@ -386,10 +386,11 @@ if __name__ == "__main__":
                     q_optimizer.step()
 
                     # Policy gradient update for the actor
-                    _, _, action_probs, _ = student_agent.get_action(states)
+                    _, _, action_probs, dist = student_agent.get_action(states)
                     with torch.no_grad():
                         q_vals = student_qnetwork(states)
-                    actor_loss = -(action_probs * q_vals).mean()
+                    entropy = dist.entropy().mean()
+                    actor_loss = -(action_probs * q_vals).mean() - 0.01 * entropy
 
                     # optimize the actor
                     optimizer.zero_grad()
