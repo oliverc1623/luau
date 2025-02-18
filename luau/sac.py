@@ -17,7 +17,6 @@ from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from stable_baselines3.common.buffers import ReplayBuffer
 
 
 RGB_CHANNEL = 3
@@ -26,19 +25,20 @@ gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:Smal
 gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
 
 
-# TODO: use SB3 Replay Buffer
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, n_envs: 1):
         self.capacity = capacity
         self.memory = []
         self.position = 0
+        self.n_envs = n_envs
 
     def push(self, state: np.array, action: np.array, reward: np.array, next_state: np.array, done: np.array) -> None:
         """Save a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
+        action = action.reshape((self.n_envs, 1))
         self.memory[self.position] = (state, action, reward, next_state, done)
         self.position = (self.position + 1) % self.capacity
 
@@ -47,11 +47,11 @@ class DQNReplayBuffer:
         batch = random.sample(self.memory, batch_size)
         s, a, r, ns, d = zip(*batch, strict=False)
         w, h, c = s[0].shape[1], s[0].shape[2], s[0].shape[3]
-        s_t = torch.as_tensor(np.stack(s), device=device).float().view(args.batch_size * args.num_envs, w, h, c).permute(0, 3, 1, 2)
-        a_t = torch.as_tensor(np.array(a), device=device).long()
-        r_t = torch.as_tensor(np.array(r), device=device).float()
-        ns_t = torch.as_tensor(np.stack(ns), device=device).float().view(args.batch_size * args.num_envs, w, h, c).permute(0, 3, 1, 2)
-        d_t = torch.as_tensor(np.array(d), device=device).float()
+        s_t = torch.as_tensor(np.stack(s), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
+        a_t = torch.as_tensor(np.array(a), device=device).long().view(-1)
+        r_t = torch.as_tensor(np.array(r), device=device).float().view(-1)
+        ns_t = torch.as_tensor(np.stack(ns), device=device).float().view(args.batch_size * args.num_envs, w, h, c)
+        d_t = torch.as_tensor(np.array(d), device=device).float().view(-1)
         return s_t, a_t, r_t, ns_t, d_t
 
 
@@ -81,20 +81,14 @@ def parse_args() -> argparse.Namespace:
     # Algorithm specific arguments
     parser.add_argument("--ql-lr", type=float, default=0.0003,
         help="the learning rate of the ql optimizer")
-    parser.add_argument("--buffer-size", type=int, default=1_000_000,
+    parser.add_argument("--buffer-size", type=int, default=10000,
         help="the size of the replay buffer")
     parser.add_argument("--tau", type=float, default=1.0,
         help="the soft update rate")
-    parser.add_argument("--target-network-frequency", type=int, default=8_000,
+    parser.add_argument("--target-network-frequency", type=int, default=8000,
         help="the frequency of updating the target network")
     parser.add_argument("--batch-size", type=int, default=128,
         help="the batch size of the training")
-    parser.add_argument("--start-e", type=float, default=1,
-        help="the starting exploration rate")
-    parser.add_argument("--end-e", type=float, default=0.05,
-        help="the final exploration rate")
-    parser.add_argument("--exploration-fraction", type=float, default=0.5,
-        help="the fraction of the total timesteps for exploration")
     parser.add_argument("--learning-starts", type=int, default=10000,
         help="the number of steps to take before learning starts")
     parser.add_argument("--update-frequency", type=int, default=4,
@@ -105,12 +99,12 @@ def parse_args() -> argparse.Namespace:
         help="the discount factor gamma")
     parser.add_argument("--gradient-steps", type=int, default=1,
         help="the number of gradient steps to take per iteration")
+    parser.add_argument("--autotune", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+        help="if toggled, the entropy coefficient will be automatically tuned")
+    parser.add_argument("--target-entropy-scale", type=float, default=0.98,
+        help="the target entropy scale")
     parser.add_argument("--alpha", type=float, default=0.2,
-        help="entropy regularization coefficient")
-    parser.add_argument("--target-entropy-scale", type=float, default=0.89,
-        help="target entropy scale")
-    parser.add_argument("--autotune", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="if toggled, the entropy coefficient will be tuned automatically")
+        help="the entropy coefficient")
 
     args = parser.parse_args()
     # fmt: on
@@ -122,41 +116,6 @@ def layer_init(layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.
     torch.nn.init.orthogonal_(layer.weight, std)
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
-
-
-def preprocess(image: np.array) -> dict:
-    """Preprocess the input for a grid-based environment."""
-    image = torch.from_numpy(image).float()
-    if image.ndim == RGB_CHANNEL:  # Single image case with shape (height, width, channels)
-        image = image.permute(2, 0, 1)
-        # Permute back to (batch_size, channels, height, width)
-        image = image.unsqueeze(0).to(device)  # Adding batch dimension
-    else:  # Batch case with shape (batch_size, height, width, channels)
-        image = image.permute(0, 3, 1, 2).to(device)  # Change to (batch, channels, height, width)
-    return image
-
-
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
-    """Calculate the linear schedule for exploration rate."""
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
-
-
-def write_to_tensorboard(writer: SummaryWriter, global_step: int, info: dict) -> None:
-    """Write data to TensorBoard."""
-    if "episode" in info:
-        # Extract the mask for completed episodes
-        completed_mask = info["_episode"]
-
-        # Filter the rewards and lengths for completed episodes
-        episodic_returns = info["episode"]["r"][completed_mask]
-        episodic_lengths = info["episode"]["l"][completed_mask]
-
-        # Log each completed episode
-        for ep_return, ep_length in zip(episodic_returns, episodic_lengths, strict=False):
-            print(f"global_step={global_step}, episodic_return={ep_return}")
-            writer.add_scalar("charts/episodic_return", ep_return, global_step)
-            writer.add_scalar("charts/episodic_length", ep_length, global_step)
 
 
 class Actor(nn.Module):
@@ -174,22 +133,24 @@ class Actor(nn.Module):
             layer_init(nn.Conv2d(16, 32, (2, 2))),
             nn.ReLU(),
             layer_init(nn.Conv2d(32, 64, (2, 2))),
-            nn.Flatten(),
+            nn.ReLU(),
         )
         n = envs.observation_space.shape[0]
         m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         # Define actor's model
-        self.fc1 = layer_init(nn.Linear(self.image_embedding_size, 64))
-        self.fc_logits = layer_init(nn.Linear(64, envs.action_space.n))
+        self.actor = nn.Sequential(
+            nn.Linear(self.image_embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, envs.action_space.n),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the network."""
-        x = f.relu(self.image_conv(x))
-        x = f.relu(self.fc1(x))
-        logits = self.fc_logits(x)
-        return logits
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        return self.actor(x)
 
     def get_action(self, x: torch.Tensor) -> torch.Tensor:
         """Get the action, log probs, and probs for all actions from the actor network."""
@@ -198,7 +159,7 @@ class Actor(nn.Module):
         action = policy_dist.sample()
         action_probs = policy_dist.probs
         log_prob = f.log_softmax(logits, dim=1)
-        return action, log_prob, action_probs
+        return action, log_prob, action_probs, policy_dist
 
 
 class QNetwork(nn.Module):
@@ -215,21 +176,23 @@ class QNetwork(nn.Module):
             layer_init(nn.Conv2d(16, 32, (2, 2))),
             nn.ReLU(),
             layer_init(nn.Conv2d(32, 64, (2, 2))),
-            nn.Flatten(),
+            nn.ReLU(),
         )
         n = envs.observation_space.shape[0]
         m = envs.observation_space.shape[1]
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
-        self.fc1 = layer_init(nn.Linear(self.image_embedding_size, 64))
-        self.fc_q = layer_init(nn.Linear(64, envs.action_space.n))
+        self.critic = nn.Sequential(
+            nn.Linear(self.image_embedding_size, 64),
+            nn.Tanh(),
+            nn.Linear(64, envs.action_space.n),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the critic network."""
-        x = f.relu(self.image_conv(x))
-        x = f.relu(self.fc1(x))
-        q_vals = self.fc_q(x)
-        return q_vals
+        x = self.image_conv(x)
+        x = x.reshape(x.shape[0], -1)
+        return self.critic(x)
 
 
 if __name__ == "__main__":
@@ -245,10 +208,11 @@ if __name__ == "__main__":
     )
 
     # model_dir
-    model_dir = Path(f"../../pvcvolume/models2/{run_name}")
+    model_dir = Path(f"models/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
-    critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
+    qf1_checkpoint_path = f"{model_dir}/{run_name}_qf1.pth"
+    qf2_checkpoint_path = f"{model_dir}/{run_name}_qf2.pth"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -293,22 +257,17 @@ if __name__ == "__main__":
     actor_optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-4)
     q_optimizer = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.ql_lr, eps=1e-4)
 
+    # Automatic entropy tuning
     if args.autotune:
-        target_entropy = -args.target_entropy_scale * torch.log(1 / torch.tensor(envs.action_space.n))
+        target_entropy = -args.target_entropy_scale * torch.log(1 / torch.tensor(envs.single_action_space.n))
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
         alpha = log_alpha.exp().item()
-        a_optimizer = optim.Adam([log_alpha], lr=args.ql_lr, eps=1e-4)
+        a_optimizer = optim.Adam([log_alpha], lr=args.q_lr, eps=1e-4)
     else:
         alpha = args.alpha
 
     # replay buffer
-    rb = ReplayBuffer(
-        buffer_size=args.buffer_size,
-        observation_space=envs.observation_space,
-        action_space=envs.action_space,
-        device=device,
-        n_envs=args.num_envs,
-    )
+    rb = DQNReplayBuffer(args.buffer_size, n_envs=args.num_envs)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -323,8 +282,8 @@ if __name__ == "__main__":
             # Convert obs to torch only for the policy's forward pass
             obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
             with torch.no_grad():
-                actions, _, _ = agent.get_action(obs_torch)
-            actions = actions.detach().cpu().numpy()
+                actions, _, _, _ = agent.get_action(obs_torch)
+            actions = actions.cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
@@ -334,7 +293,6 @@ if __name__ == "__main__":
             if "episode" in info:
                 ep_return = info["episode"]["r"]
                 ep_length = info["episode"]["l"]
-
                 print(f"global_step={global_step}, episodic_return={ep_return}")
                 writer.add_scalar("charts/episodic_return", ep_return, global_step)
                 writer.add_scalar("charts/episodic_length", ep_length, global_step)
@@ -346,90 +304,81 @@ if __name__ == "__main__":
             if done:
                 terminal_obs = infos[idx]["terminal_observation"]
                 real_next_obs[idx] = terminal_obs
-
-        # add transition to replay buffer
-        rb.add(obs, real_next_obs, actions, rewards, dones, infos)
+        rb.push(obs, actions, rewards, real_next_obs, dones)  # add transition to replay buffer
         obs = real_next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts and global_step % args.update_frequency == 0:
-            for _ in range(args.gradient_steps):
-                # sample a batch of data
-                data = rb.sample(args.batch_size)
+        if global_step > args.learning_starts:
+            if global_step % args.update_frequency == 0:
+                for _ in range(args.gradient_steps):
+                    # sample a batch of data
+                    states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                    states = states.permute(0, 3, 1, 2)
+                    next_states = next_states.permute(0, 3, 1, 2)
 
-                # compute advantages
-                with torch.no_grad():
-                    # data.next_observations
-                    _, next_state_log_pi, next_state_action_probs = agent.get_action(data.next_observations.permute(0, 3, 1, 2).float())
-                    qf1_next_target = qf1_target(data.next_observations.permute(0, 3, 1, 2).float())
-                    qf2_next_target = qf2_target(data.next_observations.permute(0, 3, 1, 2).float())
+                    # compute advantages
+                    with torch.no_grad():
+                        _, next_state_log_pi, next_state_action_probs, _ = agent.get_action(next_states)
+                        qf1_next_target = qf1_target(next_states)
+                        qf2_next_target = qf2_target(next_states)
+                        min_qf_next_target = next_state_action_probs * (torch.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_pi)
+                        min_qf_next_target = min_qf_next_target.sum(dim=1)
+                        next_q_vals = rewards_t.flatten() + args.gamma * min_qf_next_target * (1 - dones_t.flatten())
+                    qf1_values = qf1(states)
+                    qf2_values = qf2(states)
+                    qf1_a_values = qf1_values.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    qf2_a_values = qf1_values.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    qf1_loss = f.mse_loss(qf1_a_values, next_q_vals)
+                    qf2_loss = f.mse_loss(qf2_a_values, next_q_vals)
+                    qf_loss = qf1_loss + qf2_loss
 
-                    min_qf_next_target = next_state_action_probs * (torch.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_pi)
-                    min_qf_next_target = min_qf_next_target.sum(dim=1)
-                    next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (min_qf_next_target)
+                    # optimize the critic QNetwork
+                    q_optimizer.zero_grad()
+                    qf_loss.backward()
+                    q_optimizer.step()
 
-                qf1_values = qf1(data.observations.permute(0, 3, 1, 2).float())
-                qf2_values = qf2(data.observations.permute(0, 3, 1, 2).float())
+                    # Policy gradient update for the actor
+                    _, log_pi, action_probs, dist = agent.get_action(states)
+                    with torch.no_grad():
+                        qf1_values = qf1(states)
+                        qf2_values = qf2(states)
+                        min_qf_values = torch.min(qf1_values, qf2_values)
 
-                qf1_a_values = qf1_values.gather(1, data.actions.long()).view(-1)
-                qf2_a_values = qf2_values.gather(1, data.actions.long()).view(-1)
-                qf1_loss = f.mse_loss(qf1_a_values, next_q_value)
-                qf2_loss = f.mse_loss(qf2_a_values, next_q_value)
-                qf_loss = qf1_loss + qf2_loss
+                    actor_loss = (action_probs * ((alpha * log_pi) - min_qf_values)).mean()
 
-                # optimize the critic QNetwork
-                q_optimizer.zero_grad()
-                qf_loss.backward()
-                q_optimizer.step()
+                    # optimize the actor
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
 
-                # Policy gradient update for the actor
-                _, log_pi, action_probs = agent.get_action(data.observations.permute(0, 3, 1, 2).float())
-                with torch.no_grad():
-                    qf1_values = qf1(data.observations.permute(0, 3, 1, 2).float())
-                    qf2_values = qf2(data.observations.permute(0, 3, 1, 2).float())
-                    min_qf_values = torch.min(qf1_values, qf2_values)
-                actor_loss = (action_probs * ((alpha * log_pi) - min_qf_values)).mean()
-
-                # optimize the actor
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
-
-                if args.autotune:
-                    # re-use action probabilities for temperature loss
-                    alpha_loss = (action_probs.detach() * (-log_alpha.exp() * (log_pi + target_entropy).detach())).mean()
-
-                    a_optimizer.zero_grad()
-                    alpha_loss.backward()
-                    a_optimizer.step()
-                    alpha = log_alpha.exp().item()
+                    if args.autotune:
+                        # re-use action probabilities for temperature loss
+                        alpha_loss = (action_probs.detach() * (-log_alpha.exp() * (log_pi + target_entropy).detach())).mean()
+                        a_optimizer.zero_grad()
+                        alpha_loss.backward()
+                        a_optimizer.step()
+                        alpha = log_alpha.exp().item()
 
             # update target network
             if global_step % args.target_network_frequency == 0:
-                for target_network_param, q_network_param in zip(qf1.parameters(), qf1_target.parameters(), strict=False):
-                    target_network_param.data.copy_(
-                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
-                    )
-                for target_network_param, q_network_param in zip(qf2.parameters(), qf2_target.parameters(), strict=False):
-                    target_network_param.data.copy_(
-                        args.tau * q_network_param.data + (1.0 - args.tau) * target_network_param.data,
-                    )
+                for param, target_param in zip(qf1.parameters(), qf1_target.parameters(), strict=False):
+                    target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+                for param, target_param in zip(qf2.parameters(), qf2_target.parameters(), strict=False):
+                    target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/qf1_values", qf1_values.mean().item(), global_step)
-                writer.add_scalar("losses/qf2_values", qf2_values.mean().item(), global_step)
+                writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
+                writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
                 writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
-                writer.add_scalar("losses/qf_loss", qf_loss.item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-                if args.autotune:
-                    writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
     # save model
     print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
     torch.save(agent.state_dict(), actor_checkpoint_path)
-    torch.save(qf1.state_dict(), critic_checkpoint_path)
+    torch.save(qf1.state_dict(), qf1_checkpoint_path)
+    torch.save(qf2.state_dict(), qf2_checkpoint_path)
 
     envs.close()
     writer.close()
