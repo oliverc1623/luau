@@ -261,7 +261,6 @@ if __name__ == "__main__":
 
     # student agent setup
     student_agent = Actor(envs).to(device)
-    student_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
 
     # Q_I
     kl_qnetwork = QNetwork(envs).to(device)
@@ -326,17 +325,21 @@ if __name__ == "__main__":
                     with torch.no_grad():
                         # Q_I mext states
                         _, next_state_log_pi, next_state_action_probs, next_student_dist = student_agent.get_action(next_states)
-                        _, _, _, next_teacher_dist = teacher_source_agent.get_action(next_states)
-                        next_q_values1 = teacher_source_qnetwork(next_states)
+                        next_q_values1 = kl_target_qnetwork(next_states)
                         qf_next_target = next_state_action_probs * (next_q_values1)
                         qf_next_target = qf_next_target.sum(dim=1)
                         td_target = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
 
                     old_val = kl_qnetwork(states).gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
-                    q_kl_loss = cross_entropy = torch.mean(kl_divergence(next_student_dist, next_teacher_dist))
                     qf1loss = f.mse_loss(old_val, td_target)  # update Q_I
+
+                    with torch.no_grad():
+                        _, _, _, student_dist = student_agent.get_action(next_states)
+                        _, _, _, teacher_dist = teacher_source_agent.get_action(next_states)
+
+                    distill_loss = torch.clamp(kl_divergence(student_dist, teacher_dist), min=-1, max=1).mean()
                     # compute the total Q loss
-                    q_loss = qf1loss + 1.0 * q_kl_loss
+                    q_loss = qf1loss + 0.0001 * distill_loss
 
                     # optimize the q networks TODO: might need to update teacher's qnetwork individually
                     q_optimizer.zero_grad()
@@ -350,7 +353,7 @@ if __name__ == "__main__":
 
                     pi_actor_loss = -(action_probs * q_values).sum(dim=1).mean()
 
-                    overall_loss = pi_actor_loss - student_dist.entropy().mean() * 0.01
+                    overall_loss = pi_actor_loss  # - student_dist.entropy().mean() * 0.01
 
                     # optimize the actor
                     optimizer.zero_grad()
@@ -365,8 +368,8 @@ if __name__ == "__main__":
                     )
 
                 writer.add_scalar("losses/actor_loss", pi_actor_loss.item(), global_step)
-                writer.add_scalar("losses/QR_loss", qf1loss.item(), global_step)
-                writer.add_scalar("losses/QI_loss", q_kl_loss.item(), global_step)
+                writer.add_scalar("losses/QI_loss", qf1loss.item(), global_step)
+                writer.add_scalar("losses/distillation_loss", distill_loss.item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
