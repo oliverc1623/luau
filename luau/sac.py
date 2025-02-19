@@ -1,4 +1,4 @@
-# Actor-Critic DQN
+# SAC
 
 import argparse  # noqa: I001
 import random
@@ -101,7 +101,7 @@ def parse_args() -> argparse.Namespace:
         help="the number of gradient steps to take per iteration")
     parser.add_argument("--autotune", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="if toggled, the entropy coefficient will be automatically tuned")
-    parser.add_argument("--target-entropy-scale", type=float, default=0.98,
+    parser.add_argument("--target-entropy-scale", type=float, default=0.89,
         help="the target entropy scale")
     parser.add_argument("--alpha", type=float, default=0.2,
         help="the entropy coefficient")
@@ -141,9 +141,9 @@ class Actor(nn.Module):
 
         # Define actor's model
         self.actor = nn.Sequential(
-            nn.Linear(self.image_embedding_size, 64),
+            nn.Linear(self.image_embedding_size, 512),
             nn.Tanh(),
-            nn.Linear(64, envs.action_space.n),
+            nn.Linear(512, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -183,9 +183,9 @@ class QNetwork(nn.Module):
         self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
 
         self.critic = nn.Sequential(
-            nn.Linear(self.image_embedding_size, 64),
+            nn.Linear(self.image_embedding_size, 512),
             nn.Tanh(),
-            nn.Linear(64, envs.action_space.n),
+            nn.Linear(512, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -259,10 +259,10 @@ if __name__ == "__main__":
 
     # Automatic entropy tuning
     if args.autotune:
-        target_entropy = -args.target_entropy_scale * torch.log(1 / torch.tensor(envs.single_action_space.n))
+        target_entropy = -args.target_entropy_scale * torch.log(1 / torch.tensor(envs.action_space.n))
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
         alpha = log_alpha.exp().item()
-        a_optimizer = optim.Adam([log_alpha], lr=args.q_lr, eps=1e-4)
+        a_optimizer = optim.Adam([log_alpha], lr=args.ql_lr, eps=1e-4)
     else:
         alpha = args.alpha
 
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     start_time = time.time()
     obs = envs.reset()
 
-    for global_step in range(args.total_timesteps):
+    for global_step in range(0, args.total_timesteps, args.num_envs):
         # ALGO LOGIC: select action
         if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
@@ -283,7 +283,7 @@ if __name__ == "__main__":
             obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
             with torch.no_grad():
                 actions, _, _, _ = agent.get_action(obs_torch)
-            actions = actions.cpu().numpy()
+            actions = actions.detach().cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
@@ -323,11 +323,12 @@ if __name__ == "__main__":
                         qf2_next_target = qf2_target(next_states)
                         min_qf_next_target = next_state_action_probs * (torch.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_pi)
                         min_qf_next_target = min_qf_next_target.sum(dim=1)
-                        next_q_vals = rewards_t.flatten() + args.gamma * min_qf_next_target * (1 - dones_t.flatten())
+                        next_q_vals = rewards_t.flatten() + (1 - dones_t.flatten()) * args.gamma * (min_qf_next_target)
+
                     qf1_values = qf1(states)
                     qf2_values = qf2(states)
                     qf1_a_values = qf1_values.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
-                    qf2_a_values = qf1_values.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    qf2_a_values = qf2_values.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
                     qf1_loss = f.mse_loss(qf1_a_values, next_q_vals)
                     qf2_loss = f.mse_loss(qf2_a_values, next_q_vals)
                     qf_loss = qf1_loss + qf2_loss
