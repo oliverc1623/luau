@@ -254,7 +254,7 @@ if __name__ == "__main__":
     start_time = time.time()
     obs = envs.reset()
 
-    for global_step in range(args.total_timesteps):
+    for global_step in range(0, args.total_timesteps, args.num_envs):
         # ALGO LOGIC: select action
         if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
