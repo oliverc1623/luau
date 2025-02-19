@@ -28,7 +28,7 @@ gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_en
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
-    def __init__(self, capacity: int, n_envs: 1):
+    def __init__(self, capacity: int, n_envs: int = 1):
         self.capacity = capacity
         self.memory = []
         self.position = 0
