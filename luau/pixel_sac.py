@@ -27,6 +27,7 @@ gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:Smal
 gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
 
 
+# TODO: Try sb3 replay buffer
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
@@ -368,6 +369,7 @@ if __name__ == "__main__":
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters(), strict=False):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
+            if global_step % 100 == 0:
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
