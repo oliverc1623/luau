@@ -68,3 +68,5 @@ print(ob.shape)
 # %%
 plt.imshow(ob[0], cmap="gray")
 # %%
+
+# TODO: train teacher model and compute KL divergence of samples states across various envs

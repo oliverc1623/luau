@@ -17,11 +17,9 @@ from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from torch.distributions import kl_divergence
 
 
 RGB_CHANNEL = 3
-EPS = 1e-10
 
 gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
 gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
@@ -107,7 +105,7 @@ def parse_args() -> argparse.Namespace:
         help="the discount factor gamma")
     parser.add_argument("--gradient-steps", type=int, default=1,
         help="the number of gradient steps to take per iteration")
-    parser.add_argument("--ql-lr", type=float, default=2.5e-4,
+    parser.add_argument("--ql-lr", type=float, default=0.0003,
         help="the learning rate of the optimizer")
 
 
@@ -252,8 +250,8 @@ if __name__ == "__main__":
     # teacher agent setup
     teacher_source_agent = Actor(envs).to(device)
     teacher_source_qnetwork = QNetwork(envs).to(device)
-    teacher_source_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
-    teacher_source_qnetwork.load_state_dict(torch.load(args.teacher_qnetwork, weights_only=True))
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_source_qnetwork.load_state_dict(torch.load(args.teacher_qnetwork))
     for param in teacher_source_agent.parameters():
         param.requires_grad = False
     for param in teacher_source_qnetwork.parameters():
@@ -267,8 +265,8 @@ if __name__ == "__main__":
     kl_target_qnetwork = QNetwork(envs).to(device)
     kl_target_qnetwork.load_state_dict(kl_qnetwork.state_dict())
 
-    optimizer = optim.Adam(list(student_agent.parameters()), lr=args.learning_rate, eps=1e-4)
-    q_optimizer = optim.Adam(list(kl_qnetwork.parameters()), lr=args.ql_lr, eps=1e-4)
+    optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-4)
+    q_optimizer = optim.Adam(kl_qnetwork.parameters(), lr=args.ql_lr, eps=1e-4)
 
     # replay buffer
     rb = DQNReplayBuffer(args.buffer_size, n_envs=args.num_envs)
@@ -278,24 +276,34 @@ if __name__ == "__main__":
     start_time = time.time()
     obs = envs.reset()
 
-    for global_step in range(args.total_timesteps):
-        h_t = torch.zeros(args.num_envs).to(device)
-        obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
+    for global_step in range(0, args.total_timesteps, args.num_envs):
         if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
-            actions, _, _, _ = student_agent.get_action(obs_torch)
+            obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
+            with torch.no_grad():
+                actions, _, _, _ = student_agent.get_action(obs_torch)
             actions = actions.cpu().numpy()
 
         # step the envs
         next_obs, rewards, dones, infos = envs.step(actions)
+
+        obs_torch = torch.as_tensor(next_obs, device=device).float().permute(0, 3, 1, 2)
+        with torch.no_grad():
+            # Obtain teacher's distribution via its get_action method.
+            _, teacher_log_probs, teacher_probs, _ = teacher_source_agent.get_action(obs_torch)
+            # Similarly, obtain the student's log probabilities.
+            _, student_log_probs, _, _ = student_agent.get_action(obs_torch)
+
+        rewards = -(teacher_probs * student_log_probs).sum(dim=1)
+        rewards = rewards.cpu().numpy()
+        print(f"global_step={global_step}, rewards={rewards}")
 
         # record metrics for plotting
         for _, info in enumerate(infos):
             if "episode" in info:
                 ep_return = info["episode"]["r"]
                 ep_length = info["episode"]["l"]
-
                 print(f"global_step={global_step}, episodic_return={ep_return}")
                 writer.add_scalar("charts/episodic_return", ep_return, global_step)
                 writer.add_scalar("charts/episodic_length", ep_length, global_step)
@@ -310,7 +318,7 @@ if __name__ == "__main__":
 
         # add to replay buffer
         rb.push(obs, actions, rewards, real_next_obs, dones)
-        obs = next_obs
+        obs = real_next_obs
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
@@ -324,22 +332,16 @@ if __name__ == "__main__":
                     # compute advantages
                     with torch.no_grad():
                         # Q_I mext states
-                        _, next_state_log_pi, next_state_action_probs, next_student_dist = student_agent.get_action(next_states)
+                        _, next_state_log_pi, next_state_action_probs, student_dist = student_agent.get_action(next_states)
                         next_q_values1 = kl_target_qnetwork(next_states)
                         qf_next_target = next_state_action_probs * (next_q_values1)
                         qf_next_target = qf_next_target.sum(dim=1)
                         td_target = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
 
-                    old_val = kl_qnetwork(states).gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
-                    qf1loss = f.mse_loss(old_val, td_target)  # update Q_I
-
-                    with torch.no_grad():
-                        _, _, _, student_dist = student_agent.get_action(next_states)
-                        _, _, _, teacher_dist = teacher_source_agent.get_action(next_states)
-
-                    distill_loss = torch.clamp(kl_divergence(student_dist, teacher_dist), min=-1, max=1).mean()
-                    # compute the total Q loss
-                    q_loss = qf1loss + 0.0001 * distill_loss
+                    q_vals = kl_qnetwork(states)
+                    q_a_vals = q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    qf1loss = f.mse_loss(td_target, q_a_vals)  # update Q_I
+                    q_loss = qf1loss
 
                     # optimize the q networks TODO: might need to update teacher's qnetwork individually
                     q_optimizer.zero_grad()
@@ -350,10 +352,8 @@ if __name__ == "__main__":
                     _, _, action_probs, student_dist = student_agent.get_action(states)
                     with torch.no_grad():
                         q_values = kl_qnetwork(states)
-
-                    pi_actor_loss = -(action_probs * q_values).sum(dim=1).mean()
-
-                    overall_loss = pi_actor_loss  # - student_dist.entropy().mean() * 0.01
+                    pi_actor_loss = -(action_probs * q_values).mean()
+                    overall_loss = pi_actor_loss
 
                     # optimize the actor
                     optimizer.zero_grad()
@@ -369,14 +369,13 @@ if __name__ == "__main__":
 
                 writer.add_scalar("losses/actor_loss", pi_actor_loss.item(), global_step)
                 writer.add_scalar("losses/QI_loss", qf1loss.item(), global_step)
-                writer.add_scalar("losses/distillation_loss", distill_loss.item(), global_step)
-                writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                writer.add_scalar("losses/q_values", q_vals.mean().item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
     torch.save(student_agent.state_dict(), actor_checkpoint_path)
-    torch.save(kl_qnetwork.state_dict(), actor_checkpoint_path)
+    torch.save(kl_qnetwork.state_dict(), critic_checkpoint_path)
 
     envs.close()
     writer.close()
