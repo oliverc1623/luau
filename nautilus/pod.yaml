@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: chang-luau
+  name: chang-luau2
 spec:
   containers:
   - name: chang-luau
@@ -17,7 +17,7 @@ spec:
         sleep infinity
     volumeMounts: 
     - mountPath: /pvcvolume
-      name: elochang-volume2
+      name: elochang-luau
     - mountPath: /dev/shm
       name: dshm
     resources: 
@@ -27,7 +27,7 @@ spec:
         nvidia.com/gpu: "1"
       requests: 
         memory: 16Gi
-        cpu: "4"
+        cpu: "8"
         nvidia.com/gpu: "1"
     env:
     - name: GITHUB_TOKEN
@@ -36,9 +36,9 @@ spec:
           name: github-token
           key: token
   volumes: 
-    - name: elochang-volume2
+    - name: elochang-luau
       persistentVolumeClaim: 
-        claimName: elochang-volume2
+        claimName: elochang-luau
     - name: dshm
       emptyDir:
         medium: Memory
@@ -48,10 +48,10 @@ spec:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
         - matchExpressions:
-          # - key: kubernetes.io/hostname
-          #   operator: In
-          #   values:
-          #     - ry-gpu-02.sdsc.optiputer.net
+          - key: topology.kubernetes.io/region
+            operator: In
+            values:
+            - us-west
           - key: nvidia.com/gpu.product
             operator: In
             values:
