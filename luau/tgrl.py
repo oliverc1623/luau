@@ -35,15 +35,17 @@ gym.register(id="MediumFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_e
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, n_envs: int = 1):
         self.capacity = capacity
         self.memory = []
         self.position = 0
+        self.n_envs = n_envs
 
     def push(self, state: np.array, action: np.array, reward: np.array, next_state: np.array, done: np.array) -> None:
         """Save a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
+        action = action.reshape((self.n_envs, 1))
         self.memory[self.position] = (state, action, reward, next_state, done)
         self.position = (self.position + 1) % self.capacity
 
@@ -96,15 +98,9 @@ def parse_args() -> argparse.Namespace:
         help="the frequency of updating the target network")
     parser.add_argument("--batch-size", type=int, default=128,
         help="the batch size of the training")
-    parser.add_argument("--start-e", type=float, default=1,
-        help="the starting exploration rate")
-    parser.add_argument("--end-e", type=float, default=0.05,
-        help="the final exploration rate")
-    parser.add_argument("--exploration-fraction", type=float, default=0.5,
-        help="the fraction of the total timesteps for exploration")
-    parser.add_argument("--learning-starts", type=int, default=1000,
+    parser.add_argument("--learning-starts", type=int, default=10000,
         help="the number of steps to take before learning starts")
-    parser.add_argument("--train-frequency", type=int, default=10,
+    parser.add_argument("--update-frequency", type=int, default=10,
         help="the frequency of training the agent")
     parser.add_argument("--num-envs", type=int, default=4,
         help="the number of parallel game environments")
@@ -112,11 +108,13 @@ def parse_args() -> argparse.Namespace:
         help="the discount factor gamma")
     parser.add_argument("--gradient-steps", type=int, default=1,
         help="the number of gradient steps to take per iteration")
+    parser.add_argument("--ql-lr", type=float, default=2.5e-4,
+        help="the learning rate of the optimizer")
 
     # Introspection specific arguments
     parser.add_argument("--history-length", type=int, default=20,
         help="number of previous rewards to take into account for TGRL update")
-    parser.add_argument("--performance-coefficient-frequency", type=int, default=1000,
+    parser.add_argument("--coefficient-frequency", type=int, default=1000,
         help="the frequency of updates for performance coefficient")
     parser.add_argument("--lagrange-lambda", type=float, default=9.0,
         help="the lagrange multiplier for estimating performance difference")
@@ -124,6 +122,10 @@ def parse_args() -> argparse.Namespace:
         help="the coefficient for balancing the two policies")
     parser.add_argument("--mu", type=float, default=0.0003,
         help="learning rate for lagrange lambda")
+    parser.add_argument("--teacher-coef", type=float, default=1.0,
+        help="coefficient of the entropy")
+    parser.add_argument("--teacher-coef-update", type=float, default=0.01,
+        help="coefficient of the entropy")
 
     args = parser.parse_args()
     # fmt: on
@@ -137,12 +139,6 @@ def layer_init(layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.
     return layer
 
 
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
-    """Calculate the linear schedule for exploration rate."""
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
-
-
 class QNetwork(nn.Module):
     """The critic (QNetwork) class for the DQN algorithm."""
 
@@ -151,12 +147,12 @@ class QNetwork(nn.Module):
         c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
-            nn.Conv2d(c, 16, (2, 2)),
+            layer_init(nn.Conv2d(c, 16, (2, 2))),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
-            nn.Conv2d(16, 32, (2, 2)),
+            layer_init(nn.Conv2d(16, 32, (2, 2))),
             nn.ReLU(),
-            nn.Conv2d(32, 64, (2, 2)),
+            layer_init(nn.Conv2d(32, 64, (2, 2))),
             nn.ReLU(),
         )
         n = envs.observation_space.shape[0]
@@ -185,12 +181,12 @@ class Actor(nn.Module):
         c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
-            nn.Conv2d(c, 16, (2, 2)),
+            layer_init(nn.Conv2d(c, 16, (2, 2))),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
-            nn.Conv2d(16, 32, (2, 2)),
+            layer_init(nn.Conv2d(16, 32, (2, 2))),
             nn.ReLU(),
-            nn.Conv2d(32, 64, (2, 2)),
+            layer_init(nn.Conv2d(32, 64, (2, 2))),
             nn.ReLU(),
         )
         n = envs.observation_space.shape[0]
@@ -208,8 +204,7 @@ class Actor(nn.Module):
         """Forward pass of the network."""
         x = self.image_conv(x)
         x = x.reshape(x.shape[0], -1)
-        embedding = x
-        return self.actor(embedding)
+        return self.actor(x)
 
     def get_action(self, x: torch.Tensor) -> torch.Tensor:
         """Get the action, log probs, and probs for all actions from the actor network."""
@@ -226,7 +221,7 @@ if __name__ == "__main__":
 
     # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    log_dir = f"../../pvcvolume/runs/{run_name}"
+    log_dir = f"runs/{run_name}"
     writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
@@ -234,7 +229,7 @@ if __name__ == "__main__":
     )
 
     # model_dir
-    model_dir = Path(f"../../pvcvolume/models/{run_name}")
+    model_dir = Path(f"models/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
     critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
@@ -283,6 +278,7 @@ if __name__ == "__main__":
     # student agent setup
     student_agent = Actor(envs).to(device)
     student_aux = Actor(envs).to(device)
+    student_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
 
     # Q_R
     student_qnetwork = QNetwork(envs).to(device)
@@ -294,10 +290,11 @@ if __name__ == "__main__":
     kl_target_qnetwork = QNetwork(envs).to(device)
     kl_target_qnetwork.load_state_dict(kl_qnetwork.state_dict())
 
-    optimizer = optim.Adam(list(student_agent.parameters()) + list(student_aux.parameters()), lr=args.learning_rate, eps=1e-5)
-    q_optimizer = optim.Adam(list(student_qnetwork.parameters()) + list(kl_qnetwork.parameters()), lr=args.learning_rate, eps=1e-5)
+    optimizer = optim.Adam(list(student_agent.parameters()) + list(student_aux.parameters()), lr=args.learning_rate, eps=1e-4)
+    q_optimizer = optim.Adam(list(student_qnetwork.parameters()) + list(kl_qnetwork.parameters()), lr=args.ql_lr, eps=1e-4)
 
     # aux performance tracking
+    teacher_coef = args.teacher_coef
     collect_from_pi = False
     actor_performance = collections.deque(args.history_length * [0], args.history_length)
     actor_aux_performance = collections.deque(args.history_length * [0], args.history_length)
@@ -306,7 +303,7 @@ if __name__ == "__main__":
     current_actor = student_agent
 
     # replay buffer
-    rb = DQNReplayBuffer(args.buffer_size)
+    rb = DQNReplayBuffer(args.buffer_size, n_envs=args.num_envs)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -315,10 +312,9 @@ if __name__ == "__main__":
     effective_coeff = args.alpha / (1 + args.lagrange_lambda)
 
     for global_step in range(args.total_timesteps):
-        epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         h_t = torch.zeros(args.num_envs).to(device)
         obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
-        if rng.random() < epsilon:
+        if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             actions, _, _, _ = current_actor.get_action(obs_torch)
@@ -359,7 +355,7 @@ if __name__ == "__main__":
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
-            if global_step % args.train_frequency == 0:
+            if global_step % args.update_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
                     states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
@@ -373,15 +369,15 @@ if __name__ == "__main__":
                         next_q_values1 = student_target_qnetwork(next_states)
                         qf_next_target = next_state_action_probs * (next_q_values1)
                         qf_next_target = qf_next_target.sum(dim=1)
-                        td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
+                        td_target = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
 
                         # compute Q_I next states
                         _, _, _, next_teacher_dist = teacher_source_agent.get_action(next_states)
                         kl_next_obs = kl_divergence(next_student_dist, next_teacher_dist)
-                        next_q_kl_value = (1 - dones_t.flatten()) * args.gamma * (td_target + kl_next_obs)
+                        next_q_kl_value = (1 - dones_t.flatten()) * args.gamma * (qf_next_target + kl_next_obs)
 
-                    old_val = student_qnetwork(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
-                    q_kl_a_values = kl_qnetwork(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
+                    old_val = student_qnetwork(states).gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    q_kl_a_values = kl_qnetwork(states).gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
 
                     # compute the total Q loss
                     qf1loss = f.mse_loss(old_val, td_target)  # update Q_R
@@ -400,23 +396,27 @@ if __name__ == "__main__":
                     cross_entropy = kl_divergence(student_dist, teacher_dist)
                     with torch.no_grad():
                         q_values = student_qnetwork(states)
-                        aux_q_values = student_aux(states)
-                        qi_values = kl_qnetwork(states)
-                    expected_q_values = torch.sum(action_probs * q_values, dim=1)  # shape: [B]
-                    expected_aux_q_values = torch.sum(aux_action_probs * aux_q_values, dim=1)  # shape: [B]
-                    expected_qi = torch.sum(action_probs * qi_values, dim=1)  # shape: [B]
 
-                    pi_actor_loss = -torch.mean(expected_q_values)
-                    aux_actor_loss = -torch.mean(expected_aux_q_values)
-                    cross_entropy_loss = torch.mean(cross_entropy - expected_qi)
-                    teacher_cross_entropy_loss = effective_coeff * cross_entropy_loss
-                    entropy_bonus = student_dist.entropy().mean() * 0.01
-                    overall_loss = pi_actor_loss + teacher_cross_entropy_loss + aux_actor_loss - entropy_bonus
+                    pi_actor_loss = -(action_probs * q_values).sum(dim=1).mean()
+                    aux_actor_loss = -(aux_action_probs * q_values).sum(dim=1).mean()
+                    cross_entropy_loss = (cross_entropy).mean()
+
+                    teacher_cross_entropy_loss = teacher_coef * cross_entropy_loss
+                    overall_loss = pi_actor_loss + teacher_cross_entropy_loss + aux_actor_loss
+                    overall_loss = aux_actor_loss
 
                     # optimize the actor
                     optimizer.zero_grad()
                     overall_loss.backward()
                     optimizer.step()
+
+            if global_step % args.coefficient_frequency == 0:
+                performance_difference = np.mean(actor_performance) - np.mean(actor_aux_performance)
+                if performance_difference > 0:
+                    teacher_coef = teacher_coef + args.teacher_coef_update
+                else:
+                    teacher_coef = teacher_coef - args.teacher_coef_update
+                teacher_coef = max(teacher_coef, 0)
 
             # update target network
             if global_step % args.target_network_frequency == 0:
@@ -432,26 +432,17 @@ if __name__ == "__main__":
 
                 writer.add_scalar("losses/actor_loss", pi_actor_loss.item(), global_step)
                 writer.add_scalar("losses/teacher_cross_entropy_loss", teacher_cross_entropy_loss.item(), global_step)
-                writer.add_scalar("losses/expected_qi", expected_qi.mean().item(), global_step)
                 writer.add_scalar("losses/aux_actor_loss", aux_actor_loss.item(), global_step)
-                writer.add_scalar("losses/entropy_bonus", entropy_bonus.item(), global_step)
                 writer.add_scalar("losses/QR_loss", qf1loss.item(), global_step)
                 writer.add_scalar("losses/QI_loss", q_kl_loss.item(), global_step)
                 writer.add_scalar("losses/q_kl_a_values", q_kl_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/kl_next_obs", kl_next_obs.mean().item(), global_step)
                 writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
-                writer.add_scalar("losses/epsilon", epsilon, global_step)
                 writer.add_scalar("losses/lagrange_lambda", args.lagrange_lambda, global_step)
-                writer.add_scalar("losses/balance_coeff_aka_ithreshold", effective_coeff, global_step)
+                writer.add_scalar("losses/balance_coeff_aka_ithreshold", teacher_coef, global_step)
                 writer.add_scalar("losses/performance_difference", performance_difference, global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
-            # compute performance difference
-            if global_step % args.performance_coefficient_frequency == 0:
-                performance_difference = np.mean(actor_aux_performance) - np.mean(actor_performance)
-                args.lagrange_lambda = args.lagrange_lambda + performance_difference
-                effective_coeff = args.alpha / (1 + args.lagrange_lambda)
 
     print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
     torch.save(student_agent.state_dict(), actor_checkpoint_path)

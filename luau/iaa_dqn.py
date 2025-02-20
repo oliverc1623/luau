@@ -33,15 +33,17 @@ gym.register(id="MediumFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_e
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, n_envs: int = 1):
         self.capacity = capacity
         self.memory = []
         self.position = 0
+        self.n_envs = n_envs
 
     def push(self, state: np.array, action: np.array, reward: np.array, next_state: np.array, done: np.array) -> None:
         """Save a transition."""
         if len(self.memory) < self.capacity:
             self.memory.append(None)
+        action = action.reshape((self.n_envs, 1))
         self.memory[self.position] = (state, action, reward, next_state, done)
         self.position = (self.position + 1) % self.capacity
 
@@ -86,6 +88,8 @@ def parse_args() -> argparse.Namespace:
         help="the path to the teacher qnetwork")
 
     # Algorithm specific arguments
+    parser.add_argument("--ql-lr", type=float, default=0.0003,
+        help="the learning rate of the ql optimizer")
     parser.add_argument("--buffer-size", type=int, default=10000,
         help="the size of the replay buffer")
     parser.add_argument("--tau", type=float, default=1.0,
@@ -94,15 +98,9 @@ def parse_args() -> argparse.Namespace:
         help="the frequency of updating the target network")
     parser.add_argument("--batch-size", type=int, default=128,
         help="the batch size of the training")
-    parser.add_argument("--start-e", type=float, default=1,
-        help="the starting exploration rate")
-    parser.add_argument("--end-e", type=float, default=0.05,
-        help="the final exploration rate")
-    parser.add_argument("--exploration-fraction", type=float, default=0.5,
-        help="the fraction of the total timesteps for exploration")
-    parser.add_argument("--learning-starts", type=int, default=1000,
+    parser.add_argument("--learning-starts", type=int, default=10000,
         help="the number of steps to take before learning starts")
-    parser.add_argument("--train-frequency", type=int, default=10,
+    parser.add_argument("--update-frequency", type=int, default=10,
         help="the frequency of training the agent")
     parser.add_argument("--num-envs", type=int, default=4,
         help="the number of parallel game environments")
@@ -131,24 +129,6 @@ def layer_init(layer: nn.Module, std: float = np.sqrt(2), bias_const: float = 0.
     return layer
 
 
-def preprocess(image: np.array) -> dict:
-    """Preprocess the input for a grid-based environment."""
-    image = torch.from_numpy(image).float()
-    if image.ndim == RGB_CHANNEL:  # Single image case with shape (height, width, channels)
-        image = image.permute(2, 0, 1)
-        # Permute back to (batch_size, channels, height, width)
-        image = image.unsqueeze(0).to(device)  # Adding batch dimension
-    else:  # Batch case with shape (batch_size, height, width, channels)
-        image = image.permute(0, 3, 1, 2).to(device)  # Change to (batch, channels, height, width)
-    return image
-
-
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int) -> float:
-    """Calculate the linear schedule for exploration rate."""
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
-
-
 class QNetwork(nn.Module):
     """The critic (QNetwork) class for the DQN algorithm."""
 
@@ -157,12 +137,12 @@ class QNetwork(nn.Module):
         c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
-            nn.Conv2d(c, 16, (2, 2)),
+            layer_init(nn.Conv2d(c, 16, (2, 2))),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
-            nn.Conv2d(16, 32, (2, 2)),
+            layer_init(nn.Conv2d(16, 32, (2, 2))),
             nn.ReLU(),
-            nn.Conv2d(32, 64, (2, 2)),
+            layer_init(nn.Conv2d(32, 64, (2, 2))),
             nn.ReLU(),
         )
         n = envs.observation_space.shape[0]
@@ -191,12 +171,12 @@ class Actor(nn.Module):
         c = envs.observation_space.shape[-1]
         # Define image embedding
         self.image_conv = nn.Sequential(
-            nn.Conv2d(c, 16, (2, 2)),
+            layer_init(nn.Conv2d(c, 16, (2, 2))),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
-            nn.Conv2d(16, 32, (2, 2)),
+            layer_init(nn.Conv2d(16, 32, (2, 2))),
             nn.ReLU(),
-            nn.Conv2d(32, 64, (2, 2)),
+            layer_init(nn.Conv2d(32, 64, (2, 2))),
             nn.ReLU(),
         )
         n = envs.observation_space.shape[0]
@@ -214,8 +194,7 @@ class Actor(nn.Module):
         """Forward pass of the network."""
         x = self.image_conv(x)
         x = x.reshape(x.shape[0], -1)
-        embedding = x
-        return self.actor(embedding)
+        return self.actor(x)
 
     def get_action(self, x: torch.Tensor) -> torch.Tensor:
         """Get the action, log probs, and probs for all actions from the actor network."""
@@ -232,7 +211,7 @@ if __name__ == "__main__":
 
     # tensorboard
     run_name = f"{args.gym_id}__{args.exp_name}"
-    log_dir = f"../../pvcvolume/runs/{run_name}"
+    log_dir = f"runs/{run_name}"
     writer = SummaryWriter(log_dir, flush_secs=5)
     writer.add_text(
         "hyperparameters",
@@ -240,7 +219,7 @@ if __name__ == "__main__":
     )
 
     # model_dir
-    model_dir = Path(f"../../pvcvolume/models/{run_name}")
+    model_dir = Path(f"models/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
     critic_checkpoint_path = f"{model_dir}/{run_name}_critic.pth"
@@ -299,10 +278,10 @@ if __name__ == "__main__":
     student_qnetwork.load_state_dict(student_qnetwork.state_dict())
 
     optimizer = optim.Adam(student_agent.parameters(), lr=args.learning_rate, eps=1e-5)
-    q_optimizer = optim.Adam(list(student_qnetwork.parameters()) + list(teacher_new_qnetwork.parameters()), lr=args.learning_rate, eps=1e-5)
+    q_optimizer = optim.Adam(list(student_qnetwork.parameters()) + list(teacher_new_qnetwork.parameters()), lr=args.ql_lr, eps=1e-5)
 
     # replay buffer
-    rb = DQNReplayBuffer(args.buffer_size)
+    rb = DQNReplayBuffer(args.buffer_size, n_envs=args.num_envs)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -311,7 +290,6 @@ if __name__ == "__main__":
     advice_counter = torch.zeros(args.num_envs).to(device)
 
     for global_step in range(args.total_timesteps):
-        epsilon = linear_schedule(args.start_e, args.end_e, args.exploration_fraction * args.total_timesteps, global_step)
         h_t = torch.zeros(args.num_envs).to(device)
         if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
@@ -369,7 +347,7 @@ if __name__ == "__main__":
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
-            if global_step % args.train_frequency == 0:
+            if global_step % args.update_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
                     states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
@@ -378,30 +356,46 @@ if __name__ == "__main__":
 
                     # compute advantages
                     with torch.no_grad():
-                        _, next_state_log_pi, next_state_action_probs, _ = student_agent.get_action(next_states)
+                        _, _, next_state_action_probs, _ = student_agent.get_action(next_states)
                         next_q_values1 = student_target_qnetwork(next_states)
                         qf_next_target = next_state_action_probs * (next_q_values1)
                         qf_next_target = qf_next_target.sum(dim=1)
-                        td_target = rewards_t.flatten().float() + args.gamma * qf_next_target.float() * (1 - dones_t.flatten().float())
-                    old_val = student_qnetwork(states).gather(1, actions_t.view(-1, 1).long()).squeeze(-1)
-                    qloss = f.mse_loss(td_target, old_val)
+                        next_q_vals = rewards_t.flatten() + args.gamma * qf_next_target * (1 - dones_t.flatten())
+
+                        # optimize the teacher's q network
+                        teacher_next_q_values1 = teacher_target_qnetwork(states)
+                        teacher_qf_next_target = next_state_action_probs * (teacher_next_q_values1)
+                        teacher_qf_next_target = teacher_qf_next_target.sum(dim=1)
+                        teacher_next_q_vals = rewards_t.flatten() + args.gamma * teacher_qf_next_target * (1 - dones_t.flatten())
+
+                    # teacher q network update
+                    teacher_q_vals = teacher_new_qnetwork(states)
+                    teacher_q_vals = teacher_q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    teacher_qloss = f.mse_loss(teacher_next_q_vals, teacher_q_vals)
+
+                    # student q network update
+                    student_q_vals = student_qnetwork(states)
+                    student_q_vals = student_q_vals.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+                    student_qloss = f.mse_loss(next_q_vals, student_q_vals)
 
                     # optimize the q networks TODO: might need to update teacher's qnetwork individually
+                    q_loss = student_qloss  # + teacher_qloss
                     q_optimizer.zero_grad()
-                    qloss.backward()
+                    q_loss.backward()
+                    nn.utils.clip_grad_norm_(student_qnetwork.parameters(), 0.5)
                     q_optimizer.step()
 
                     # Policy gradient update for the actor
                     _, _, action_probs, dist = student_agent.get_action(states)
                     with torch.no_grad():
-                        q_values = student_qnetwork(states)
-                    expected_q = torch.sum(action_probs * q_values, dim=1)  # shape: (batch_size,)
-                    entropy_loss = dist.entropy().mean()
-                    actor_loss = -torch.mean(expected_q) - entropy_loss * 0.01
+                        q_vals = student_qnetwork(states)
+                    entropy = dist.entropy().mean()
+                    actor_loss = -(action_probs * q_vals).mean() - 0.01 * entropy
 
                     # optimize the actor
                     optimizer.zero_grad()
                     actor_loss.backward()
+                    nn.utils.clip_grad_norm_(student_agent.parameters(), 0.5)
                     optimizer.step()
 
             # update target network
@@ -421,9 +415,8 @@ if __name__ == "__main__":
                     )
 
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/teacher_loss", qloss.item(), global_step)
-                writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
-                writer.add_scalar("losses/epsilon", epsilon, global_step)
+                writer.add_scalar("losses/critic_loss", student_qloss.item(), global_step)
+                writer.add_scalar("losses/q_values", q_vals.mean().item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 

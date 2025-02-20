@@ -11,7 +11,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 from torch.distributions.categorical import Categorical
-from minigrid.wrappers import ImgObsWrapper
+from minigrid.wrappers import ImgObsWrapper, RGBImgObsWrapper
 from torch.nn import functional as f
 from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
@@ -21,10 +21,13 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 
 RGB_CHANNEL = 3
 
+gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
+gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
 gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKey")
 gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
 
 
+# TODO: Try sb3 replay buffer
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
@@ -124,37 +127,35 @@ class Actor(nn.Module):
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
         # Actor network
-        c = envs.observation_space.shape[-1]
+        obs_shape = envs.observation_space.shape
         # Define image embedding
         self.image_conv = nn.Sequential(
-            layer_init(nn.Conv2d(c, 16, (2, 2))),
+            layer_init(nn.Conv2d(obs_shape[0], 32, 8, stride=4)),
             nn.ReLU(),
-            nn.MaxPool2d((2, 2)),
-            layer_init(nn.Conv2d(16, 32, (2, 2))),
+            layer_init(nn.Conv2d(32, 64, 4, stride=2)),
             nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, (2, 2))),
+            layer_init(nn.Conv2d(64, 64, 3, stride=1)),
+            nn.Flatten(),
             nn.ReLU(),
         )
-        n = envs.observation_space.shape[0]
-        m = envs.observation_space.shape[1]
-        self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
+        with torch.inference_mode():
+            self.image_embedding_size = self.image_conv(torch.zeros(1, *obs_shape)).shape[1]
 
         # Define actor's model
         self.actor = nn.Sequential(
             nn.Linear(self.image_embedding_size, 512),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Linear(512, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the network."""
         x = self.image_conv(x)
-        x = x.reshape(x.shape[0], -1)
         return self.actor(x)
 
     def get_action(self, x: torch.Tensor) -> torch.Tensor:
         """Get the action, log probs, and probs for all actions from the actor network."""
-        logits = self(x)
+        logits = self(x / 255.0)
         policy_dist = Categorical(logits=logits)
         action = policy_dist.sample()
         action_probs = policy_dist.probs
@@ -167,31 +168,30 @@ class QNetwork(nn.Module):
 
     def __init__(self, envs: gym.vector.SyncVectorEnv):
         super().__init__()
-        c = envs.observation_space.shape[-1]
+        obs_shape = envs.observation_space.shape
         # Define image embedding
         self.image_conv = nn.Sequential(
-            layer_init(nn.Conv2d(c, 16, (2, 2))),
+            layer_init(nn.Conv2d(obs_shape[0], 32, 8, stride=4)),
             nn.ReLU(),
-            nn.MaxPool2d((2, 2)),
-            layer_init(nn.Conv2d(16, 32, (2, 2))),
+            layer_init(nn.Conv2d(32, 64, 4, stride=2)),
             nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, (2, 2))),
+            layer_init(nn.Conv2d(64, 64, 3, stride=1)),
+            nn.Flatten(),
             nn.ReLU(),
         )
-        n = envs.observation_space.shape[0]
-        m = envs.observation_space.shape[1]
-        self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
+        with torch.inference_mode():
+            self.image_embedding_size = self.image_conv(torch.zeros(1, *obs_shape)).shape[1]
 
+        # Define actor's model
         self.critic = nn.Sequential(
             nn.Linear(self.image_embedding_size, 512),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Linear(512, envs.action_space.n),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the critic network."""
-        x = self.image_conv(x)
-        x = x.reshape(x.shape[0], -1)
+        x = self.image_conv(x / 255.0)
         return self.critic(x)
 
 
@@ -232,7 +232,11 @@ if __name__ == "__main__":
             if capture_video and idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda x: x % args.save_video_freq == 0)
             env = gym.wrappers.RecordEpisodeStatistics(env)
+            env = RGBImgObsWrapper(env)
             env = ImgObsWrapper(env)
+            env = gym.wrappers.ResizeObservation(env, (84, 84))
+            env = gym.wrappers.GrayscaleObservation(env)
+            env = gym.wrappers.FrameStackObservation(env, 4)
             env.reset(seed=subenv_seed)
             env.action_space.seed(subenv_seed)
             env.observation_space.seed(subenv_seed)
@@ -280,7 +284,7 @@ if __name__ == "__main__":
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             # Convert obs to torch only for the policy's forward pass
-            obs_torch = torch.as_tensor(obs, device=device).float().permute(0, 3, 1, 2)
+            obs_torch = torch.as_tensor(obs, device=device).float()
             with torch.no_grad():
                 actions, _, _, _ = agent.get_action(obs_torch)
             actions = actions.detach().cpu().numpy()
@@ -313,8 +317,6 @@ if __name__ == "__main__":
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
                     states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
-                    states = states.permute(0, 3, 1, 2)
-                    next_states = next_states.permute(0, 3, 1, 2)
 
                     # compute advantages
                     with torch.no_grad():
@@ -367,6 +369,7 @@ if __name__ == "__main__":
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters(), strict=False):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
+            if global_step % 100 == 0:
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
