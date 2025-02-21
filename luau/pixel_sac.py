@@ -6,7 +6,7 @@ import time
 from distutils.util import strtobool
 from pathlib import Path
 
-import minigrid  # import minigrid before gym to register envs  # noqa: F401
+import minigrid  # import minigrid before gym to register envs
 import gymnasium as gym
 import numpy as np
 import torch
@@ -17,21 +17,23 @@ from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
 from stable_baselines3.common.vec_env import VecMonitor
 from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.buffers import ReplayBuffer
 
+import ale_py
+import luau
+
+gym.register_envs(ale_py)
+gym.register_envs(minigrid)
+gym.register_envs(luau)
 
 RGB_CHANNEL = 3
-
-gym.register(id="FourRoomDoorKey-v0", entry_point="luau.multi_room_env:FourRoomDoorKey")
-gym.register(id="FourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:FourRoomDoorKeyLocked")
-gym.register(id="SmallFourRoomDoorKey-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKey")
-gym.register(id="SmallFourRoomDoorKeyLocked-v0", entry_point="luau.multi_room_env:SmallFourRoomDoorKeyLocked")
 
 
 # TODO: Try sb3 replay buffer
 class DQNReplayBuffer:
     """Replay buffer for storing transitions experienced by the agent."""
 
-    def __init__(self, capacity: int, n_envs: 1):
+    def __init__(self, capacity: int, n_envs: int = 1):
         self.capacity = capacity
         self.memory = []
         self.position = 0
@@ -228,7 +230,6 @@ if __name__ == "__main__":
 
         def _init() -> gym.Env:
             env = gym.make(args.gym_id, render_mode="rgb_array")
-            env.action_space = gym.spaces.Discrete(7)  # make all 7 actions available
             if capture_video and idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda x: x % args.save_video_freq == 0)
             env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -271,14 +272,22 @@ if __name__ == "__main__":
         alpha = args.alpha
 
     # replay buffer
-    rb = DQNReplayBuffer(args.buffer_size, n_envs=args.num_envs)
+    print(f"action space: {envs.action_space}")
+    rb = ReplayBuffer(
+        buffer_size=args.buffer_size,
+        observation_space=envs.observation_space,
+        action_space=envs.action_space,
+        device=device,
+        n_envs=args.num_envs,
+        handle_timeout_termination=False,
+    )
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
     obs = envs.reset()
 
-    for global_step in range(0, args.total_timesteps, args.num_envs):
+    for global_step in range(args.total_timesteps):
         # ALGO LOGIC: select action
         if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
@@ -308,15 +317,20 @@ if __name__ == "__main__":
             if done:
                 terminal_obs = infos[idx]["terminal_observation"]
                 real_next_obs[idx] = terminal_obs
-        rb.push(obs, actions, rewards, real_next_obs, dones)  # add transition to replay buffer
-        obs = real_next_obs
+        rb.add(obs, real_next_obs, actions, rewards, dones, infos)  # add transition to replay buffer
+        obs = next_obs
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             if global_step % args.update_frequency == 0:
                 for _ in range(args.gradient_steps):
                     # sample a batch of data
-                    states, actions_t, rewards_t, next_states, dones_t = rb.sample(args.batch_size)
+                    data = rb.sample(args.batch_size)
+                    states = data.observations
+                    actions_t = data.actions
+                    rewards_t = data.rewards
+                    next_states = data.next_observations
+                    dones_t = data.dones
 
                     # compute advantages
                     with torch.no_grad():
@@ -329,8 +343,9 @@ if __name__ == "__main__":
 
                     qf1_values = qf1(states)
                     qf2_values = qf2(states)
-                    qf1_a_values = qf1_values.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
-                    qf2_a_values = qf2_values.gather(dim=1, index=actions_t.unsqueeze(1)).squeeze(1)
+
+                    qf1_a_values = qf1_values.gather(dim=1, index=actions_t.long()).squeeze(1)
+                    qf2_a_values = qf2_values.gather(dim=1, index=actions_t.long()).squeeze(1)
                     qf1_loss = f.mse_loss(qf1_a_values, next_q_vals)
                     qf2_loss = f.mse_loss(qf2_a_values, next_q_vals)
                     qf_loss = qf1_loss + qf2_loss
@@ -368,15 +383,13 @@ if __name__ == "__main__":
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters(), strict=False):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-
-            if global_step % 100 == 0:
+                print("SPS:", int(global_step / (time.time() - start_time)))  # don't need to see as often
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
                 writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
                 writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
                 writer.add_scalar("losses/alpha", alpha, global_step)
-                print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     # save model
