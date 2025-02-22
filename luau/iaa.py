@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
         help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5,
         help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=None,
+    parser.add_argument("--target-kl", type=float, default=0.01,
         help="the target KL divergence threshold")
     parser.add_argument("--grid-size", type=int, default=6,
         help="the size of the grid")
@@ -236,17 +236,17 @@ if __name__ == "__main__":
 
     # Initialize teacher model
     teacher_source_agent = Agent(envs).to(device)
-    teacher_source_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_source_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
     for param in teacher_source_agent.parameters():
         param.requires_grad = False
 
     teacher_target_agent = Agent(envs).to(device)
-    teacher_target_agent.load_state_dict(torch.load(args.teacher_model))
+    teacher_target_agent.load_state_dict(torch.load(args.teacher_model, weights_only=True))
     for param in list(teacher_target_agent.actor.parameters()) + list(teacher_target_agent.image_conv.parameters()):
         param.requires_grad = False
     for param in teacher_target_agent.critic.parameters():
         param.requires_grad = True
-    teacher_optimizer = torch.optim.Adam(teacher_target_agent.critic.parameters(), lr=0.00001, eps=1e-5)
+    teacher_optimizer = torch.optim.Adam(teacher_target_agent.critic.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
