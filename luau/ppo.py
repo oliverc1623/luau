@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
         help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5,
         help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=None,
+    parser.add_argument("--target-kl", type=float, default=0.01,
         help="the target KL divergence threshold")
     parser.add_argument("--vf-clip-coef", type=float, default=10.0,
         help="the coefficient for the value clipping")
@@ -180,7 +180,7 @@ class Agent(nn.Module):
 
 if __name__ == "__main__":
     args = parse_args()
-    run_name = f"{args.gym_id}__{args.exp_name}__{int(time.time())}"
+    run_name = f"{args.gym_id}__{args.exp_name}"
     writer = SummaryWriter(f"../../pvcvolume/runs/{run_name}")
     model_dir = Path(f"../../pvcvolume/model/{run_name}")
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -279,6 +279,7 @@ if __name__ == "__main__":
                     print(f"global_step={global_step}, episodic_return={ep_return}")
                     writer.add_scalar("charts/episodic_return", ep_return, global_step)
                     writer.add_scalar("charts/episodic_length", ep_length, global_step)
+                    break
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -392,9 +393,8 @@ if __name__ == "__main__":
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-        if update % save_model_freq == 0:
-            print(f"Saving model checkpoint at step {global_step} to {checkpoint_path}")
-            torch.save(agent.state_dict(), checkpoint_path)
+    print(f"Saving model checkpoint at step {global_step} to {checkpoint_path}")
+    torch.save(agent.state_dict(), checkpoint_path)
 
     envs.close()
     writer.close()
