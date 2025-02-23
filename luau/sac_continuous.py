@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as f
 import tyro
 from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
 
@@ -173,11 +173,11 @@ if __name__ == "__main__":
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    model_dir = Path(f"models/{run_name}")
+    model_dir = Path(f"runs/{run_name}/models/")
     model_dir.mkdir(parents=True, exist_ok=True)
-    actor_checkpoint_path = f"{model_dir}/{run_name}_actor.pth"
-    qf1_checkpoint_path = f"{model_dir}/{run_name}_qf1.pth"
-    qf2_checkpoint_path = f"{model_dir}/{run_name}_qf2.pth"
+    actor_checkpoint_path = f"{model_dir}/actor.pth"
+    qf1_checkpoint_path = f"{model_dir}/qf1.pth"
+    qf2_checkpoint_path = f"{model_dir}/qf2.pth"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -190,6 +190,7 @@ if __name__ == "__main__":
     # env setup
     envs = SubprocVecEnv([make_env(args.env_id, args.seed + i, 0, run_name, args.capture_video) for i in range(args.num_envs)])
     assert isinstance(envs.action_space, gym.spaces.Box), "only continuous action space is supported"
+    envs = VecMonitor(envs, log_dir)
 
     max_action = float(envs.action_space.high[0])
 
