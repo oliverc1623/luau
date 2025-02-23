@@ -11,3 +11,4 @@ micromamba create -n luau python=3.11 -c conda-forge -y
 export PATH="/root/.local/bin:$PATH"
 micromamba run -n luau poetry install
 micromamba run -n luau poetry run inv setup
+micromamba run -n luau pip install gymnasium[mujoco]
