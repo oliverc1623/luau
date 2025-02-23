@@ -166,14 +166,14 @@ if __name__ == "__main__":
 
     args = tyro.cli(Args)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}"
-    log_dir = f"runs/{run_name}"
-    writer = SummaryWriter(f"runs/{run_name}")
+    log_dir = f"../../pvcvolume/runs/{run_name}"
+    writer = SummaryWriter(log_dir)
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    model_dir = Path(f"runs/{run_name}/models/")
+    model_dir = Path(f"{log_dir}/models/")
     model_dir.mkdir(parents=True, exist_ok=True)
     actor_checkpoint_path = f"{model_dir}/actor.pth"
     qf1_checkpoint_path = f"{model_dir}/qf1.pth"
