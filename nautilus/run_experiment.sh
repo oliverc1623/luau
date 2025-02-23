@@ -12,7 +12,7 @@ export PATH="/root/.local/bin:$PATH"
 micromamba run -n luau poetry install
 micromamba run -n luau poetry run inv setup
 micromamba run -n luau pip install gymnasium[mujoco]
-micromamba run -n luau tensorboard --logdir=~/../pvcvolume/runs/ --samples_per_plugin scalars=5000
+micromamba run -n luau tensorboard --logdir=~/../pvcvolume/runs/ --samples_per_plugin scalars=5000 &
 micromamba run -n luau python luau/sac_continuous.py --env-id "HumanoidStandup-v5" --num-envs 8 --seed 1 --exp-name "SAC-Teacher-Run1"
 micromamba run -n luau python luau/sac_continuous.py --env-id "HumanoidStandup-v5" --num-envs 8 --seed 17 --exp-name "SAC-Teacher-Run2"
 micromamba run -n luau python luau/sac_continuous.py --env-id "HumanoidStandup-v5" --num-envs 8 --seed 26 --exp-name "SAC-Teacher-Run3"
