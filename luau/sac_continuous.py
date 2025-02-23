@@ -226,7 +226,7 @@ if __name__ == "__main__":
 
     # TRY NOT TO MODIFY: start the game
     obs = envs.reset()
-    for global_step in range(args.total_timesteps):
+    for global_step in range(0, args.total_timesteps, args.num_envs):
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
             actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
@@ -259,7 +259,7 @@ if __name__ == "__main__":
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
+        if global_step > (args.learning_starts * args.num_envs):
             data = rb.sample(args.batch_size)
             with torch.no_grad():
                 next_state_actions, next_state_log_pi, _ = actor.get_action(data.next_observations)
@@ -279,9 +279,9 @@ if __name__ == "__main__":
             qf_loss.backward()
             q_optimizer.step()
 
-            if global_step % args.policy_frequency == 0:  # TD 3 Delayed update support
+            if global_step % (args.policy_frequency * args.num_envs) == 0:  # TD 3 Delayed update support
                 for _ in range(
-                    args.policy_frequency,
+                    args.policy_frequency * args.num_envs,
                 ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
                     pi, log_pi, _ = actor.get_action(data.observations)
                     qf1_pi = qf1(data.observations, pi)
@@ -304,7 +304,7 @@ if __name__ == "__main__":
                         alpha = log_alpha.exp().item()
 
             # update the target networks
-            if global_step % args.target_network_frequency == 0:
+            if global_step % (args.target_network_frequency * args.num_envs) == 0:
                 for param, target_param in zip(qf1.parameters(), qf1_target.parameters(), strict=False):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters(), strict=False):
