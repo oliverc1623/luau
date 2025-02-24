@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as f
 import tqdm
 import tyro
+from stable_baselines3.common.vec_env import SubprocVecEnv
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule, TensorDictModule
 from torch import nn, optim
@@ -181,12 +182,12 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
-    n_act = math.prod(envs.single_action_space.shape)
-    n_obs = math.prod(envs.single_observation_space.shape)
-    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+    envs = SubprocVecEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
+    n_act = math.prod(envs.action_space.shape)
+    n_obs = math.prod(envs.observation_space.shape)
+    assert isinstance(envs.action_space, gym.spaces.Box), "only continuous action space is supported"
 
-    max_action = float(envs.single_action_space.high[0])
+    max_action = float(envs.action_space.high[0])
 
     actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
     actor_detach = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
@@ -214,14 +215,14 @@ if __name__ == "__main__":
 
     # Automatic entropy tuning
     if args.autotune:
-        target_entropy = -torch.prod(torch.Tensor(envs.single_action_space.shape).to(device)).item()
+        target_entropy = -torch.prod(torch.Tensor(envs.action_space.shape).to(device)).item()
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
         alpha = log_alpha.detach().exp()
         a_optimizer = optim.Adam([log_alpha], lr=args.q_lr, capturable=args.cudagraphs and not args.compile)
     else:
         alpha = torch.as_tensor(args.alpha, device=device)
 
-    envs.single_observation_space.dtype = np.float32
+    envs.observation_space.dtype = np.float32
     rb = ReplayBuffer(storage=LazyTensorStorage(args.buffer_size, device=device))
 
     def batched_qf(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
@@ -297,7 +298,7 @@ if __name__ == "__main__":
         update_pol = CudaGraphModule(update_pol, in_keys=[], out_keys=[])
 
     # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset(seed=args.seed)
+    obs = envs.reset()
     obs = torch.as_tensor(obs, device=device, dtype=torch.float)
     pbar = tqdm.tqdm(range(args.total_timesteps))
     start_time = None
@@ -312,28 +313,33 @@ if __name__ == "__main__":
 
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
         else:
             actions = policy(obs)
             actions = actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        next_obs, rewards, terminations, infos = envs.step(actions)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                r = float(info["episode"]["r"])
-                max_ep_ret = max(max_ep_ret, r)
-                avg_returns.append(r)
-            desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f} (max={max_ep_ret: 4.2f})"
+        for _, info in enumerate(infos):
+            if "episode" in info:
+                ep_return = info["episode"]["r"]
+                ep_length = info["episode"]["l"]
+                max_ep_ret = max(max_ep_ret, ep_return)
+                avg_returns.append(ep_return)
+                desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}"
+                print(desc)
+                break
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         next_obs = torch.as_tensor(next_obs, device=device, dtype=torch.float)
         real_next_obs = next_obs.clone()
-        for idx, trunc in enumerate(truncations):
+        for idx, trunc in enumerate(terminations):
             if trunc:
-                real_next_obs[idx] = torch.as_tensor(infos["final_observation"][idx], device=device, dtype=torch.float)
+                terminal_obs = infos[idx]["terminal_observation"]
+                real_next_obs[idx] = torch.as_tensor(terminal_obs, device=device, dtype=torch.float)
+
         transition = TensorDict(
             observations=obs,
             next_observations=real_next_obs,
@@ -380,5 +386,7 @@ if __name__ == "__main__":
                     },
                     step=global_step,
                 )
-
+    # save the model
+    torch.save(actor.state_dict(), f"../../pvcvolume/models/{run_name}.pt")
+    torch.save(qnet.state_dict(), f"../../pvcvolume/models/{run_name}.pt")
     envs.close()
