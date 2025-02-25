@@ -381,8 +381,8 @@ if __name__ == "__main__":
                 teacher_target_q = torch.vmap(batched_qf, (0, None, None))(teacher_qnet_target, obs_torch, teacher_actions).min(dim=0).values  # noqa: PD011
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q)
                 h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
-            if h_t:
                 avg_advice.append(h_t)
+            if h_t:
                 actions = teacher_actions.cpu().numpy()
             else:
                 actions = student_actions.cpu().numpy()
