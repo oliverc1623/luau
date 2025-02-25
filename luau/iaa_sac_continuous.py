@@ -405,7 +405,7 @@ if __name__ == "__main__":
                 max_ep_ret = max(max_ep_ret, ep_return)
                 avg_returns.append(ep_return)
                 desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}, \
-                    normalized_reward={rewards[0]: 4.2f}, advice={torch.tensor(avg_advice).mean(): 4.2f}"
+                    normalized_reward={rewards[0]: 4.2f}, advice={torch.tensor(avg_advice, dtype=torch.float32).mean(): 4.2f}"
                 print(desc)
                 break
 
@@ -437,6 +437,7 @@ if __name__ == "__main__":
             if global_step % args.target_network_frequency == 0:
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
                 qnet_target.lerp_(qnet_params.data, args.tau)
+                teacher_qnet_target.lerp_(teacher_qnet_params.data, args.tau)
 
             if global_step % 100 == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
@@ -447,7 +448,7 @@ if __name__ == "__main__":
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
                         "normalized_reward": rewards.mean(),
-                        "advice": torch.tensor(avg_advice).mean(),
+                        "advice": torch.tensor(avg_advice, dtype=torch.float32).mean(),
                     }
                 wandb.log(
                     {
