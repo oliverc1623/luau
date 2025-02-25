@@ -1,24 +1,33 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
+import math
+import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
 import gymnasium as gym
+import highway_env  # noqa: F401
 import numpy as np
 import torch
 import torch.nn.functional as f
 import tyro
-from stable_baselines3.common.buffers import ReplayBuffer
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
+from tensordict import TensorDict, from_module, from_modules
+from tensordict.nn import CudaGraphModule, TensorDictModule
 from torch import nn, optim
 from torch.distributions import Bernoulli
-from torch.utils.tensorboard import SummaryWriter
+from torchrl.data import LazyTensorStorage, ReplayBuffer
+
+import wandb
+
+
+os.environ["TORCHDYNAMO_INLINE_INBUILT_NN_MODULES"] = "1"
 
 
 @dataclass
 class Args:
-    """Arguments for the experiment."""
+    """Arguments for the SAC algorithm."""
 
     exp_name: str = Path(__file__).name[: -len(".py")]
     """the name of this experiment"""
@@ -26,21 +35,13 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    num_envs: int = 1
-    """the number of parallel environments"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    track: bool = False
-    """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "cleanRL"
-    """the wandb's project name"""
-    wandb_entity: str = None
-    """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "Hopper-v4"
+    env_id: str = "highway-fast-v0"
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
@@ -62,29 +63,65 @@ class Args:
     """the frequency of training policy (delayed)"""
     target_network_frequency: int = 1  # Denis Yarats' implementation delays this by 2.
     """the frequency of updates for the target nerworks"""
-    noise_clip: float = 0.5
-    """noise clip parameter of the Target Policy Smoothing Regularization"""
     alpha: float = 0.2
     """Entropy regularization coefficient."""
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
-    teacher_model: str = ""
-    """the path to the teacher model checkpoint"""
-    teacher_qf1: str = ""
-    """the path to the teacher qf1 checkpoint"""
-    teacher_qf2: str = ""
-    """the path to the teacher qf2 checkpoint"""
+
+    compile: bool = False
+    """whether to use torch.compile."""
+    cudagraphs: bool = False
+    """whether to use cudagraphs on top of compile."""
+    measure_burnin: int = 3
+    """Number of burn-in iterations for speed measure."""
+
+    teacher_actor: str = ""
+    """Path to the teacher actor model for tf/distillation."""
+    teacher_qnet: str = ""
+    """Path to the teacher Q-network model for tf/distillation."""
+    introspection_threshold: float = 0.5
+    """Threshold for introspection. If the difference between the source and target Q-values is below this threshold, the teacher's action is used."""
+    introspection_decay: float = 0.99999
+    """Decay rate for the introspection probability. The probability of using the teacher's action decreases over time."""
+    burn_in: int = 1000
+    """Number of steps to burn in before starting introspection. During this period, the agent learns without using the teacher's actions."""
 
 
-def make_env(env_id: str, seed: int, idx: int, run_name: str, capture_video: int = 0) -> callable:
-    """Create a gym environment with optional video recording."""
+config = {
+    "observation": {
+        "type": "Kinematics",
+    },
+    "action": {
+        "type": "ContinuousAction",
+    },
+    "lanes_count": 4,
+    "vehicles_count": 5,
+    "duration": 40,  # [s]
+    "initial_spacing": 2,
+    "collision_reward": -1,  # The reward received when colliding with a vehicle.
+    "reward_speed_range": [20, 30],  # [m/s] The reward for high speed is mapped linearly from this range to [0, HighwayEnv.HIGH_SPEED_REWARD].
+    "simulation_frequency": 5,  # [Hz]
+    "policy_frequency": 1,  # [Hz]
+    "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",
+    "screen_width": 600,  # [px]
+    "screen_height": 150,  # [px]
+    "centering_position": [0.3, 0.5],
+    "scaling": 5.5,
+    "show_trajectories": False,
+    "render_agent": False,
+    "offscreen_rendering": False,
+}
+
+
+def make_env(env_id: str, seed: int, idx: int, capture_video: int, run_name: str) -> callable:
+    """Create and configure a gym environment based on the provided parameters."""
 
     def thunk() -> gym.Env:
         if capture_video and idx == 0:
-            env = gym.make(env_id, render_mode="rgb_array")
+            env = gym.make(env_id, config=config, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env = gym.make(env_id, config=config)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
@@ -94,16 +131,17 @@ def make_env(env_id: str, seed: int, idx: int, run_name: str, capture_video: int
 
 # ALGO LOGIC: initialize agent here:
 class SoftQNetwork(nn.Module):
-    """A neural network model for the Soft Q-learning algorithm."""
+    """A neural network that approximates the soft Q-function for reinforcement learning."""
 
-    def __init__(self, env: gym.Env):
+    def __init__(self, env: gym.Env, n_act: int, n_obs: int, device: str | None = None):  # noqa: ARG002
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.observation_space.shape).prod() + np.prod(env.action_space.shape), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 1)
+        self.fc1 = nn.Linear(n_act + n_obs, 256, device=device)
+        self.fc2 = nn.Linear(256, 256, device=device)
+        self.fc3 = nn.Linear(256, 1, device=device)
 
-    def forward(self, x: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
-        """Forward pass for the Soft Q-learning network."""
+    def forward(self, x: torch.tensor, a: torch.tensor) -> torch.Tensor:
+        """Forward pass."""
+        x = x.view(x.shape[0], -1)  # flatten the input
         x = torch.cat([x, a], 1)
         x = f.relu(self.fc1(x))
         x = f.relu(self.fc2(x))
@@ -116,26 +154,27 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    """Actor network for a continuous action space in a reinforcement learning environment."""
+    """A neural network that approximates the policy for reinforcement learning."""
 
-    def __init__(self, env: gym.Env):
+    def __init__(self, env: gym.Env, n_obs: int, n_act: int, device: str | None = None):
         super().__init__()
-        self.fc1 = nn.Linear(np.array(env.observation_space.shape).prod(), 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc_mean = nn.Linear(256, np.prod(env.action_space.shape))
-        self.fc_logstd = nn.Linear(256, np.prod(env.action_space.shape))
+        self.fc1 = nn.Linear(n_obs, 256, device=device)
+        self.fc2 = nn.Linear(256, 256, device=device)
+        self.fc_mean = nn.Linear(256, n_act, device=device)
+        self.fc_logstd = nn.Linear(256, n_act, device=device)
         # action rescaling
         self.register_buffer(
             "action_scale",
-            torch.tensor((env.action_space.high - env.action_space.low) / 2.0, dtype=torch.float32),
+            torch.tensor((env.single_action_space.high - env.single_action_space.low) / 2.0, dtype=torch.float32, device=device),
         )
         self.register_buffer(
             "action_bias",
-            torch.tensor((env.action_space.high + env.action_space.low) / 2.0, dtype=torch.float32),
+            torch.tensor((env.single_action_space.high + env.single_action_space.low) / 2.0, dtype=torch.float32, device=device),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for the Actor network."""
+    def forward(self, x: torch.tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass."""
+        x = x.view(x.shape[0], -1)  # flatten the input
         x = f.relu(self.fc1(x))
         x = f.relu(self.fc2(x))
         mean = self.fc_mean(x)
@@ -145,8 +184,8 @@ class Actor(nn.Module):
 
         return mean, log_std
 
-    def get_action(self, x: torch.Tensor) -> tuple:
-        """Get the action, log probability, and mean for the given input tensor."""
+    def get_action(self, x: torch.tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Get action from the policy network."""
         mean, log_std = self(x)
         std = log_std.exp()
         normal = torch.distributions.Normal(mean, std)
@@ -162,221 +201,262 @@ class Actor(nn.Module):
 
 
 if __name__ == "__main__":
-    import stable_baselines3 as sb3
-
-    if sb3.__version__ < "2.0":
-        raise ValueError(
-            """Ongoing migration: run the following command to install the new dependencies:
-            poetry run pip install "stable_baselines3==2.0.0a1"
-            """,
-        )
-
     args = tyro.cli(Args)
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}"
-    log_dir = f"../../pvcvolume/runs/{run_name}"
-    writer = SummaryWriter(log_dir)
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n{}".format("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{args.compile}__{args.cudagraphs}"
 
-    model_dir = Path(f"{log_dir}/models/")
-    model_dir.mkdir(parents=True, exist_ok=True)
-    actor_checkpoint_path = f"{model_dir}/actor.pth"
-    qf1_checkpoint_path = f"{model_dir}/qf1.pth"
-    qf2_checkpoint_path = f"{model_dir}/qf2.pth"
+    wandb.init(
+        project="sac_continuous_action",
+        name=f"{Path(__file__).stem}-{run_name}",
+        config=vars(args),
+        save_code=True,
+    )
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
-    rng = np.random.default_rng(args.seed)
+    np_rng = np.random.default_rng(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = SubprocVecEnv([make_env(args.env_id, args.seed + i, 0, run_name, args.capture_video) for i in range(args.num_envs)])
-    assert isinstance(envs.action_space, gym.spaces.Box), "only continuous action space is supported"
-    envs = VecMonitor(envs, log_dir)
+    envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
+    n_act = math.prod(envs.single_action_space.shape)
+    n_obs = math.prod(envs.single_observation_space.shape)
+    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
-    max_action = float(envs.action_space.high[0])
+    max_action = float(envs.single_action_space.high[0])
 
-    # load teacher model
-    teacher_actor = Actor(envs).to(device)
-    teacher_qf1 = SoftQNetwork(envs).to(device)
-    teacher_qf2 = SoftQNetwork(envs).to(device)
-    teacher_actor.load_state_dict(torch.load(args.teacher_model, map_location=device))
-    teacher_qf1.load_state_dict(torch.load(args.teacher_qf1, map_location=device))
-    teacher_qf2.load_state_dict(torch.load(args.teacher_qf2, map_location=device))
+    actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
+    actor_detach = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
+    # Copy params to actor_detach without grad
+    from_module(actor).data.to_module(actor_detach)
+    policy = TensorDictModule(actor_detach.get_action, in_keys=["observation"], out_keys=["action"])
+
+    def get_q_params() -> tuple[TensorDict, TensorDict, SoftQNetwork]:
+        """Initialize the Q-function parameters and target network."""
+        qf1 = SoftQNetwork(envs, device=device, n_act=n_act, n_obs=n_obs)
+        qf2 = SoftQNetwork(envs, device=device, n_act=n_act, n_obs=n_obs)
+        qnet_params = from_modules(qf1, qf2, as_module=True)
+        qnet_target = qnet_params.data.clone()
+
+        # discard params of net
+        qnet = SoftQNetwork(envs, device="meta", n_act=n_act, n_obs=n_obs)
+        qnet_params.to_module(qnet)
+
+        return qnet_params, qnet_target, qnet
+
+    def load_q_params(filepath: str) -> tuple[TensorDict, TensorDict, SoftQNetwork]:
+        """Load the Q-function parameters and target network from a file."""
+        qnet_params, qnet_target, qnet = get_q_params()
+        qnet_params.load_state_dict(torch.load(filepath))
+        qnet_target.load_state_dict(qnet_params.data.state_dict())
+        return qnet_params, qnet_target, qnet
+
+    qnet_params, qnet_target, qnet = get_q_params()
+    teacher_qnet_params, teacher_qnet_target, teacher_qnet = get_q_params()
+
+    # teacher actor and qnet
+    assert args.teacher_actor != "" or args.teacher_qnet != "", "teacher actor and qnet must be provided for distillation"
+    teacher_actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
+    teacher_actor.load_state_dict(torch.load(args.teacher_actor, map_location=device))
     for param in teacher_actor.parameters():
         param.requires_grad = False
+    teacher_qnet.load_state_dict(torch.load(args.teacher_qnet, map_location=device))
 
-    # teacher target networks
-    teacher_qf1_target = SoftQNetwork(envs).to(device)
-    teacher_qf2_target = SoftQNetwork(envs).to(device)
-    teacher_qf1_target.load_state_dict(teacher_qf1.state_dict())
-    teacher_qf2_target.load_state_dict(teacher_qf2.state_dict())
-
-    # student actor and critic networks
-    actor = Actor(envs).to(device)
-    qf1 = SoftQNetwork(envs).to(device)
-    qf2 = SoftQNetwork(envs).to(device)
-    qf1_target = SoftQNetwork(envs).to(device)
-    qf2_target = SoftQNetwork(envs).to(device)
-    qf1_target.load_state_dict(qf1.state_dict())
-    qf2_target.load_state_dict(qf2.state_dict())
-    q_optimizer = optim.Adam(
-        list(qf1.parameters()) + list(qf2.parameters()) + list(teacher_qf1.parameters()) + list(teacher_qf2.parameters()),
-        lr=args.q_lr,
-    )
-    actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr)
+    q_optimizer = optim.Adam(list(qnet.parameters()) + list(teacher_qnet.parameters()), lr=args.q_lr, capturable=args.cudagraphs and not args.compile)
+    actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr, capturable=args.cudagraphs and not args.compile)
 
     # Automatic entropy tuning
     if args.autotune:
-        target_entropy = -torch.prod(torch.Tensor(envs.action_space.shape).to(device)).item()
+        target_entropy = -torch.prod(torch.Tensor(envs.single_action_space.shape).to(device)).item()
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
-        alpha = log_alpha.exp().item()
-        a_optimizer = optim.Adam([log_alpha], lr=args.q_lr)
+        alpha = log_alpha.detach().exp()
+        a_optimizer = optim.Adam([log_alpha], lr=args.q_lr, capturable=args.cudagraphs and not args.compile)
     else:
-        alpha = args.alpha
+        alpha = torch.as_tensor(args.alpha, device=device)
 
-    envs.observation_space.dtype = np.float32
-    rb = ReplayBuffer(
-        args.buffer_size,
-        envs.observation_space,
-        envs.action_space,
-        device,
-        n_envs=args.num_envs,
-        handle_timeout_termination=False,
-    )
-    start_time = time.time()
+    envs.single_observation_space.dtype = np.float32
+    rb = ReplayBuffer(storage=LazyTensorStorage(args.buffer_size, device=device))
+
+    def batched_qf(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
+        """Compute the Q-value for a batch of observations and actions using the provided parameters."""
+        with params.to_module(qnet):
+            vals = qnet(obs, action)
+            if next_q_value is not None:
+                loss_val = f.mse_loss(vals.view(-1), next_q_value)
+                return loss_val
+            return vals
+
+    def update_main(data: any) -> TensorDict:
+        """Update the main Q-function and policy networks."""
+        # optimize the model
+        q_optimizer.zero_grad()
+        with torch.no_grad():
+            next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
+            qf_next_target = torch.vmap(batched_qf, (0, None, None))(
+                qnet_target,
+                data["next_observations"],
+                next_state_actions,
+            )
+            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
+            next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
+
+        qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(
+            qnet_params,
+            data["observations"],
+            data["actions"],
+            next_q_value,
+        )
+        qf_loss = qf_a_values.sum(0)
+
+        qf_loss.backward()
+        q_optimizer.step()
+        return TensorDict(qf_loss=qf_loss.detach())
+
+    def update_pol(data: any) -> TensorDict:
+        """Update the policy network."""
+        actor_optimizer.zero_grad()
+        pi, log_pi, _ = actor.get_action(data["observations"])
+        qf_pi = torch.vmap(batched_qf, (0, None, None))(qnet_params.data, data["observations"], pi)
+        min_qf_pi = qf_pi.min(0).values  # noqa: PD011
+        actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
+
+        actor_loss.backward()
+        actor_optimizer.step()
+
+        if args.autotune:
+            a_optimizer.zero_grad()
+            with torch.no_grad():
+                _, log_pi, _ = actor.get_action(data["observations"])
+            alpha_loss = (-log_alpha.exp() * (log_pi + target_entropy)).mean()
+
+            alpha_loss.backward()
+            a_optimizer.step()
+        return TensorDict(alpha=alpha.detach(), actor_loss=actor_loss.detach(), alpha_loss=alpha_loss.detach())
+
+    def extend_and_sample(transition: any) -> TensorDict:
+        """Extend the replay buffer and sample a batch of transitions."""
+        rb.extend(transition)
+        return rb.sample(args.batch_size)
+
+    is_extend_compiled = False
+    if args.compile:
+        mode = None  # "reduce-overhead" if not args.cudagraphs else None
+        update_main = torch.compile(update_main, mode=mode)
+        update_pol = torch.compile(update_pol, mode=mode)
+        policy = torch.compile(policy, mode=mode)
+
+    if args.cudagraphs:
+        update_main = CudaGraphModule(update_main, in_keys=[], out_keys=[])
+        update_pol = CudaGraphModule(update_pol, in_keys=[], out_keys=[])
 
     # TRY NOT TO MODIFY: start the game
-    advice_counter = torch.zeros(args.num_envs).to(device)
-    obs = envs.reset()
-    for global_step in range(0, args.total_timesteps, args.num_envs):
+    obs, _ = envs.reset()
+    obs = torch.as_tensor(obs, device=device, dtype=torch.float)
+    start_time = None
+    max_ep_ret = -float("inf")
+    avg_returns = deque(maxlen=20)
+    desc = ""
+    avg_advice = deque(maxlen=20)
+
+    for global_step in range(args.total_timesteps):
+        if global_step == args.measure_burnin + args.learning_starts:
+            start_time = time.time()
+            measure_burnin = global_step
+
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
-            actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
+            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             # Introspection
+            h_t = 0
             obs_torch = torch.Tensor(obs).to(device)
             probability = args.introspection_decay ** max(0, global_step - args.burn_in)
-            teacher_actions, _ = teacher_actor.get_action(obs_torch)
-            student_actions, _ = actor.get_action(obs_torch)
-            p = Bernoulli(probability).sample([args.num_envs]).to(device)
+            teacher_actions, _, _ = teacher_actor.get_action(obs_torch)
+            student_actions = policy(obs)
+            p = Bernoulli(probability).sample([envs.num_envs]).to(device)
             if global_step > args.burn_in:
-                teacher_source_q = torch.min(teacher_qf1(obs_torch, teacher_actions), teacher_qf2(obs_torch, teacher_actions))
-                teacher_target_q = torch.min(teacher_qf1_target(obs_torch, teacher_actions), teacher_qf2_target(obs_torch, teacher_actions))
+                teacher_source_q = torch.vmap(batched_qf, (0, None, None))(teacher_qnet_params, obs_torch, teacher_actions).min(dim=0).values  # noqa: PD011
+                teacher_target_q = torch.vmap(batched_qf, (0, None, None))(teacher_qnet_target, obs_torch, teacher_actions).min(dim=0).values  # noqa: PD011
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q)
                 h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
-            advice_counter += h_t
-            actions = torch.where(h_t.bool(), teacher_actions, student_actions).cpu().numpy()
+            if h_t:
+                avg_advice.append(h_t)
+                actions = teacher_actions.cpu().numpy()
+            else:
+                actions = student_actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, dones, infos = envs.step(actions)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
-        # record metrics for plotting
-        for _, info in enumerate(infos):
-            if "episode" in info:
-                ep_return = info["episode"]["r"]
-                ep_length = info["episode"]["l"]
-                print(f"global_step={global_step}, episodic_return={ep_return}")
-                writer.add_scalar("charts/episodic_return", ep_return, global_step)
-                writer.add_scalar("charts/episodic_length", ep_length, global_step)
+        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+        next_obs = torch.as_tensor(next_obs, device=device, dtype=torch.float)
+        real_next_obs = next_obs.clone()
+
+        if "episode" in infos:
+            # Extract the mask for completed episodes
+            completed_mask = infos["_episode"]
+            episodic_returns = infos["episode"]["r"][completed_mask]
+            episodic_lengths = infos["episode"]["l"][completed_mask]
+
+            # Log each completed episode
+            for ep_return, _ in zip(episodic_returns, episodic_lengths, strict=False):
+                max_ep_ret = max(max_ep_ret, ep_return)
+                avg_returns.append(ep_return)
+                desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}, \
+                    normalized_reward={rewards[0]: 4.2f}, advice={torch.tensor(avg_advice).mean(): 4.2f}"
+                print(desc)
                 break
 
-        # get real terminal observation
-        real_next_obs = next_obs.copy()
-        for idx, done in enumerate(dones):
-            if done:
-                terminal_obs = infos[idx]["terminal_observation"]
-                real_next_obs[idx] = terminal_obs
-        rb.add(obs, real_next_obs, actions, rewards, dones, infos)
+        transition = TensorDict(
+            observations=obs,
+            next_observations=real_next_obs,
+            actions=torch.as_tensor(actions, device=device, dtype=torch.float),
+            rewards=torch.as_tensor(rewards, device=device, dtype=torch.float),
+            terminations=terminations,
+            dones=terminations,
+            batch_size=obs.shape[0],
+            device=device,
+        )
+
+        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
+        data = extend_and_sample(transition)
 
         # ALGO LOGIC: training.
-        if global_step > (args.learning_starts * args.num_envs):
-            data = rb.sample(args.batch_size)
-            with torch.no_grad():
-                next_state_actions, next_state_log_pi, _ = actor.get_action(data.next_observations)
-                qf1_next_target = qf1_target(data.next_observations, next_state_actions)
-                qf2_next_target = qf2_target(data.next_observations, next_state_actions)
-                min_qf_next_target = torch.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_pi
-                next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (min_qf_next_target).view(-1)
+        if global_step > args.learning_starts:
+            out_main = update_main(data)
+            if global_step % args.policy_frequency == 0:  # TD 3 Delayed update support
+                for _ in range(args.policy_frequency):  # compensate for the delay by doing 'actor_update_interval' instead of 1
+                    out_main.update(update_pol(data))
 
-                # Teacher Q values
-                teacher_qf1_next_target = teacher_qf1_target(data.next_observations, next_state_actions)
-                teacher_qf2_next_target = teacher_qf2_target(data.next_observations, next_state_actions)
-                min_teacher_qf_next_target = torch.min(teacher_qf1_next_target, teacher_qf2_next_target) - alpha * next_state_log_pi
-                next_teacher_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.gamma * (min_teacher_qf_next_target).view(-1)
-
-            qf1_a_values = qf1(data.observations, data.actions).view(-1)
-            qf2_a_values = qf2(data.observations, data.actions).view(-1)
-            qf1_loss = f.mse_loss(qf1_a_values, next_q_value)
-            qf2_loss = f.mse_loss(qf2_a_values, next_q_value)
-
-            # Teacher Q values
-            teacher_qf1_a_values = teacher_qf1(data.observations, data.actions).view(-1)
-            teacher_qf2_a_values = teacher_qf2(data.observations, data.actions).view(-1)
-            teacher_qf1_loss = f.mse_loss(teacher_qf1_a_values, next_teacher_q_value)
-            teacher_qf2_loss = f.mse_loss(teacher_qf2_a_values, next_teacher_q_value)
-
-            qf_loss = qf1_loss + qf2_loss + teacher_qf1_loss + teacher_qf2_loss
-
-            # optimize the model
-            q_optimizer.zero_grad()
-            qf_loss.backward()
-            q_optimizer.step()
-
-            if global_step % (args.policy_frequency * args.num_envs) == 0:  # TD 3 Delayed update support
-                for _ in range(
-                    args.policy_frequency * args.num_envs,
-                ):  # compensate for the delay by doing 'actor_update_interval' instead of 1
-                    pi, log_pi, _ = actor.get_action(data.observations)
-                    qf1_pi = qf1(data.observations, pi)
-                    qf2_pi = qf2(data.observations, pi)
-                    min_qf_pi = torch.min(qf1_pi, qf2_pi)
-                    actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
-
-                    actor_optimizer.zero_grad()
-                    actor_loss.backward()
-                    actor_optimizer.step()
-
-                    if args.autotune:
-                        with torch.no_grad():
-                            _, log_pi, _ = actor.get_action(data.observations)
-                        alpha_loss = (-log_alpha.exp() * (log_pi + target_entropy)).mean()
-
-                        a_optimizer.zero_grad()
-                        alpha_loss.backward()
-                        a_optimizer.step()
-                        alpha = log_alpha.exp().item()
+                    alpha.copy_(log_alpha.detach().exp())
 
             # update the target networks
-            if global_step % (args.target_network_frequency * args.num_envs) == 0:
-                for param, target_param in zip(qf1.parameters(), qf1_target.parameters(), strict=False):
-                    target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                for param, target_param in zip(qf2.parameters(), qf2_target.parameters(), strict=False):
-                    target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+            if global_step % args.target_network_frequency == 0:
+                # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
+                qnet_target.lerp_(qnet_params.data, args.tau)
 
-            if global_step % 100 == 0:
-                writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
-                writer.add_scalar("losses/qf2_values", qf2_a_values.mean().item(), global_step)
-                writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
-                writer.add_scalar("losses/qf2_loss", qf2_loss.item(), global_step)
-                writer.add_scalar("losses/qf_loss", qf_loss.item() / 2.0, global_step)
-                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-                writer.add_scalar("losses/alpha", alpha, global_step)
-                print("SPS:", int(global_step / (time.time() - start_time)))
-                writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-                if args.autotune:
-                    writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
-
+            if global_step % 100 == 0 and start_time is not None:
+                speed = (global_step - measure_burnin) / (time.time() - start_time)
+                with torch.no_grad():
+                    logs = {
+                        "episode_return": torch.tensor(avg_returns).mean(),
+                        "actor_loss": out_main["actor_loss"].mean(),
+                        "alpha_loss": out_main.get("alpha_loss", 0),
+                        "qf_loss": out_main["qf_loss"].mean(),
+                        "normalized_reward": rewards.mean(),
+                        "advice": torch.tensor(avg_advice).mean(),
+                    }
+                wandb.log(
+                    {
+                        "speed": speed,
+                        **logs,
+                    },
+                    step=global_step,
+                )
+    # save the model
+    torch.save(actor.state_dict(), f"../../pvcvolume/models/{run_name}_actor.pt")
+    torch.save(qnet.state_dict(), f"../../pvcvolume/models/{run_name}_qnet.pt")
     envs.close()
-    writer.close()
-
-    print(f"Saving model checkpoint at step {global_step} to {actor_checkpoint_path}")
-    torch.save(actor.state_dict(), actor_checkpoint_path)
-    torch.save(qf1.state_dict(), qf1_checkpoint_path)
-    torch.save(qf2.state_dict(), qf2_checkpoint_path)
