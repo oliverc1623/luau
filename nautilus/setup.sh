@@ -12,3 +12,10 @@ export PATH="/root/.local/bin:$PATH"
 micromamba run -n luau poetry install
 micromamba run -n luau poetry run inv setup
 micromamba run -n luau pip install gymnasium[mujoco]
+micromamba run -n luau apt-get update -y 
+micromamba run -n luau apt-get install ffmpeg libsm6 libxext6  -y
+micromamba run -n luau apt-get install gcc -y
+micromamba run -n luau pip install tensordict
+micromamba run -n luau pip install jax-jumpy==1.0.0
+micromamba run -n luau pip install torchrl
+micromamba run -n luau pip install highway-env
