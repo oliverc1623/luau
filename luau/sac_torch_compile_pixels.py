@@ -361,7 +361,7 @@ if __name__ == "__main__":
             for ep_return, _ in zip(episodic_returns, episodic_lengths, strict=False):
                 max_ep_ret = max(max_ep_ret, ep_return)
                 avg_returns.append(ep_return)
-                desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}"
+                desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}, normalized_reward={rewards[0]: 4.2f}"
                 print(desc)
                 break
 
@@ -402,6 +402,7 @@ if __name__ == "__main__":
                         "actor_loss": out_main["actor_loss"].mean(),
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
+                        "normalized_reward": rewards.mean(),
                     }
                 wandb.log(
                     {
