@@ -8,12 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import gymnasium as gym
+import highway_env  # noqa: F401
 import numpy as np
 import torch
 import torch.nn.functional as f
-import tqdm
 import tyro
-from stable_baselines3.common.vec_env import SubprocVecEnv
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule, TensorDictModule
 from torch import nn, optim
@@ -41,7 +40,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "HalfCheetah-v4"
+    env_id: str = "highway-fast-v0"
     """the environment id of the task"""
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
@@ -77,15 +76,41 @@ class Args:
     """Number of burn-in iterations for speed measure."""
 
 
+config = {
+    "observation": {
+        "type": "Kinematics",
+    },
+    "action": {
+        "type": "ContinuousAction",
+    },
+    "lanes_count": 4,
+    "vehicles_count": 0,
+    "duration": 20,  # [s]
+    "initial_spacing": 2,
+    "collision_reward": -1,  # The reward received when colliding with a vehicle.
+    "reward_speed_range": [20, 30],  # [m/s] The reward for high speed is mapped linearly from this range to [0, HighwayEnv.HIGH_SPEED_REWARD].
+    "simulation_frequency": 5,  # [Hz]
+    "policy_frequency": 1,  # [Hz]
+    "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",
+    "screen_width": 600,  # [px]
+    "screen_height": 150,  # [px]
+    "centering_position": [0.3, 0.5],
+    "scaling": 5.5,
+    "show_trajectories": False,
+    "render_agent": False,
+    "offscreen_rendering": False,
+}
+
+
 def make_env(env_id: str, seed: int, idx: int, capture_video: int, run_name: str) -> callable:
     """Create and configure a gym environment based on the provided parameters."""
 
     def thunk() -> gym.Env:
         if capture_video and idx == 0:
-            env = gym.make(env_id, render_mode="rgb_array")
+            env = gym.make(env_id, config=config, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env = gym.make(env_id, config=config)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
@@ -105,6 +130,7 @@ class SoftQNetwork(nn.Module):
 
     def forward(self, x: torch.tensor, a: torch.tensor) -> torch.Tensor:
         """Forward pass."""
+        x = x.view(x.shape[0], -1)  # flatten the input
         x = torch.cat([x, a], 1)
         x = f.relu(self.fc1(x))
         x = f.relu(self.fc2(x))
@@ -128,15 +154,16 @@ class Actor(nn.Module):
         # action rescaling
         self.register_buffer(
             "action_scale",
-            torch.tensor((env.action_space.high - env.action_space.low) / 2.0, dtype=torch.float32, device=device),
+            torch.tensor((env.single_action_space.high - env.single_action_space.low) / 2.0, dtype=torch.float32, device=device),
         )
         self.register_buffer(
             "action_bias",
-            torch.tensor((env.action_space.high + env.action_space.low) / 2.0, dtype=torch.float32, device=device),
+            torch.tensor((env.single_action_space.high + env.single_action_space.low) / 2.0, dtype=torch.float32, device=device),
         )
 
     def forward(self, x: torch.tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass."""
+        x = x.view(x.shape[0], -1)  # flatten the input
         x = f.relu(self.fc1(x))
         x = f.relu(self.fc2(x))
         mean = self.fc_mean(x)
@@ -182,12 +209,12 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = SubprocVecEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
-    n_act = math.prod(envs.action_space.shape)
-    n_obs = math.prod(envs.observation_space.shape)
-    assert isinstance(envs.action_space, gym.spaces.Box), "only continuous action space is supported"
+    envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
+    n_act = math.prod(envs.single_action_space.shape)
+    n_obs = math.prod(envs.single_observation_space.shape)
+    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
-    max_action = float(envs.action_space.high[0])
+    max_action = float(envs.single_action_space.high[0])
 
     actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
     actor_detach = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
@@ -215,14 +242,14 @@ if __name__ == "__main__":
 
     # Automatic entropy tuning
     if args.autotune:
-        target_entropy = -torch.prod(torch.Tensor(envs.action_space.shape).to(device)).item()
+        target_entropy = -torch.prod(torch.Tensor(envs.single_action_space.shape).to(device)).item()
         log_alpha = torch.zeros(1, requires_grad=True, device=device)
         alpha = log_alpha.detach().exp()
         a_optimizer = optim.Adam([log_alpha], lr=args.q_lr, capturable=args.cudagraphs and not args.compile)
     else:
         alpha = torch.as_tensor(args.alpha, device=device)
 
-    envs.observation_space.dtype = np.float32
+    envs.single_observation_space.dtype = np.float32
     rb = ReplayBuffer(storage=LazyTensorStorage(args.buffer_size, device=device))
 
     def batched_qf(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
@@ -298,47 +325,45 @@ if __name__ == "__main__":
         update_pol = CudaGraphModule(update_pol, in_keys=[], out_keys=[])
 
     # TRY NOT TO MODIFY: start the game
-    obs = envs.reset()
+    obs, _ = envs.reset()
     obs = torch.as_tensor(obs, device=device, dtype=torch.float)
-    pbar = tqdm.tqdm(range(args.total_timesteps))
     start_time = None
     max_ep_ret = -float("inf")
     avg_returns = deque(maxlen=20)
     desc = ""
 
-    for global_step in pbar:
+    for global_step in range(args.total_timesteps):
         if global_step == args.measure_burnin + args.learning_starts:
             start_time = time.time()
             measure_burnin = global_step
 
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
-            actions = np.array([envs.action_space.sample() for _ in range(envs.num_envs)])
+            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             actions = policy(obs)
             actions = actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, terminations, infos = envs.step(actions)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
-        for _, info in enumerate(infos):
-            if "episode" in info:
-                ep_return = info["episode"]["r"]
-                ep_length = info["episode"]["l"]
+        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+        next_obs = torch.as_tensor(next_obs, device=device, dtype=torch.float)
+        real_next_obs = next_obs.clone()
+
+        if "episode" in infos:
+            # Extract the mask for completed episodes
+            completed_mask = infos["_episode"]
+            episodic_returns = infos["episode"]["r"][completed_mask]
+            episodic_lengths = infos["episode"]["l"][completed_mask]
+
+            # Log each completed episode
+            for ep_return, _ in zip(episodic_returns, episodic_lengths, strict=False):
                 max_ep_ret = max(max_ep_ret, ep_return)
                 avg_returns.append(ep_return)
                 desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}"
                 print(desc)
                 break
-
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
-        next_obs = torch.as_tensor(next_obs, device=device, dtype=torch.float)
-        real_next_obs = next_obs.clone()
-        for idx, trunc in enumerate(terminations):
-            if trunc:
-                terminal_obs = infos[idx]["terminal_observation"]
-                real_next_obs[idx] = torch.as_tensor(terminal_obs, device=device, dtype=torch.float)
 
         transition = TensorDict(
             observations=obs,
@@ -371,7 +396,6 @@ if __name__ == "__main__":
 
             if global_step % 100 == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
-                pbar.set_description(f"{speed: 4.4f} sps, " + desc)
                 with torch.no_grad():
                     logs = {
                         "episode_return": torch.tensor(avg_returns).mean(),
