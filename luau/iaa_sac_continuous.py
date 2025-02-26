@@ -96,20 +96,13 @@ config = {
     },
     "lanes_count": 2,
     "vehicles_count": 10,
-    "duration": 50,
+    "duration": 20,
     "initial_spacing": 2,
     "collision_reward": -1,
     "reward_speed_range": [20, 30],
     "simulation_frequency": 5,
-    "policy_frequency": 1,
-    "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",
-    "screen_width": 600,
-    "screen_height": 150,
-    "centering_position": [0.3, 0.5],
-    "scaling": 5.5,
-    "show_trajectories": False,
-    "render_agent": False,
-    "offscreen_rendering": False,
+    "disable_collision_checks": False,
+    "ego_spacing": 1.5,
 }
 
 
