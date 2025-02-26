@@ -446,7 +446,7 @@ if __name__ == "__main__":
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
                 with torch.no_grad():
                     logs = {
-                        "episode_return": torch.tensor(iaa_returns).mean(),
+                        "episode_return": torch.tensor(avg_returns).mean(),
                         "actor_loss": out_main["actor_loss"].mean(),
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
