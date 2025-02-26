@@ -357,7 +357,8 @@ if __name__ == "__main__":
     start_time = None
     max_ep_ret = -float("inf")
     avg_returns = deque(maxlen=20)
-    iaa_returns = deque(maxlen=20)
+    aux_performance = deque(maxlen=20)
+    iaa_performance = deque(maxlen=20)
     desc = ""
     avg_advice = deque(maxlen=20)
     h_t = 0
@@ -389,7 +390,10 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-
+        if h_t:
+            iaa_performance.append(rewards)
+        else:
+            aux_performance.append(rewards)
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         next_obs = torch.as_tensor(next_obs, device=device, dtype=torch.float)
         real_next_obs = next_obs.clone()
@@ -403,10 +407,7 @@ if __name__ == "__main__":
             # Log each completed episode
             for ep_return, _ in zip(episodic_returns, episodic_lengths, strict=False):
                 max_ep_ret = max(max_ep_ret, ep_return)
-                if h_t:
-                    iaa_returns.append(ep_return)
-                else:
-                    avg_returns.append(ep_return)
+                avg_returns.append(ep_return)
                 desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}, \
                     normalized_reward={rewards[0]: 4.2f}, advice={torch.tensor(avg_advice, dtype=torch.float32).mean(): 4.2f}"
                 print(desc)
@@ -462,7 +463,7 @@ if __name__ == "__main__":
                     step=global_step,
                 )
             if global_step % 1000 == 0:
-                performance_difference = np.mean(iaa_returns) - np.mean(avg_returns)
+                performance_difference = np.mean(iaa_performance) - np.mean(aux_performance)
                 if performance_difference > 0:
                     args.introspection_threshold += 0.1
                 else:
