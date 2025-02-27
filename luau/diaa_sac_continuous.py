@@ -95,7 +95,7 @@ config = {
         "type": "ContinuousAction",
     },
     "lanes_count": 2,
-    "vehicles_count": 10,
+    "vehicles_count": 5,
     "duration": 20,
     "initial_spacing": 2,
     "collision_reward": -1,

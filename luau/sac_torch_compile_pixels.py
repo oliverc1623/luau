@@ -83,17 +83,17 @@ config = {
     "action": {
         "type": "ContinuousAction",
     },
-    "lanes_count": 4,
-    "vehicles_count": 0,
-    "duration": 20,  # [s]
+    "lanes_count": 2,
+    "vehicles_count": 5,
+    "duration": 20,
     "initial_spacing": 2,
-    "collision_reward": -1,  # The reward received when colliding with a vehicle.
-    "reward_speed_range": [20, 30],  # [m/s] The reward for high speed is mapped linearly from this range to [0, HighwayEnv.HIGH_SPEED_REWARD].
-    "simulation_frequency": 5,  # [Hz]
-    "policy_frequency": 1,  # [Hz]
+    "collision_reward": -1,
+    "reward_speed_range": [20, 30],
+    "simulation_frequency": 5,
+    "policy_frequency": 1,
     "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",
-    "screen_width": 600,  # [px]
-    "screen_height": 150,  # [px]
+    "screen_width": 600,
+    "screen_height": 150,
     "centering_position": [0.3, 0.5],
     "scaling": 5.5,
     "show_trajectories": False,
