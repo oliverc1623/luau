@@ -6,7 +6,7 @@
         "type": "ContinuousAction"
     },
     "lanes_count": 4,
-    "vehicles_count": 10,
+    "vehicles_count": 5,
     "duration": 50,
     "initial_spacing": 2,
     "collision_reward": -1,
