@@ -1,11 +1,5 @@
 #!/bin/bash
 
-micromamba run -n luau python luau/sac_torch_compile_pixels.py --exp-name "baseline-target1-subopt" --seed 1 --compile --cudagraphs --learning-starts 100 --total-timesteps 100_000
-micromamba run -n luau python luau/sac_torch_compile_pixels.py --exp-name "baseline-target1-subopt" --seed 17 --compile --cudagraphs --learning-starts 100 --total-timesteps 100_000
-micromamba run -n luau python luau/sac_torch_compile_pixels.py --exp-name "baseline-target1-subopt" --seed 22 --compile --cudagraphs --learning-starts 100 --total-timesteps 100_000
-micromamba run -n luau python luau/sac_torch_compile_pixels.py --exp-name "baseline-target1-subopt" --seed 50 --compile --cudagraphs --learning-starts 100 --total-timesteps 100_000
-micromamba run -n luau python luau/sac_torch_compile_pixels.py --exp-name "baseline-target1-subopt" --seed 99 --compile --cudagraphs --learning-starts 100 --total-timesteps 100_000
-
 micromamba run -n luau python luau/diaa_sac_continuous.py --exp-name "student-target1-subopt" --seed 1 --compile --cudagraphs --learning-starts 100 --total-timesteps 100_000 --burn-in 1000 --teacher-actor ../../pvcvolume/models/highway-fast-v0__suboptimal-teacher__1__True__True_actor.pt --teacher-qnet ../../pvcvolume/models/highway-fast-v0__suboptimal-teacher__1__True__True_qnet.pt 
 micromamba run -n luau python luau/diaa_sac_continuous.py --exp-name "student-target1-subopt" --seed 17 --compile --cudagraphs --learning-starts 100 --total-timesteps 100_000 --burn-in 1000 --teacher-actor ../../pvcvolume/models/highway-fast-v0__suboptimal-teacher__1__True__True_actor.pt --teacher-qnet ../../pvcvolume/models/highway-fast-v0__suboptimal-teacher__1__True__True_qnet.pt 
 micromamba run -n luau python luau/diaa_sac_continuous.py --exp-name "student-target1-subopt" --seed 22 --compile --cudagraphs --learning-starts 100 --total-timesteps 100_000 --burn-in 1000 --teacher-actor ../../pvcvolume/models/highway-fast-v0__suboptimal-teacher__1__True__True_actor.pt --teacher-qnet ../../pvcvolume/models/highway-fast-v0__suboptimal-teacher__1__True__True_qnet.pt 
