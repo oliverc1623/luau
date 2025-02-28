@@ -96,7 +96,7 @@ config = {
     },
     "lanes_count": 2,
     "vehicles_count": 5,
-    "duration": 20,
+    "duration": 40,
     "initial_spacing": 2,
     "collision_reward": -1,
     "reward_speed_range": [20, 30],
