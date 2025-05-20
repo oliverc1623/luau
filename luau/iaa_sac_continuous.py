@@ -359,7 +359,7 @@ if __name__ == "__main__":
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             # Introspection
-            h_t = 0
+            h_t = torch.zeros(envs.num_envs, device=device, dtype=torch.bool)
             obs_torch = torch.Tensor(obs).to(device)
             probability = args.introspection_decay ** max(0, global_step - args.burn_in)
             teacher_actions, _, _ = teacher_actor.get_action(obs_torch)
@@ -369,12 +369,10 @@ if __name__ == "__main__":
                 teacher_source_q = torch.vmap(batched_qf, (0, None, None))(teacher_qnet_params, obs_torch, teacher_actions).min(dim=0).values  # noqa: PD011
                 teacher_target_q = torch.vmap(batched_qf, (0, None, None))(teacher_qnet_target, obs_torch, teacher_actions).min(dim=0).values  # noqa: PD011
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q)
-                h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
-                avg_advice.append(h_t)
-            if h_t:
-                actions = teacher_actions.cpu().numpy()
-            else:
-                actions = student_actions.cpu().numpy()
+                h_t = (abs_diff <= args.introspection_threshold) * (p == 1)
+                avg_advice.append(h_t.int().sum())
+            actions_tensor = torch.where(h_t, teacher_actions, student_actions)
+            actions = actions_tensor.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -439,7 +437,7 @@ if __name__ == "__main__":
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
                         "normalized_reward": rewards.mean(),
-                        "advice": torch.tensor(avg_advice, dtype=torch.float32).mean(),
+                        "advice": torch.tensor(avg_advice, dtype=torch.float).mean(),
                     }
                 wandb.log(
                     {
