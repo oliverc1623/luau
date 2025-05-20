@@ -3,26 +3,28 @@ import math
 import os
 import random
 import time
+import warnings
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
 import gymnasium as gym
-import highway_env  # noqa: F401
 import numpy as np
 import torch
 import torch.nn.functional as f
+import tqdm
 import tyro
+import wandb
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule, TensorDictModule
 from torch import nn, optim
 from torch.distributions import Bernoulli
 from torchrl.data import LazyTensorStorage, ReplayBuffer
 
-import wandb
 
-
+warnings.filterwarnings("ignore")
 os.environ["TORCHDYNAMO_INLINE_INBUILT_NN_MODULES"] = "1"
+wandb.login(key="82555a3ad6bd991b8c4019a5a7a86f61388f6df1")
 
 
 @dataclass
@@ -39,6 +41,8 @@ class Args:
     """if toggled, cuda will be enabled by default"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
+    num_envs: int = 1
+    """number of parallel environments"""
 
     # Algorithm specific arguments
     env_id: str = "highway-fast-v0"
@@ -61,6 +65,8 @@ class Args:
     """the learning rate of the Q network network optimizer"""
     policy_frequency: int = 2
     """the frequency of training policy (delayed)"""
+    gradient_steps: int = 1
+    """the number of gradient steps to be taken per iteration"""
     target_network_frequency: int = 1  # Denis Yarats' implementation delays this by 2.
     """the frequency of updates for the target nerworks"""
     alpha: float = 0.2
@@ -87,34 +93,15 @@ class Args:
     """Number of steps to burn in before starting introspection. During this period, the agent learns without using the teacher's actions."""
 
 
-config = {
-    "observation": {
-        "type": "Kinematics",
-    },
-    "action": {
-        "type": "ContinuousAction",
-    },
-    "lanes_count": 2,
-    "vehicles_count": 5,
-    "duration": 40,
-    "initial_spacing": 2,
-    "collision_reward": -1,
-    "reward_speed_range": [20, 30],
-    "simulation_frequency": 5,
-    "disable_collision_checks": False,
-    "ego_spacing": 1.5,
-}
-
-
 def make_env(env_id: str, seed: int, idx: int, capture_video: int, run_name: str) -> callable:
     """Create and configure a gym environment based on the provided parameters."""
 
     def thunk() -> gym.Env:
         if capture_video and idx == 0:
-            env = gym.make(env_id, config=config, render_mode="rgb_array")
+            env = gym.make(env_id, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id, config=config)
+            env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
@@ -198,7 +185,7 @@ if __name__ == "__main__":
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{args.compile}__{args.cudagraphs}"
 
     wandb.init(
-        project="sac_continuous_action",
+        project="luau",
         name=f"{Path(__file__).stem}-{run_name}",
         config=vars(args),
         save_code=True,
@@ -213,7 +200,10 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
+    envs = gym.vector.SyncVectorEnv(
+        [make_env(args.env_id, args.seed + i, 0, args.capture_video, run_name) for i in range(args.num_envs)],
+        autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
+    )
     n_act = math.prod(envs.single_action_space.shape)
     n_obs = math.prod(envs.single_observation_space.shape)
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
@@ -343,18 +333,24 @@ if __name__ == "__main__":
     if args.cudagraphs:
         update_main = CudaGraphModule(update_main, in_keys=[], out_keys=[])
         update_pol = CudaGraphModule(update_pol, in_keys=[], out_keys=[])
+    if args.gradient_steps < 0:
+        args.gradient_steps = args.policy_frequency * args.num_envs
 
     # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset()
+    obs, _ = envs.reset(seed=args.seed)
     obs = torch.as_tensor(obs, device=device, dtype=torch.float)
+    num_iterations = int(args.total_timesteps // args.num_envs)
+    pbar = tqdm.tqdm(range(num_iterations))
     start_time = None
     max_ep_ret = -float("inf")
     avg_returns = deque(maxlen=20)
     desc = ""
     avg_advice = deque(maxlen=20)
+    episode_start = np.zeros(envs.num_envs, dtype=bool)
 
-    for global_step in range(args.total_timesteps):
-        if global_step == args.measure_burnin + args.learning_starts:
+    for iter_indx in pbar:
+        global_step = iter_indx * args.num_envs
+        if global_step >= args.measure_burnin + args.learning_starts and start_time is None:
             start_time = time.time()
             measure_burnin = global_step
 
@@ -368,7 +364,7 @@ if __name__ == "__main__":
             probability = args.introspection_decay ** max(0, global_step - args.burn_in)
             teacher_actions, _, _ = teacher_actor.get_action(obs_torch)
             student_actions = policy(obs)
-            p = Bernoulli(probability).sample([envs.num_envs]).to(device)
+            p = Bernoulli(probability).sample([envs.num_envs,1]).to(device)
             if global_step > args.burn_in:
                 teacher_source_q = torch.vmap(batched_qf, (0, None, None))(teacher_qnet_params, obs_torch, teacher_actions).min(dim=0).values  # noqa: PD011
                 teacher_target_q = torch.vmap(batched_qf, (0, None, None))(teacher_qnet_target, obs_torch, teacher_actions).min(dim=0).values  # noqa: PD011
@@ -383,24 +379,25 @@ if __name__ == "__main__":
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
-        next_obs = torch.as_tensor(next_obs, device=device, dtype=torch.float)
-        real_next_obs = next_obs.clone()
-
-        if "episode" in infos:
+        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        if "final_info" in infos and "episode" in infos["final_info"]:
             # Extract the mask for completed episodes
-            completed_mask = infos["_episode"]
-            episodic_returns = infos["episode"]["r"][completed_mask]
-            episodic_lengths = infos["episode"]["l"][completed_mask]
+            completed_mask = infos["final_info"]["_episode"]
+            episodic_returns = infos["final_info"]["episode"]["r"][completed_mask]
+            episodic_lengths = infos["final_info"]["episode"]["l"][completed_mask]
 
             # Log each completed episode
             for ep_return, _ in zip(episodic_returns, episodic_lengths, strict=False):
                 max_ep_ret = max(max_ep_ret, ep_return)
                 avg_returns.append(ep_return)
-                desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}, \
-                    normalized_reward={rewards[0]: 4.2f}, advice={torch.tensor(avg_advice, dtype=torch.float32).mean(): 4.2f}"
-                print(desc)
-                break
+                desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}, (max={max_ep_ret: 4.2f})"
+
+        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+        next_obs = torch.as_tensor(next_obs, device=device, dtype=torch.float)
+        real_next_obs = next_obs.clone()
+        for idx, trunc in enumerate(truncations):
+            if trunc:
+                real_next_obs[idx] = torch.as_tensor(infos["final_obs"][idx], device=device, dtype=torch.float)
 
         transition = TensorDict(
             observations=obs,
@@ -415,25 +412,26 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
+        episode_start = np.logical_or(terminations, truncations)
         data = extend_and_sample(transition)
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             out_main = update_main(data)
-            if global_step % args.policy_frequency == 0:  # TD 3 Delayed update support
-                for _ in range(args.policy_frequency):  # compensate for the delay by doing 'actor_update_interval' instead of 1
+            if iter_indx % args.policy_frequency == 0:  # TD 3 Delayed update support
+                for _ in range(args.gradient_steps):  # compensate for the delay by doing 'actor_update_interval' instead of 1
                     out_main.update(update_pol(data))
 
                     alpha.copy_(log_alpha.detach().exp())
 
             # update the target networks
-            if global_step % args.target_network_frequency == 0:
+            if iter_indx % args.target_network_frequency == 0:
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
                 qnet_target.lerp_(qnet_params.data, args.tau)
-                teacher_qnet_target.lerp_(teacher_qnet_params.data, args.tau)
 
-            if global_step % 100 == 0 and start_time is not None:
+            if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
+                pbar.set_description(f"{speed: 4.4f} sps, " + desc)
                 with torch.no_grad():
                     logs = {
                         "episode_return": torch.tensor(avg_returns).mean(),
