@@ -68,9 +68,10 @@ class Actor(nn.Module):
 # %%
 seed = 1
 num_envs = 1
+run_id = "sb0gwmg9"
 
 env = gym.make("HumanoidStandup-v5", render_mode="rgb_array")
-env = gym.wrappers.RecordVideo(env, "videos/inference/")
+env = gym.wrappers.RecordVideo(env, f"videos/inference/{run_id}")
 
 n_act = math.prod(env.action_space.shape)
 n_obs = math.prod(env.observation_space.shape)
@@ -84,7 +85,7 @@ wandb.init(
 )
 
 # %%
-best_model = wandb.restore("HumanoidStandup-v5__teacher__1__True__True_actor.pt", run_path="luau/sb0gwmg9")
+best_model = wandb.restore("HumanoidStandup-v5__teacher__1__True__True_actor.pt", run_path=f"luau/{run_id}")
 
 # %%
 protagonist = Actor(env, device=device, n_act=n_act, n_obs=n_obs)
