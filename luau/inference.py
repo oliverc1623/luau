@@ -1,6 +1,7 @@
 # %% Sac Protagonist Eval
 
 import math
+import os
 
 import gymnasium as gym
 import torch
@@ -8,6 +9,8 @@ import torch.nn.functional as f
 import wandb
 from torch import nn
 
+
+os.environ["MUJOCO_GL"] = "egl"  # must precede any mujoco/gym import
 
 # %%
 LOG_STD_MAX = 2
@@ -66,7 +69,8 @@ class Actor(nn.Module):
 seed = 1
 num_envs = 1
 
-env = gym.make("HumanoidStandup-v5")
+env = gym.make("HumanoidStandup-v5", render_mode="rgb_array")
+env = gym.wrappers.RecordVideo(env, "videos/inference/")
 
 n_act = math.prod(env.action_space.shape)
 n_obs = math.prod(env.observation_space.shape)
