@@ -13,6 +13,7 @@ for script in "${scripts[@]}"; do
                 --gradient_steps -1 \
                 --cudagraphs \
                 --compile \
+                --total-timesteps 2_000_000
         else
             python $script --seed=$seed
         fi
