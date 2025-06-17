@@ -9,10 +9,9 @@ import os
 import random
 import time
 import warnings
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass
-from typing import Dict, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
