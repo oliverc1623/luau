@@ -9,8 +9,10 @@ import os
 import random
 import time
 import warnings
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
+from typing import Dict, Any
+from dataclasses import dataclass, field
 
 import gymnasium as gym
 import numpy as np
@@ -46,10 +48,12 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     num_envs: int = 1
     """number of parallel environments"""
-
-    # Algorithm specific arguments
     env_id: str = "HalfCheetah-v4"
     """the environment id of the task"""
+    env_kwargs: dict = None
+    """the environment kwargs of the task, e.g. render_mode rgb_array """
+
+    # Algorithm specific arguments
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
     buffer_size: int = int(1e6)
@@ -92,7 +96,8 @@ def make_env(env_id, seed, idx, capture_video, run_name):
             env = gym.make(env_id, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env_kwargs = args.env_kwargs
+            env = gym.make(env_id, **env_kwargs)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
