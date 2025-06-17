@@ -387,7 +387,7 @@ if __name__ == "__main__":
                 )
     # save the model
     torch.save(actor.state_dict(), f"{run_name}_actor.pt")
-    torch.save(qnet.state_dict(), f"{run_name}_qnet.pt")
+    torch.save(qnet_params.data.cpu(), f"{run_name}_qnet.pt")
     wandb.save(f"{run_name}_actor.pt")
     wandb.save(f"{run_name}_qnet.pt")
     envs.close()
