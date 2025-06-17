@@ -49,10 +49,12 @@ class Args:
     """number of parallel environments"""
     pretrained_run_id: str = ""
     """path to the pretrained actor model"""
-
-    # Algorithm specific arguments
     env_id: str = "HalfCheetah-v4"
     """the environment id of the task"""
+    env_kwargs: dict = None
+    """the environment kwargs of the task, e.g. render_mode rgb_array """
+
+    # Algorithm specific arguments
     total_timesteps: int = 1000000
     """total timesteps of the experiments"""
     buffer_size: int = int(1e6)
@@ -95,7 +97,8 @@ def make_env(env_id, seed, idx, capture_video, run_name):
             env = gym.make(env_id, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env_kwargs = args.env_kwargs if args.env_kwargs is not None else {}
+            env = gym.make(env_id, **env_kwargs)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
@@ -235,8 +238,8 @@ if __name__ == "__main__":
 
     # copy first layer weights and biases from pretrained qnet params
     with torch.no_grad():
-        qnet_params["fc1", "weight"].copy_(pretrained_qnet["fc1", "weight"])
-        qnet_params["fc1", "bias"].copy_(pretrained_qnet["fc1", "bias"])
+        qnet_params["fc1", "weight"].copy_(pretrained_qnet_tensordict["fc1", "weight"])
+        qnet_params["fc1", "bias"].copy_(pretrained_qnet_tensordict["fc1", "bias"])
 
     qnet_target.copy_(qnet_params.data)
 
@@ -414,7 +417,7 @@ if __name__ == "__main__":
                 )
     # save the model
     torch.save(actor.state_dict(), f"{run_name}_actor.pt")
-    torch.save(qnet.state_dict(), f"{run_name}_qnet.pt")
+    torch.save(qnet_params.data.cpu(), f"{run_name}_qnet.pt")
     wandb.save(f"{run_name}_actor.pt")
     wandb.save(f"{run_name}_qnet.pt")
     envs.close()
