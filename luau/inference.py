@@ -68,10 +68,11 @@ class Actor(nn.Module):
 # %%
 seed = 1
 num_envs = 1
-run_id = "sb0gwmg9"
+run_id = "v25b2n08"
+env_id = "BipedalWalker-v3"
 
-env = gym.make("HumanoidStandup-v5", render_mode="rgb_array")
-env = gym.wrappers.RecordVideo(env, f"videos/inference/{run_id}")
+env = gym.make(env_id, render_mode="rgb_array")
+env = gym.wrappers.RecordVideo(env, f"videos/inference/{env_id}/{run_id}")
 
 n_act = math.prod(env.action_space.shape)
 n_obs = math.prod(env.observation_space.shape)
@@ -79,18 +80,18 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # %%
 wandb.login(key="82555a3ad6bd991b8c4019a5a7a86f61388f6df1")
-wandb.init(
-    project="luau",
-    save_code=True,
-)
+api = wandb.Api()
 
 # %%
-best_model = wandb.restore("HumanoidStandup-v5__teacher__1__True__True_actor.pt", run_path=f"luau/{run_id}")
+
+pretrained_run = api.run(f"luau/{run_id}")
+actor_file = next(f.name for f in pretrained_run.files() if f.name.endswith("_actor.pt"))
+model_weights = wandb.restore(actor_file, run_path=f"luau/{run_id}")
 
 # %%
 protagonist = Actor(env, device=device, n_act=n_act, n_obs=n_obs)
 protagonist.load_state_dict(
-    torch.load(best_model.name),
+    torch.load(model_weights.name),
 )
 
 # %%
