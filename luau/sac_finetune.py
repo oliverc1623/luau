@@ -30,6 +30,7 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer
 warnings.filterwarnings("ignore")
 os.environ["TORCHDYNAMO_INLINE_INBUILT_NN_MODULES"] = "1"
 wandb.login(key="82555a3ad6bd991b8c4019a5a7a86f61388f6df1")
+api = wandb.Api()
 
 
 @dataclass
@@ -46,10 +47,8 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     num_envs: int = 1
     """number of parallel environments"""
-    pretrained_actor: str = ""
+    pretrained_run_id: str = ""
     """path to the pretrained actor model"""
-    pretrained_qnet: str = ""
-    """path to the pretrained Q network model"""
 
     # Algorithm specific arguments
     env_id: str = "HalfCheetah-v4"
@@ -178,6 +177,10 @@ if __name__ == "__main__":
         save_code=True,
     )
 
+    pretrained_run = api.run(args.pretrained_run_id)
+    actor_file = next(f.name for f in pretrained_run.files() if f.name.endswith("_actor.pt"))
+    qnet_file = next(f.name for f in pretrained_run.files() if f.name.endswith("_qnet.pt"))
+
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -197,7 +200,16 @@ if __name__ == "__main__":
 
     max_action = float(envs.single_action_space.high[0])
 
+    pretrained_actor_file = wandb.restore(actor_file, run_path=args.pretrained_run_id)
+    pretrained = torch.load(pretrained_actor_file.name, map_location=device)
+
     actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
+
+    # copy first layer weights and biases from pretrained actor
+    with torch.no_grad():
+        actor.fc1.weight.copy_(pretrained["fc1.weight"])
+        actor.fc1.bias.copy_(pretrained["fc1.bias"])
+
     actor_detach = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
     # Copy params to actor_detach without grad
     from_module(actor).data.to_module(actor_detach)
@@ -216,6 +228,17 @@ if __name__ == "__main__":
         return qnet_params, qnet_target, qnet
 
     qnet_params, qnet_target, qnet = get_q_params()
+
+    # load pretrained qnet params
+    pretrained_qnet = wandb.restore(qnet_file, run_path=args.pretrained_run_id)
+    pretrained_qnet_tensordict = torch.load(pretrained_qnet.name, map_location=device)
+
+    # copy first layer weights and biases from pretrained qnet params
+    with torch.no_grad():
+        qnet_params["fc1", "weight"].copy_(pretrained_qnet["fc1", "weight"])
+        qnet_params["fc1", "bias"].copy_(pretrained_qnet["fc1", "bias"])
+
+    qnet_target.copy_(qnet_params.data)
 
     q_optimizer = optim.Adam(qnet.parameters(), lr=args.q_lr, capturable=args.cudagraphs and not args.compile)
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr, capturable=args.cudagraphs and not args.compile)
