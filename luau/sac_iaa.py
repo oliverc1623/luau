@@ -18,6 +18,7 @@ import wandb
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule, TensorDictModule
 from torch import nn, optim
+from torch.distributions import Bernoulli
 from torchrl.data import LazyTensorStorage, ReplayBuffer
 
 
@@ -77,6 +78,12 @@ class Args:
     """Entropy regularization coefficient."""
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
+    introspection_threshold: float = 0.5
+    """Threshold for introspection. If the difference between the source and target Q-values is below this threshold, the teacher's action is used."""
+    introspection_decay: float = 0.99999
+    """Decay rate for the introspection probability. The probability of using the teacher's action decreases over time."""
+    burn_in: int = 1000
+    """Number of steps to burn in before starting introspection. During this period, the agent learns without using the teacher's actions."""
 
     compile: bool = False
     """whether to use torch.compile."""
@@ -347,6 +354,7 @@ if __name__ == "__main__":
     start_time = None
     max_ep_ret = -float("inf")
     avg_returns = deque(maxlen=20)
+    avg_advice = deque(maxlen=20)
     desc = ""
     episode_start = np.zeros(envs.num_envs, dtype=bool)
 
@@ -360,8 +368,21 @@ if __name__ == "__main__":
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            actions = policy(obs)
-            actions = actions.cpu().numpy()
+            # introspect
+            probability = args.introspection_decay ** max(0, global_step - args.burn_in)
+            teacher_actions, _, _ = teacher_actor.get_action(obs)
+            student_actions = policy(obs)
+            p = Bernoulli(probability).sample([envs.num_envs]).to(device)
+            if global_step > args.burn_in:
+                teacher_source_q = torch.vmap(batched_qf, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
+                teacher_target_q = torch.vmap(batched_qf, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
+                abs_diff = torch.abs(teacher_source_q - teacher_target_q)
+                h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
+                avg_advice.append(sum(h_t))
+            if h_t:
+                actions = teacher_actions.cpu().numpy()
+            else:
+                actions = student_actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
