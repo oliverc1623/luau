@@ -253,13 +253,13 @@ if __name__ == "__main__":
 
     # teacher new (tn) - to be trained
     tn_qnet_params, tn_qnet_target, tn_qnet = get_q_params()
-    tn_qnet_target.copy_(tn_qnet_params.data)
     tn_qnet_params.copy_(pretrained_qnet_tensordict)
+    tn_qnet_target.copy_(tn_qnet_params.data)
 
     # teacher source (ts) - not to be trained
     ts_qnet_params, _, ts_qnet = get_q_params()
     ts_qnet_params.copy_(tn_qnet_params)
-    tn_qnet_params.requires_grad_(False)  # noqa: FBT003
+    ts_qnet_params.requires_grad_(False)  # noqa: FBT003
 
     q_optimizer = optim.Adam(
         list(student_qnet.parameters()) + list(tn_qnet.parameters()),  # add new teacher qnet params
