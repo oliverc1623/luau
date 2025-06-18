@@ -445,6 +445,8 @@ if __name__ == "__main__":
                         "actor_loss": out_main["actor_loss"].mean(),
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
+                        "advice": torch.tensor(avg_advice).mean(),
+                        "introspection_threshold": args.introspection_threshold,
                     }
                 wandb.log(
                     {
