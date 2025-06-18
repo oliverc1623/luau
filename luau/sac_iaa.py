@@ -354,6 +354,7 @@ if __name__ == "__main__":
     start_time = None
     max_ep_ret = -float("inf")
     avg_returns = deque(maxlen=20)
+    h_t = torch.zeros(envs.num_envs, dtype=torch.int, device=device)
     avg_advice = deque(maxlen=20)
     desc = ""
     episode_start = np.zeros(envs.num_envs, dtype=bool)
@@ -376,13 +377,10 @@ if __name__ == "__main__":
             if global_step > args.burn_in:
                 teacher_source_q = torch.vmap(batched_qf, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
                 teacher_target_q = torch.vmap(batched_qf, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
-                abs_diff = torch.abs(teacher_source_q - teacher_target_q)
-                h_t = (abs_diff <= args.introspection_threshold).int() * (p == 1).int()
-                avg_advice.append(sum(h_t))
-            if h_t:
-                actions = teacher_actions.cpu().numpy()
-            else:
-                actions = student_actions.cpu().numpy()
+                abs_diff = torch.abs(teacher_source_q - teacher_target_q).squeeze(-1)
+                h_t = (abs_diff <= args.introspection_threshold).int() * p
+                avg_advice.append(h_t.float().sum().item())
+            actions = torch.where(h_t.bool().unsqueeze(-1), teacher_actions, student_actions).cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -436,6 +434,7 @@ if __name__ == "__main__":
             if iter_indx % args.target_network_frequency == 0:
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
                 student_qnet_target.lerp_(student_qnet_params.data, args.tau)
+                tn_qnet_target.lerp_(tn_qnet_params.data, args.tau)
 
             if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
