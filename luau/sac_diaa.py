@@ -244,7 +244,21 @@ if __name__ == "__main__":
     pretrained_qnet = wandb.restore(qnet_file, run_path=args.pretrained_run_id)
     pretrained_qnet_tensordict = torch.load(pretrained_qnet.name, map_location=device)
 
-    q_optimizer = optim.Adam(student_qnet.parameters(), lr=args.q_lr, capturable=args.cudagraphs and not args.compile)
+    # teacher new (tn) - to be trained
+    tn_qnet_params, tn_qnet_target, tn_qnet = get_q_params()
+    tn_qnet_target.copy_(tn_qnet_params.data)
+    tn_qnet_params.copy_(pretrained_qnet_tensordict)
+
+    # teacher source (ts) - not to be trained
+    ts_qnet_params, _, ts_qnet = get_q_params()
+    ts_qnet_params.copy_(tn_qnet_params)
+    tn_qnet_params.requires_grad_(False)  # noqa: FBT003
+
+    q_optimizer = optim.Adam(
+        list(student_qnet.parameters()) + list(tn_qnet.parameters()),  # add new teacher qnet params
+        lr=args.q_lr,
+        capturable=args.cudagraphs and not args.compile,
+    )
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr, capturable=args.cudagraphs and not args.compile)
 
     # Automatic entropy tuning
