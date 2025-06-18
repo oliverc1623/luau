@@ -208,20 +208,21 @@ if __name__ == "__main__":
 
     max_action = float(envs.single_action_space.high[0])
 
-    pretrained_actor_file = wandb.restore(actor_file, run_path=args.pretrained_run_id)
-    pretrained = torch.load(pretrained_actor_file.name, map_location=device)
-
+    # student
     actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
-
-    # copy first layer weights and biases from pretrained actor
-    with torch.no_grad():
-        actor.fc1.weight.copy_(pretrained["fc1.weight"])
-        actor.fc1.bias.copy_(pretrained["fc1.bias"])
-
     actor_detach = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
     # Copy params to actor_detach without grad
     from_module(actor).data.to_module(actor_detach)
     policy = TensorDictModule(actor_detach.get_action, in_keys=["observation"], out_keys=["action"])
+
+    # teacher
+    pretrained_actor_file = wandb.restore(actor_file, run_path=args.pretrained_run_id)
+    pretrained_actor_state_dict = torch.load(pretrained_actor_file.name, map_location=device)
+
+    teacher_actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
+    teacher_actor.load_state_dict(pretrained_actor_state_dict)
+    for param in teacher_actor.parameters():
+        param.requires_grad = False
 
     def get_q_params() -> tuple[TensorDict, TensorDict, SoftQNetwork]:
         """Initialize the Q-function parameters and target network."""
@@ -236,20 +237,14 @@ if __name__ == "__main__":
 
         return qnet_params, qnet_target, qnet
 
-    qnet_params, qnet_target, qnet = get_q_params()
+    student_qnet_params, student_qnet_target, student_qnet = get_q_params()
+    student_qnet_target.copy_(student_qnet_params.data)
 
-    # load pretrained qnet params
+    # load pretrained qnet params into teacher qnet
     pretrained_qnet = wandb.restore(qnet_file, run_path=args.pretrained_run_id)
     pretrained_qnet_tensordict = torch.load(pretrained_qnet.name, map_location=device)
 
-    # copy first layer weights and biases from pretrained qnet params
-    with torch.no_grad():
-        qnet_params["fc1", "weight"].copy_(pretrained_qnet_tensordict["fc1", "weight"])
-        qnet_params["fc1", "bias"].copy_(pretrained_qnet_tensordict["fc1", "bias"])
-
-    qnet_target.copy_(qnet_params.data)
-
-    q_optimizer = optim.Adam(qnet.parameters(), lr=args.q_lr, capturable=args.cudagraphs and not args.compile)
+    q_optimizer = optim.Adam(student_qnet.parameters(), lr=args.q_lr, capturable=args.cudagraphs and not args.compile)
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr, capturable=args.cudagraphs and not args.compile)
 
     # Automatic entropy tuning
@@ -266,8 +261,8 @@ if __name__ == "__main__":
 
     def batched_qf(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
         """Compute the Q-value for a batch of observations and actions using the provided parameters."""
-        with params.to_module(qnet):
-            vals = qnet(obs, action)
+        with params.to_module(student_qnet):
+            vals = student_qnet(obs, action)
             if next_q_value is not None:
                 loss_val = f.mse_loss(vals.view(-1), next_q_value)
                 return loss_val
@@ -279,11 +274,11 @@ if __name__ == "__main__":
         q_optimizer.zero_grad()
         with torch.no_grad():
             next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
-            qf_next_target = torch.vmap(batched_qf, (0, None, None))(qnet_target, data["next_observations"], next_state_actions)
+            qf_next_target = torch.vmap(batched_qf, (0, None, None))(student_qnet_target, data["next_observations"], next_state_actions)
             min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
 
-        qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(qnet_params, data["observations"], data["actions"], next_q_value)
+        qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
         qf_loss = qf_a_values.sum(0)
 
         qf_loss.backward()
@@ -294,7 +289,7 @@ if __name__ == "__main__":
         """Update the policy network."""
         actor_optimizer.zero_grad()
         pi, log_pi, _ = actor.get_action(data["observations"])
-        qf_pi = torch.vmap(batched_qf, (0, None, None))(qnet_params.data, data["observations"], pi)
+        qf_pi = torch.vmap(batched_qf, (0, None, None))(student_qnet_params.data, data["observations"], pi)
         min_qf_pi = qf_pi.min(0).values  # noqa: PD011
         actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
 
@@ -405,7 +400,7 @@ if __name__ == "__main__":
             # update the target networks
             if iter_indx % args.target_network_frequency == 0:
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
-                qnet_target.lerp_(qnet_params.data, args.tau)
+                student_qnet_target.lerp_(student_qnet_params.data, args.tau)
 
             if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
@@ -426,7 +421,7 @@ if __name__ == "__main__":
                 )
     # save the model
     torch.save(actor.state_dict(), f"{run_name}_actor.pt")
-    torch.save(qnet_params.data.cpu(), f"{run_name}_qnet.pt")
+    torch.save(student_qnet_params.data.cpu(), f"{run_name}_qnet.pt")
     wandb.save(f"{run_name}_actor.pt")
     wandb.save(f"{run_name}_qnet.pt")
     envs.close()
