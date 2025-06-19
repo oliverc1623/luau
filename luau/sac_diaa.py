@@ -372,11 +372,11 @@ if __name__ == "__main__":
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             # introspect
-            probability = args.introspection_decay ** max(0, global_step - args.burn_in)
+            probability = args.introspection_decay ** max(0, iter_indx - args.burn_in)
             teacher_actions, _, _ = teacher_actor.get_action(obs)
             student_actions = policy(obs)
             p = Bernoulli(probability).sample([envs.num_envs]).to(device)
-            if global_step > args.burn_in:
+            if iter_indx > args.burn_in:
                 teacher_source_q = torch.vmap(batched_qf, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
                 teacher_target_q = torch.vmap(batched_qf, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q).squeeze(-1)
@@ -444,12 +444,16 @@ if __name__ == "__main__":
                 tn_qnet_target.lerp_(tn_qnet_params.data, args.tau)
 
             # update introspection threshold
-            if iter_indx % 1000 == 0:
+            if iter_indx % 100 == 0:
                 performance_difference = np.mean(iaa_performance) - np.mean(aux_performance)
                 if performance_difference > 0:
                     args.introspection_threshold += 0.1
                 else:
                     args.introspection_threshold -= 0.1
+                if args.introspection_threshold < 0.0:
+                    args.introspection_threshold = 0.0
+                if args.introspection_threshold > 1.0:
+                    args.introspection_threshold = 1.0
 
             if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
