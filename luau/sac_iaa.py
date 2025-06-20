@@ -255,6 +255,7 @@ if __name__ == "__main__":
     tn_qnet_params, tn_qnet_target, tn_qnet = get_q_params()
     tn_qnet_params.copy_(pretrained_qnet_tensordict)
     tn_qnet_target.copy_(tn_qnet_params.data)
+    tn_qnet_params.requires_grad_(True)  # noqa: FBT003
 
     # teacher source (ts) - not to be trained
     ts_qnet_params, _, ts_qnet = get_q_params()
@@ -299,9 +300,20 @@ if __name__ == "__main__":
             min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
 
-        qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
-        qf_loss = qf_a_values.sum(0)
+            # compute the target Q-values for the teacher network
+            qf_next_teacher = torch.vmap(batched_qf, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
+            min_qf_next_target_teacher = qf_next_teacher.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
+            next_q_value_tchr = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target_teacher.view(-1)
 
+        # TD error for the student Q-function
+        qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
+        qf_loss_student = qf_a_values.sum(0)
+
+        # TD error for the teacher Q-function
+        qf_a_values_teacher = torch.vmap(batched_qf, (0, None, None, None))(ts_qnet_params, data["observations"], data["actions"], next_q_value_tchr)
+        qf_loss_teacher = qf_a_values_teacher.sum(0)
+
+        qf_loss = qf_loss_student + qf_loss_teacher
         qf_loss.backward()
         q_optimizer.step()
         return TensorDict(qf_loss=qf_loss.detach())
