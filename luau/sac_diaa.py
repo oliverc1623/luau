@@ -297,24 +297,6 @@ if __name__ == "__main__":
                 return loss_val
             return vals
 
-    def batched_qf_tn_qnet(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
-        """Compute the Q-value for a batch of observations and actions using the provided parameters."""
-        with params.to_module(tn_qnet):
-            vals = tn_qnet(obs, action)
-            if next_q_value is not None:
-                loss_val = f.mse_loss(vals.view(-1), next_q_value)
-                return loss_val
-            return vals
-
-    def batched_qf_ts_qnet(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
-        """Compute the Q-value for a batch of observations and actions using the provided parameters."""
-        with params.to_module(ts_qnet):
-            vals = ts_qnet(obs, action)
-            if next_q_value is not None:
-                loss_val = f.mse_loss(vals.view(-1), next_q_value)
-                return loss_val
-            return vals
-
     def update_main(data: any) -> TensorDict:
         """Update the main Q-function and policy networks."""
         # optimize the model
@@ -334,26 +316,6 @@ if __name__ == "__main__":
         q_optimizer.step()
         return TensorDict(qf_loss=qf_loss.detach())
 
-    def update_teacher(data: any) -> TensorDict:
-        """Update the teacher Q-function network."""
-        q_optimizer_teacher.zero_grad()
-        with torch.no_grad():
-            next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
-            qf_next_target = torch.vmap(batched_qf_tn_qnet, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi
-            next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
-
-        # TD error for the teacher Q-function
-        qf_a_values_teacher = torch.vmap(batched_qf_tn_qnet, (0, None, None, None))(
-            tn_qnet_params,
-            data["observations"],
-            data["actions"],
-            next_q_value,
-        )
-        qf_loss_teacher = qf_a_values_teacher.sum(0)
-        qf_loss_teacher.backward()
-        q_optimizer_teacher.step()
-        return TensorDict(qf_loss=qf_loss_teacher.detach())
 
     def update_pol(data: any) -> TensorDict:
         """Update the policy network."""
@@ -385,13 +347,11 @@ if __name__ == "__main__":
     if args.compile:
         mode = None  # "reduce-overhead" if not args.cudagraphs else None
         update_main = torch.compile(update_main, mode=mode)
-        update_teacher = torch.compile(update_teacher, mode=mode)
         update_pol = torch.compile(update_pol, mode=mode)
         policy = torch.compile(policy, mode=mode)
 
     if args.cudagraphs:
         update_main = CudaGraphModule(update_main, in_keys=[], out_keys=[])
-        update_teacher = CudaGraphModule(update_teacher, in_keys=[], out_keys=[])
         update_pol = CudaGraphModule(update_pol, in_keys=[], out_keys=[])
 
     if args.gradient_steps < 0:
@@ -428,12 +388,12 @@ if __name__ == "__main__":
             teacher_actions, _, _ = teacher_actor.get_action(obs)
             student_actions = policy(obs)
             p = Bernoulli(probability).sample([envs.num_envs]).to(device)
-            if global_step > args.burn_in:
-                teacher_source_q = torch.vmap(batched_qf_ts_qnet, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values
-                teacher_target_q = torch.vmap(batched_qf_tn_qnet, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values
-                abs_diff = torch.abs(teacher_source_q - teacher_target_q).squeeze(-1)
-                h_t = (abs_diff <= args.introspection_threshold).int() * p
-                avg_advice.append(h_t.float().sum().item())
+            with torch.no_grad():
+                q_vals = torch.vmap(batched_qf, (0, None, None))(student_qnet_params, obs, student_actions)
+                q1, q2 = q_vals[0], q_vals[1]
+            abs_diff = torch.abs(q1 - q2).squeeze(-1)
+            h_t = (abs_diff <= args.introspection_threshold).int() * p
+            avg_advice.append(h_t.float().sum().item())
             actions = torch.where(h_t.bool().unsqueeze(-1), teacher_actions, student_actions).cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -483,7 +443,6 @@ if __name__ == "__main__":
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             out_main = update_main(data)
-            out_teacher = update_teacher(data)
             if iter_indx % args.policy_frequency == 0:  # TD 3 Delayed update support
                 for _ in range(args.gradient_steps):  # compensate for the delay by doing 'actor_update_interval' instead of 1
                     out_main.update(update_pol(data))
@@ -502,8 +461,6 @@ if __name__ == "__main__":
                 step = 0.05
                 args.introspection_threshold += step * np.sign(performance_difference)
                 args.introspection_threshold = float(np.clip(args.introspection_threshold, 0.01, 100.0))
-                iaa_performance.clear()
-                aux_performance.clear()
 
             if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
@@ -514,7 +471,6 @@ if __name__ == "__main__":
                         "actor_loss": out_main["actor_loss"].mean(),
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
-                        "qf_loss_teacher": out_teacher["qf_loss"].mean(),
                         "advice": torch.tensor(avg_advice).mean(),
                         "introspection_threshold": args.introspection_threshold,
                         "abs_diff": abs_diff.mean().item(),
