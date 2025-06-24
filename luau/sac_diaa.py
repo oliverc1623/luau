@@ -255,6 +255,7 @@ if __name__ == "__main__":
     tn_qnet_params, tn_qnet_target, tn_qnet = get_q_params()
     tn_qnet_params.copy_(pretrained_qnet_tensordict)
     tn_qnet_target.copy_(tn_qnet_params.data)
+    tn_qnet_params.requires_grad_(True)  # noqa: FBT003
 
     # teacher source (ts) - not to be trained
     ts_qnet_params, _, ts_qnet = get_q_params()
@@ -289,6 +290,24 @@ if __name__ == "__main__":
                 return loss_val
             return vals
 
+    def batched_qf_tn_qnet(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
+        """Compute the Q-value for a batch of observations and actions using the provided parameters."""
+        with params.to_module(tn_qnet):
+            vals = tn_qnet(obs, action)
+            if next_q_value is not None:
+                loss_val = f.mse_loss(vals.view(-1), next_q_value)
+                return loss_val
+            return vals
+
+    def batched_qf_ts_qnet(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
+        """Compute the Q-value for a batch of observations and actions using the provided parameters."""
+        with params.to_module(ts_qnet):
+            vals = ts_qnet(obs, action)
+            if next_q_value is not None:
+                loss_val = f.mse_loss(vals.view(-1), next_q_value)
+                return loss_val
+            return vals
+
     def update_main(data: any) -> TensorDict:
         """Update the main Q-function and policy networks."""
         # optimize the model
@@ -299,9 +318,25 @@ if __name__ == "__main__":
             min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
 
-        qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
-        qf_loss = qf_a_values.sum(0)
+            # compute the target Q-values for the teacher network
+            qf_next_teacher = torch.vmap(batched_qf_tn_qnet, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
+            min_qf_next_target_teacher = qf_next_teacher.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
+            next_q_value_tchr = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target_teacher.view(-1)
 
+        # TD error for the student Q-function
+        qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
+        qf_loss_student = qf_a_values.sum(0)
+
+        # TD error for the teacher Q-function
+        qf_a_values_teacher = torch.vmap(batched_qf_tn_qnet, (0, None, None, None))(
+            tn_qnet_params,
+            data["observations"],
+            data["actions"],
+            next_q_value_tchr,
+        )
+        qf_loss_teacher = qf_a_values_teacher.sum(0)
+
+        qf_loss = qf_loss_student + qf_loss_teacher
         qf_loss.backward()
         q_optimizer.step()
         return TensorDict(qf_loss=qf_loss.detach())
@@ -360,6 +395,7 @@ if __name__ == "__main__":
     avg_advice = deque(maxlen=20)
     desc = ""
     episode_start = np.zeros(envs.num_envs, dtype=bool)
+    abs_diff = torch.zeros(envs.num_envs, dtype=torch.float, device=device)
 
     for iter_indx in pbar:
         global_step = iter_indx * args.num_envs
@@ -372,13 +408,13 @@ if __name__ == "__main__":
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             # introspect
-            probability = args.introspection_decay ** max(0, iter_indx - args.burn_in)
+            probability = args.introspection_decay ** max(0, global_step - args.burn_in)
             teacher_actions, _, _ = teacher_actor.get_action(obs)
             student_actions = policy(obs)
             p = Bernoulli(probability).sample([envs.num_envs]).to(device)
-            if iter_indx > args.burn_in:
-                teacher_source_q = torch.vmap(batched_qf, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
-                teacher_target_q = torch.vmap(batched_qf, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
+            if global_step > args.burn_in:
+                teacher_source_q = torch.vmap(batched_qf_ts_qnet, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
+                teacher_target_q = torch.vmap(batched_qf_tn_qnet, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q).squeeze(-1)
                 h_t = (abs_diff <= args.introspection_threshold).int() * p
                 avg_advice.append(h_t.float().sum().item())
@@ -444,16 +480,13 @@ if __name__ == "__main__":
                 tn_qnet_target.lerp_(tn_qnet_params.data, args.tau)
 
             # update introspection threshold
-            if iter_indx % 100 == 0:
+            if iter_indx % 100 == 0 and len(iaa_performance) and len(aux_performance):
                 performance_difference = np.mean(iaa_performance) - np.mean(aux_performance)
-                if performance_difference > 0:
-                    args.introspection_threshold += 0.1
-                else:
-                    args.introspection_threshold -= 0.1
-                if args.introspection_threshold < 0.0:
-                    args.introspection_threshold = 0.0
-                if args.introspection_threshold > 1.0:
-                    args.introspection_threshold = 1.0
+                step = 0.05
+                args.introspection_threshold += step * np.sign(performance_difference)
+                args.introspection_threshold = float(np.clip(args.introspection_threshold, 0.01, 1.0))
+                iaa_performance.clear()
+                aux_performance.clear()
 
             if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
@@ -466,6 +499,7 @@ if __name__ == "__main__":
                         "qf_loss": out_main["qf_loss"].mean(),
                         "advice": torch.tensor(avg_advice).mean(),
                         "introspection_threshold": args.introspection_threshold,
+                        "abs_diff": abs_diff.mean().item(),
                     }
                 wandb.log(
                     {

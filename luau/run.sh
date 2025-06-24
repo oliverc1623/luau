@@ -1,19 +1,22 @@
 #!/bin/bash
 # Execute scripts with different seeds and additional arguments for torchcompile scripts
 scripts=(
-    sac_torchcompile.py
+    sac_iaa.py
+    sac_diaa.py
 )
 for script in "${scripts[@]}"; do
-    for seed in 11 21 31 41; do
-        if [[ $script == *_torchcompile.py ]]; then
+    for seed in 21 31 41; do
+        if [[ $script == *.py ]]; then
             python $script --seed=$seed \
-                --env-id "HumanoidStandup-v5" \
-                --exp_name "teacher" \
+                --env-id "BipedalWalker-v3" \
+                --exp_name "student" \
                 --num-envs 8 \
                 --gradient_steps -1 \
                 --cudagraphs \
                 --compile \
-                --total-timesteps 2_000_000
+                --total-timesteps 1_000_000 \
+                --pretrained_run_id "luau/v25b2n08" \
+                --env_kwargs hardcore True
         else
             python $script --seed=$seed
         fi

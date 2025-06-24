@@ -68,10 +68,11 @@ class Actor(nn.Module):
 # %%
 seed = 1
 num_envs = 1
-run_id = "v25b2n08"
+run_id = "l7byd43z"
 env_id = "BipedalWalker-v3"
+env_kwargs = {"hardcore": True, "render_mode": "rgb_array"}
 
-env = gym.make(env_id, render_mode="rgb_array")
+env = gym.make(env_id, **env_kwargs)
 env = gym.wrappers.RecordVideo(env, f"videos/inference/{env_id}/{run_id}")
 
 n_act = math.prod(env.action_space.shape)
