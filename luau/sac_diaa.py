@@ -78,12 +78,16 @@ class Args:
     """Entropy regularization coefficient."""
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
+
+    # DIAA/IAA specific arguments
     introspection_threshold: float = 0.5
     """Threshold for introspection. If the difference between the source and target Q-values is below this threshold, the teacher's action is used."""
     introspection_decay: float = 0.99999
     """Decay rate for the introspection probability. The probability of using the teacher's action decreases over time."""
     burn_in: int = 1000
     """Number of steps to burn in before starting introspection. During this period, the agent learns without using the teacher's actions."""
+    teacher_q_lr: float = 3e-4
+    """the learning rate of the teacher Q network optimizer"""
 
     compile: bool = False
     """whether to use torch.compile."""
@@ -262,9 +266,12 @@ if __name__ == "__main__":
     ts_qnet_params.copy_(tn_qnet_params)
     ts_qnet_params.requires_grad_(False)  # noqa: FBT003
 
-    q_optimizer = optim.Adam(
-        list(student_qnet.parameters()) + list(tn_qnet.parameters()),  # add new teacher qnet params
+    q_optimizer = optim.Adam(student_qnet.parameters(),  # add new teacher qnet params
         lr=args.q_lr,
+        capturable=args.cudagraphs and not args.compile,
+    )
+    q_optimizer_teacher = optim.Adam(tn_qnet.parameters(),  # add new teacher qnet params
+        lr=args.teacher_q_lr,
         capturable=args.cudagraphs and not args.compile,
     )
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr, capturable=args.cudagraphs and not args.compile)
@@ -315,38 +322,45 @@ if __name__ == "__main__":
         with torch.no_grad():
             next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
             qf_next_target = torch.vmap(batched_qf, (0, None, None))(student_qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
+            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
-
-            # compute the target Q-values for the teacher network
-            qf_next_teacher = torch.vmap(batched_qf_tn_qnet, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target_teacher = qf_next_teacher.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
-            next_q_value_tchr = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target_teacher.view(-1)
 
         # TD error for the student Q-function
         qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
         qf_loss_student = qf_a_values.sum(0)
+
+        qf_loss = qf_loss_student
+        qf_loss.backward()
+        q_optimizer.step()
+        return TensorDict(qf_loss=qf_loss.detach())
+
+    def update_teacher(data: any) -> TensorDict:
+        """Update the teacher Q-function network."""
+        q_optimizer_teacher.zero_grad()
+        with torch.no_grad():
+            next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
+            qf_next_target = torch.vmap(batched_qf_tn_qnet, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
+            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi
+            next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
 
         # TD error for the teacher Q-function
         qf_a_values_teacher = torch.vmap(batched_qf_tn_qnet, (0, None, None, None))(
             tn_qnet_params,
             data["observations"],
             data["actions"],
-            next_q_value_tchr,
+            next_q_value,
         )
         qf_loss_teacher = qf_a_values_teacher.sum(0)
-
-        qf_loss = qf_loss_student + qf_loss_teacher
-        qf_loss.backward()
-        q_optimizer.step()
-        return TensorDict(qf_loss=qf_loss.detach())
+        qf_loss_teacher.backward()
+        q_optimizer_teacher.step()
+        return TensorDict(qf_loss=qf_loss_teacher.detach())
 
     def update_pol(data: any) -> TensorDict:
         """Update the policy network."""
         actor_optimizer.zero_grad()
         pi, log_pi, _ = actor.get_action(data["observations"])
         qf_pi = torch.vmap(batched_qf, (0, None, None))(student_qnet_params.data, data["observations"], pi)
-        min_qf_pi = qf_pi.min(0).values  # noqa: PD011
+        min_qf_pi = qf_pi.min(0).values
         actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
 
         actor_loss.backward()
@@ -371,11 +385,13 @@ if __name__ == "__main__":
     if args.compile:
         mode = None  # "reduce-overhead" if not args.cudagraphs else None
         update_main = torch.compile(update_main, mode=mode)
+        update_teacher = torch.compile(update_teacher, mode=mode)
         update_pol = torch.compile(update_pol, mode=mode)
         policy = torch.compile(policy, mode=mode)
 
     if args.cudagraphs:
         update_main = CudaGraphModule(update_main, in_keys=[], out_keys=[])
+        update_teacher = CudaGraphModule(update_teacher, in_keys=[], out_keys=[])
         update_pol = CudaGraphModule(update_pol, in_keys=[], out_keys=[])
 
     if args.gradient_steps < 0:
@@ -413,8 +429,8 @@ if __name__ == "__main__":
             student_actions = policy(obs)
             p = Bernoulli(probability).sample([envs.num_envs]).to(device)
             if global_step > args.burn_in:
-                teacher_source_q = torch.vmap(batched_qf_ts_qnet, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
-                teacher_target_q = torch.vmap(batched_qf_tn_qnet, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
+                teacher_source_q = torch.vmap(batched_qf_ts_qnet, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values
+                teacher_target_q = torch.vmap(batched_qf_tn_qnet, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q).squeeze(-1)
                 h_t = (abs_diff <= args.introspection_threshold).int() * p
                 avg_advice.append(h_t.float().sum().item())
@@ -467,6 +483,7 @@ if __name__ == "__main__":
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             out_main = update_main(data)
+            out_teacher = update_teacher(data)
             if iter_indx % args.policy_frequency == 0:  # TD 3 Delayed update support
                 for _ in range(args.gradient_steps):  # compensate for the delay by doing 'actor_update_interval' instead of 1
                     out_main.update(update_pol(data))
@@ -484,7 +501,7 @@ if __name__ == "__main__":
                 performance_difference = np.mean(iaa_performance) - np.mean(aux_performance)
                 step = 0.05
                 args.introspection_threshold += step * np.sign(performance_difference)
-                args.introspection_threshold = float(np.clip(args.introspection_threshold, 0.01, 1.0))
+                args.introspection_threshold = float(np.clip(args.introspection_threshold, 0.01, 100.0))
                 iaa_performance.clear()
                 aux_performance.clear()
 
@@ -497,6 +514,7 @@ if __name__ == "__main__":
                         "actor_loss": out_main["actor_loss"].mean(),
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
+                        "qf_loss_teacher": out_teacher["qf_loss"].mean(),
                         "advice": torch.tensor(avg_advice).mean(),
                         "introspection_threshold": args.introspection_threshold,
                         "abs_diff": abs_diff.mean().item(),
