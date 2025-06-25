@@ -98,6 +98,11 @@ def make_env(env_id, seed, idx, capture_video, run_name):
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
             env_kwargs = args.env_kwargs if args.env_kwargs is not None else {}
+            for k, v in env_kwargs.items():
+                try:
+                    env_kwargs[k] = float(v)
+                except (ValueError, TypeError):
+                    env_kwargs[k] = v
             env = gym.make(env_id, **env_kwargs)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
