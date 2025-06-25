@@ -1,7 +1,7 @@
 #!/bin/bash
 # Execute scripts with different seeds and additional arguments for torchcompile scripts
 scripts=(
-    sac_finetune.py
+    sac_torchcompile.py
 )
 for script in "${scripts[@]}"; do
     for seed in 21 31 41; do
