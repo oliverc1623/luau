@@ -78,12 +78,16 @@ class Args:
     """Entropy regularization coefficient."""
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
+
+    # DIAA/IAA specific arguments
     introspection_threshold: float = 0.5
     """Threshold for introspection. If the difference between the source and target Q-values is below this threshold, the teacher's action is used."""
     introspection_decay: float = 0.99999
     """Decay rate for the introspection probability. The probability of using the teacher's action decreases over time."""
     burn_in: int = 1000
     """Number of steps to burn in before starting introspection. During this period, the agent learns without using the teacher's actions."""
+    teacher_q_lr: float = 3e-4
+    """the learning rate of the teacher Q network optimizer"""
 
     compile: bool = False
     """whether to use torch.compile."""
@@ -290,6 +294,15 @@ if __name__ == "__main__":
                 return loss_val
             return vals
 
+    def batched_ts_qf(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
+        """Compute the Q-value for a batch of observations and actions using the provided parameters."""
+        with params.to_module(ts_qnet):
+            vals = ts_qnet(obs, action)
+            if next_q_value is not None:
+                loss_val = f.mse_loss(vals.view(-1), next_q_value)
+                return loss_val
+            return vals
+
     def update_main(data: any) -> TensorDict:
         """Update the main Q-function and policy networks."""
         # optimize the model
@@ -297,20 +310,24 @@ if __name__ == "__main__":
         with torch.no_grad():
             next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
             qf_next_target = torch.vmap(batched_qf, (0, None, None))(student_qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
+            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
 
-            # compute the target Q-values for the teacher network
-            qf_next_teacher = torch.vmap(batched_qf, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target_teacher = qf_next_teacher.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
-            next_q_value_tchr = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target_teacher.view(-1)
+            qf_next_target_teacher = torch.vmap(batched_qf, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
+            min_qf_next_target_teacher = qf_next_target_teacher.min(dim=0).values - alpha * next_state_log_pi
+            next_q_value_teacher = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target_teacher.view(-1)
 
         # TD error for the student Q-function
         qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
         qf_loss_student = qf_a_values.sum(0)
 
         # TD error for the teacher Q-function
-        qf_a_values_teacher = torch.vmap(batched_qf, (0, None, None, None))(ts_qnet_params, data["observations"], data["actions"], next_q_value_tchr)
+        qf_a_values_teacher = torch.vmap(batched_qf, (0, None, None, None))(
+            tn_qnet_params,
+            data["observations"],
+            data["actions"],
+            next_q_value_teacher,
+        )
         qf_loss_teacher = qf_a_values_teacher.sum(0)
 
         qf_loss = qf_loss_student + qf_loss_teacher
@@ -323,7 +340,7 @@ if __name__ == "__main__":
         actor_optimizer.zero_grad()
         pi, log_pi, _ = actor.get_action(data["observations"])
         qf_pi = torch.vmap(batched_qf, (0, None, None))(student_qnet_params.data, data["observations"], pi)
-        min_qf_pi = qf_pi.min(0).values  # noqa: PD011
+        min_qf_pi = qf_pi.min(0).values
         actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
 
         actor_loss.backward()
@@ -370,6 +387,7 @@ if __name__ == "__main__":
     avg_advice = deque(maxlen=20)
     desc = ""
     episode_start = np.zeros(envs.num_envs, dtype=bool)
+    abs_diff = torch.zeros(envs.num_envs, dtype=torch.float, device=device)
 
     for iter_indx in pbar:
         global_step = iter_indx * args.num_envs
@@ -387,8 +405,9 @@ if __name__ == "__main__":
             student_actions = policy(obs)
             p = Bernoulli(probability).sample([envs.num_envs]).to(device)
             if global_step > args.burn_in:
-                teacher_source_q = torch.vmap(batched_qf, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
-                teacher_target_q = torch.vmap(batched_qf, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
+                with torch.no_grad():
+                    teacher_source_q = torch.vmap(batched_ts_qf, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values
+                    teacher_target_q = torch.vmap(batched_qf, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q).squeeze(-1)
                 h_t = (abs_diff <= args.introspection_threshold).int() * p
                 avg_advice.append(h_t.float().sum().item())
@@ -459,6 +478,7 @@ if __name__ == "__main__":
                         "qf_loss": out_main["qf_loss"].mean(),
                         "advice": torch.tensor(avg_advice).mean(),
                         "introspection_threshold": args.introspection_threshold,
+                        "abs_diff": abs_diff.mean().item(),
                     }
                 wandb.log(
                     {
