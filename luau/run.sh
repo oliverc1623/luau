@@ -1,8 +1,8 @@
 #!/bin/bash
 # Execute scripts with different seeds and additional arguments for torchcompile scripts
 scripts=(
-    sac_iaa.py
     sac_diaa.py
+    sac_iaa.py
 )
 for script in "${scripts[@]}"; do
     for seed in 21 31 41; do
