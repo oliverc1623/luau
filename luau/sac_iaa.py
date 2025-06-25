@@ -310,11 +310,11 @@ if __name__ == "__main__":
         with torch.no_grad():
             next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
             qf_next_target = torch.vmap(batched_qf, (0, None, None))(student_qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi
+            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
 
             qf_next_target_teacher = torch.vmap(batched_qf, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target_teacher = qf_next_target_teacher.min(dim=0).values - alpha * next_state_log_pi
+            min_qf_next_target_teacher = qf_next_target_teacher.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
             next_q_value_teacher = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target_teacher.view(-1)
 
         # TD error for the student Q-function
@@ -340,7 +340,7 @@ if __name__ == "__main__":
         actor_optimizer.zero_grad()
         pi, log_pi, _ = actor.get_action(data["observations"])
         qf_pi = torch.vmap(batched_qf, (0, None, None))(student_qnet_params.data, data["observations"], pi)
-        min_qf_pi = qf_pi.min(0).values
+        min_qf_pi = qf_pi.min(0).values  # noqa: PD011
         actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
 
         actor_loss.backward()
@@ -406,8 +406,8 @@ if __name__ == "__main__":
             p = Bernoulli(probability).sample([envs.num_envs]).to(device)
             if global_step > args.burn_in:
                 with torch.no_grad():
-                    teacher_source_q = torch.vmap(batched_ts_qf, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values
-                    teacher_target_q = torch.vmap(batched_qf, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values
+                    teacher_source_q = torch.vmap(batched_ts_qf, (0, None, None))(ts_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
+                    teacher_target_q = torch.vmap(batched_qf, (0, None, None))(tn_qnet_params, obs, teacher_actions).min(dim=0).values  # noqa: PD011
                 abs_diff = torch.abs(teacher_source_q - teacher_target_q).squeeze(-1)
                 h_t = (abs_diff <= args.introspection_threshold).int() * p
                 avg_advice.append(h_t.float().sum().item())
@@ -488,8 +488,8 @@ if __name__ == "__main__":
                     step=global_step,
                 )
     # save the model
-    torch.save(actor.state_dict(), f"{run_name}_actor.pt")
-    torch.save(student_qnet_params.data.cpu(), f"{run_name}_qnet.pt")
-    wandb.save(f"{run_name}_actor.pt")
-    wandb.save(f"{run_name}_qnet.pt")
+    torch.save(actor.state_dict(), f"{Path(__file__).stem}-{run_name}_actor.pt")
+    torch.save(student_qnet_params.data.cpu(), f"{Path(__file__).stem}-{run_name}_actor_qnet.pt")
+    wandb.save(f"{Path(__file__).stem}-{run_name}_actor.pt")
+    wandb.save(f"{Path(__file__).stem}-{run_name}_qnet.pt")
     envs.close()
