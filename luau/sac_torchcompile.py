@@ -11,7 +11,6 @@ import time
 import warnings
 from collections import deque
 from dataclasses import dataclass
-from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
