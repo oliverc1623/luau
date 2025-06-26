@@ -20,7 +20,7 @@ class CustomMetaDriveEnv(MetaDriveEnv):
         obs, info = super().reset(seed)
         return obs, info
 
-    def render(self):  # noqa: ANN201
+    def render(self, r: int = 0, t: int = 0):  # noqa: ANN201
         """Call the parent render method."""
         return super().render(
             mode="topdown",
@@ -28,6 +28,11 @@ class CustomMetaDriveEnv(MetaDriveEnv):
             screen_size=(400, 400),
             camera_position=(100, 7),
             scaling=2,
+            screen_record=True,
+            text={
+                "Timestep": t,
+                "Reward": f"{r:0.2f}",
+            },
         )
 
 
