@@ -11,6 +11,7 @@ import time
 import warnings
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
@@ -203,8 +204,8 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + i, 0, args.capture_video, run_name) for i in range(args.num_envs)],
+    envs = gym.vector.AsyncVectorEnv(
+        [make_env(args.seed + i) for i in range(args.num_envs)],
         autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
     )
     n_act = math.prod(envs.single_action_space.shape)
@@ -426,8 +427,8 @@ if __name__ == "__main__":
                     step=global_step,
                 )
     # save the model
-    torch.save(actor.state_dict(), f"{run_name}_actor.pt")
-    torch.save(qnet_params.data.cpu(), f"{run_name}_qnet.pt")
-    wandb.save(f"{run_name}_actor.pt")
-    wandb.save(f"{run_name}_qnet.pt")
+    torch.save(actor.state_dict(), f"{Path(__file__).stem}-{run_name}_actor.pt")
+    torch.save(qnet_params.data.cpu(), f"{Path(__file__).stem}-{run_name}_actor_qnet.pt")
+    wandb.save(f"{Path(__file__).stem}-{run_name}_actor.pt")
+    wandb.save(f"{Path(__file__).stem}-{run_name}_qnet.pt")
     envs.close()
