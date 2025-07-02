@@ -6,9 +6,9 @@ scripts=(
     sac_diaa.py
 )
 for script in "${scripts[@]}"; do
-    for seed in 92; do
-        if [[ $script == *.py ]]; then
-            for gravity in -10 -6 -2 0; do
+    for seed in 61 72 82 92; do
+        for gravity in -11.5 -6 -2 -0.5; do
+            if [[ $script == *.py ]]; then
                 python $script --seed=$seed \
                     --env-id "LunarLander-v3" \
                     --exp_name "student" \
@@ -19,7 +19,9 @@ for script in "${scripts[@]}"; do
                     --total-timesteps 1_000_000 \
                     --pretrained_run_id "luau/vmfqjyly" \
                     --env_kwargs continuous True enable_wind True wind_power 20.0 turbulence_power 2.0 gravity $gravity
+            else
+                python $script --seed=$seed
             fi
-        fi
+        done
     done
 done
