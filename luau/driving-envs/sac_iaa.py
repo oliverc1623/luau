@@ -15,7 +15,7 @@ import torch.nn.functional as f
 import tqdm
 import tyro
 import wandb
-from straight_road import CustomMetaDriveEnv
+from custom_metadrive_env import CustomMetaDriveEnv
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule, TensorDictModule
 from torch import nn, optim
@@ -55,6 +55,7 @@ class Args:
     # Environment specific arguments
     traffic_density: float = 0.1
     map: str = "S"
+    accident_prob: float = 0.0
 
     # Algorithm specific arguments
     total_timesteps: int = 1000000
@@ -114,6 +115,7 @@ def make_env(seed: int) -> callable:
                 num_scenarios=args.num_envs,
                 start_seed=seed,
                 traffic_density=float(args.traffic_density),
+                accident_prob=float(args.accident_prob),
             ),
         )
         env = gym.wrappers.RecordEpisodeStatistics(env)
