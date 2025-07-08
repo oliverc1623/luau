@@ -15,7 +15,7 @@ import torch.nn.functional as f
 import tqdm
 import tyro
 import wandb
-from straight_road import CustomMetaDriveEnv
+from custom_metadrive_env import CustomMetaDriveEnv
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule, TensorDictModule
 from torch import nn, optim

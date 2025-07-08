@@ -11,6 +11,7 @@ import time
 import warnings
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 import gymnasium as gym
 from straight_road import CustomMetaDriveEnv
@@ -330,6 +331,7 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        print(f"rewards: {rewards}")
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos and "episode" in infos["final_info"]:
@@ -399,8 +401,8 @@ if __name__ == "__main__":
                     step=global_step,
                 )
     # save the model
-    torch.save(actor.state_dict(), f"{run_name}_actor.pt")
-    torch.save(qnet_params.data.cpu(), f"{run_name}_qnet.pt")
-    wandb.save(f"{run_name}_actor.pt")
-    wandb.save(f"{run_name}_qnet.pt")
+    torch.save(actor.state_dict(), f"{Path(__file__).stem}-{run_name}_actor.pt")
+    torch.save(qnet_params.data.cpu(), f"{Path(__file__).stem}-{run_name}_actor_qnet.pt")
+    wandb.save(f"{Path(__file__).stem}-{run_name}_actor.pt")
+    wandb.save(f"{Path(__file__).stem}-{run_name}_qnet.pt")
     envs.close()
