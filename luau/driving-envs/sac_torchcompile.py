@@ -1,9 +1,4 @@
-# ruff: noqa
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
-import os
-
-os.environ["TORCHDYNAMO_INLINE_INBUILT_NN_MODULES"] = "1"
-
 import math
 import os
 import random
@@ -14,29 +9,30 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import gymnasium as gym
-from straight_road import CustomMetaDriveEnv
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
+import torch.nn.functional as f
 import tqdm
 import tyro
 import wandb
+from custom_metadrive_env import CustomMetaDriveEnv
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule, TensorDictModule
-
-# from stable_baselines3.common.buffers import ReplayBuffer
+from torch import nn, optim
 from torchrl.data import LazyTensorStorage, ReplayBuffer
+
 
 warnings.filterwarnings("ignore")
 os.environ["TORCHDYNAMO_INLINE_INBUILT_NN_MODULES"] = "1"
 wandb.login(key="82555a3ad6bd991b8c4019a5a7a86f61388f6df1")
+api = wandb.Api()
 
 
 @dataclass
 class Args:
-    exp_name: str = os.path.basename(__file__)[: -len(".py")]
+    """Arguments for the SAC algorithm."""
+
+    exp_name: str = Path(__file__).name[: -len(".py")]
     """the name of this experiment"""
     seed: int = 1
     """seed of the experiment"""
@@ -56,6 +52,8 @@ class Args:
     # Environment specific arguments
     traffic_density: float = 0.1
     map: str = "S"
+    accident_prob: float = 0.0
+    """the accident probability of the environment, 0.0 means no accidents, 1.0 means full accidents"""
 
     # Algorithm specific arguments
     total_timesteps: int = 1000000
@@ -94,8 +92,10 @@ class Args:
     """Number of burn-in iterations for speed measure."""
 
 
-def make_env(seed, capture_video, run_name):
-    def thunk():
+def make_env(seed: int) -> callable:
+    """Create and configure a gym environment based on the provided parameters."""
+
+    def thunk() -> gym.Env:
         env = CustomMetaDriveEnv(
             dict(
                 map=args.map,
@@ -103,10 +103,9 @@ def make_env(seed, capture_video, run_name):
                 num_scenarios=args.num_envs,
                 start_seed=seed,
                 traffic_density=float(args.traffic_density),
+                accident_prob=float(args.accident_prob),
             ),
         )
-        if capture_video and idx == 0:
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
@@ -116,16 +115,19 @@ def make_env(seed, capture_video, run_name):
 
 # ALGO LOGIC: initialize agent here:
 class SoftQNetwork(nn.Module):
-    def __init__(self, env, n_act, n_obs, device=None):
+    """A neural network that approximates the soft Q-function for reinforcement learning."""
+
+    def __init__(self, env: gym.Env, n_act: int, n_obs: int, device: str | None = None):  # noqa: ARG002
         super().__init__()
         self.fc1 = nn.Linear(n_act + n_obs, 256, device=device)
         self.fc2 = nn.Linear(256, 256, device=device)
         self.fc3 = nn.Linear(256, 1, device=device)
 
-    def forward(self, x, a):
+    def forward(self, x: torch.tensor, a: torch.tensor) -> torch.Tensor:
+        """Forward pass."""
         x = torch.cat([x, a], 1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
+        x = f.relu(self.fc1(x))
+        x = f.relu(self.fc2(x))
         x = self.fc3(x)
         return x
 
@@ -135,7 +137,9 @@ LOG_STD_MIN = -5
 
 
 class Actor(nn.Module):
-    def __init__(self, env, n_obs, n_act, device=None):
+    """A neural network that approximates the policy for reinforcement learning."""
+
+    def __init__(self, env: gym.Env, n_obs: int, n_act: int, device: str | None = None):
         super().__init__()
         self.fc1 = nn.Linear(n_obs, 256, device=device)
         self.fc2 = nn.Linear(256, 256, device=device)
@@ -152,9 +156,10 @@ class Actor(nn.Module):
             torch.tensor((action_space.high + action_space.low) / 2.0, dtype=torch.float32, device=device),
         )
 
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
+    def forward(self, x: torch.tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass."""
+        x = f.relu(self.fc1(x))
+        x = f.relu(self.fc2(x))
         mean = self.fc_mean(x)
         log_std = self.fc_logstd(x)
         log_std = torch.tanh(log_std)
@@ -162,7 +167,8 @@ class Actor(nn.Module):
 
         return mean, log_std
 
-    def get_action(self, x):
+    def get_action(self, x: torch.tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Get action from the policy network."""
         mean, log_std = self(x)
         std = log_std.exp()
         normal = torch.distributions.Normal(mean, std)
@@ -183,14 +189,14 @@ if __name__ == "__main__":
 
     wandb.init(
         project="luau",
-        name=f"{os.path.splitext(os.path.basename(__file__))[0]}-{run_name}",
+        name=f"{Path(__file__).stem}-{run_name}",
         config=vars(args),
         save_code=True,
     )
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
-    np.random.seed(args.seed)
+    np_rng = np.random.default_rng(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
@@ -198,7 +204,7 @@ if __name__ == "__main__":
 
     # env setup
     envs = gym.vector.AsyncVectorEnv(
-        [make_env(args.seed + i, args.capture_video, run_name) for i in range(args.num_envs)],
+        [make_env(args.seed + i) for i in range(args.num_envs)],
         autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
     )
     n_act = math.prod(envs.single_action_space.shape)
@@ -213,7 +219,8 @@ if __name__ == "__main__":
     from_module(actor).data.to_module(actor_detach)
     policy = TensorDictModule(actor_detach.get_action, in_keys=["observation"], out_keys=["action"])
 
-    def get_q_params():
+    def get_q_params() -> tuple[TensorDict, TensorDict, SoftQNetwork]:
+        """Initialize the Q-function parameters and target network."""
         qf1 = SoftQNetwork(envs, device=device, n_act=n_act, n_obs=n_obs)
         qf2 = SoftQNetwork(envs, device=device, n_act=n_act, n_obs=n_obs)
         qnet_params = from_modules(qf1, qf2, as_module=True)
@@ -242,21 +249,23 @@ if __name__ == "__main__":
     envs.single_observation_space.dtype = np.float32
     rb = ReplayBuffer(storage=LazyTensorStorage(args.buffer_size, device=device))
 
-    def batched_qf(params, obs, action, next_q_value=None):
+    def batched_qf(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
+        """Compute the Q-value for a batch of observations and actions using the provided parameters."""
         with params.to_module(qnet):
             vals = qnet(obs, action)
             if next_q_value is not None:
-                loss_val = F.mse_loss(vals.view(-1), next_q_value)
+                loss_val = f.mse_loss(vals.view(-1), next_q_value)
                 return loss_val
             return vals
 
-    def update_main(data):
+    def update_main(data: any) -> TensorDict:
+        """Update the main Q-function and policy networks."""
         # optimize the model
         q_optimizer.zero_grad()
         with torch.no_grad():
             next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
             qf_next_target = torch.vmap(batched_qf, (0, None, None))(qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi
+            min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
 
         qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(qnet_params, data["observations"], data["actions"], next_q_value)
@@ -266,11 +275,12 @@ if __name__ == "__main__":
         q_optimizer.step()
         return TensorDict(qf_loss=qf_loss.detach())
 
-    def update_pol(data):
+    def update_pol(data: any) -> TensorDict:
+        """Update the policy network."""
         actor_optimizer.zero_grad()
         pi, log_pi, _ = actor.get_action(data["observations"])
         qf_pi = torch.vmap(batched_qf, (0, None, None))(qnet_params.data, data["observations"], pi)
-        min_qf_pi = qf_pi.min(0).values
+        min_qf_pi = qf_pi.min(0).values  # noqa: PD011
         actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
 
         actor_loss.backward()
@@ -286,7 +296,8 @@ if __name__ == "__main__":
             a_optimizer.step()
         return TensorDict(alpha=alpha.detach(), actor_loss=actor_loss.detach(), alpha_loss=alpha_loss.detach())
 
-    def extend_and_sample(transition):
+    def extend_and_sample(transition: any) -> TensorDict:
+        """Extend the replay buffer and sample a batch of transitions."""
         rb.extend(transition)
         return rb.sample(args.batch_size)
 
@@ -300,7 +311,6 @@ if __name__ == "__main__":
     if args.cudagraphs:
         update_main = CudaGraphModule(update_main, in_keys=[], out_keys=[])
         update_pol = CudaGraphModule(update_pol, in_keys=[], out_keys=[])
-        # policy = CudaGraphModule(policy)
 
     if args.gradient_steps < 0:
         args.gradient_steps = args.policy_frequency * args.num_envs
@@ -331,7 +341,6 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        print(f"rewards: {rewards}")
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos and "episode" in infos["final_info"]:
