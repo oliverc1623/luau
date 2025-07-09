@@ -55,7 +55,7 @@ class Args:
     # Environment specific arguments
     traffic_density: float = 0.1
     map: str = "S"
-    accident_prob: float = 0.0
+    accident_prob: float = 1.0
 
     # Algorithm specific arguments
     total_timesteps: int = 1000000
@@ -112,8 +112,8 @@ def make_env(seed: int) -> callable:
             dict(
                 map=args.map,
                 random_lane_num=True,
-                num_scenarios=args.num_envs,
-                start_seed=seed,
+                num_scenarios=1,
+                start_seed=args.seed,
                 traffic_density=float(args.traffic_density),
                 accident_prob=float(args.accident_prob),
             ),
