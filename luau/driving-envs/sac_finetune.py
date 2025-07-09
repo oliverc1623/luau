@@ -108,7 +108,7 @@ def make_env(seed: int) -> callable:
                 map=args.map,
                 random_lane_num=True,
                 num_scenarios=1,
-                start_seed=seed,
+                start_seed=100,
                 traffic_density=float(args.traffic_density),
                 accident_prob=float(args.accident_prob),
             ),
@@ -336,7 +336,7 @@ if __name__ == "__main__":
         args.gradient_steps = args.policy_frequency * args.num_envs
 
     # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset(seed=args.seed)
+    obs, _ = envs.reset()
     obs = torch.as_tensor(obs, device=device, dtype=torch.float)
     num_iterations = int(args.total_timesteps // args.num_envs)
     pbar = tqdm.tqdm(range(num_iterations))
