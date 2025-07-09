@@ -108,7 +108,7 @@ def make_env(seed: int) -> callable:
                 map=args.map,
                 random_lane_num=True,
                 num_scenarios=1,
-                start_seed=args.seed,
+                start_seed=seed,
                 traffic_density=float(args.traffic_density),
                 accident_prob=float(args.accident_prob),
             ),
