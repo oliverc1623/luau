@@ -186,7 +186,7 @@ class Actor(nn.Module):
         log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
         log_prob = log_prob.sum(1, keepdim=True)
         mean = torch.tanh(mean) * self.action_scale + self.action_bias
-        return action, log_prob, mean
+        return action, log_prob, mean, torch.distributions.Normal(mean, std)
 
 
 if __name__ == "__main__":
@@ -230,10 +230,11 @@ if __name__ == "__main__":
     from_module(actor).data.to_module(actor_detach)
     policy = TensorDictModule(actor_detach.get_action, in_keys=["observation"], out_keys=["action"])
 
-    # teacher
+    # teacher actor
     pretrained_actor_file = wandb.restore(actor_file, run_path=args.pretrained_run_id)
     pretrained_actor_state_dict = torch.load(pretrained_actor_file.name, map_location=device)
 
+    # Load the pretrained actor state dict into the teacher actor
     teacher_actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
     teacher_actor.load_state_dict(pretrained_actor_state_dict)
     for param in teacher_actor.parameters():
@@ -252,26 +253,15 @@ if __name__ == "__main__":
 
         return qnet_params, qnet_target, qnet
 
+    # student q networks
     student_qnet_params, student_qnet_target, student_qnet = get_q_params()
     student_qnet_target.copy_(student_qnet_params.data)
 
-    # load pretrained qnet params into teacher qnet
-    pretrained_qnet = wandb.restore(qnet_file, run_path=args.pretrained_run_id)
-    pretrained_qnet_tensordict = torch.load(pretrained_qnet.name, map_location=device)
-
-    # teacher new (tn) - to be trained
-    tn_qnet_params, tn_qnet_target, tn_qnet = get_q_params()
-    tn_qnet_params.copy_(pretrained_qnet_tensordict)
-    tn_qnet_target.copy_(tn_qnet_params.data)
-    tn_qnet_params.requires_grad_(True)  # noqa: FBT003
-
-    # teacher source (ts) - not to be trained
-    ts_qnet_params, _, ts_qnet = get_q_params()
-    ts_qnet_params.copy_(tn_qnet_params)
-    ts_qnet_params.requires_grad_(False)  # noqa: FBT003
+    kl_qnet_params, kl_qnet_target, kl_qnet = get_q_params()
+    kl_qnet_target.copy_(kl_qnet_params.data)
 
     q_optimizer = optim.Adam(
-        list(student_qnet.parameters()) + list(tn_qnet.parameters()),  # add new teacher qnet params
+        list(student_qnet.parameters() + kl_qnet.parameters()),
         lr=args.q_lr,
         capturable=args.cudagraphs and not args.compile,
     )
@@ -298,15 +288,6 @@ if __name__ == "__main__":
                 return loss_val
             return vals
 
-    def batched_ts_qf(params: any, obs: any, action: any, next_q_value=None) -> torch.Tensor:  # noqa: ANN001
-        """Compute the Q-value for a batch of observations and actions using the provided parameters."""
-        with params.to_module(ts_qnet):
-            vals = ts_qnet(obs, action)
-            if next_q_value is not None:
-                loss_val = f.mse_loss(vals.view(-1), next_q_value)
-                return loss_val
-            return vals
-
     def update_main(data: any) -> TensorDict:
         """Update the main Q-function and policy networks."""
         # optimize the model
@@ -317,24 +298,11 @@ if __name__ == "__main__":
             min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
 
-            qf_next_target_teacher = torch.vmap(batched_qf, (0, None, None))(tn_qnet_target, data["next_observations"], next_state_actions)
-            min_qf_next_target_teacher = qf_next_target_teacher.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
-            next_q_value_teacher = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target_teacher.view(-1)
-
         # TD error for the student Q-function
         qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
         qf_loss_student = qf_a_values.sum(0)
 
-        # TD error for the teacher Q-function
-        qf_a_values_teacher = torch.vmap(batched_qf, (0, None, None, None))(
-            tn_qnet_params,
-            data["observations"],
-            data["actions"],
-            next_q_value_teacher,
-        )
-        qf_loss_teacher = qf_a_values_teacher.sum(0)
-
-        qf_loss = qf_loss_student + qf_loss_teacher
+        qf_loss = qf_loss_student
         qf_loss.backward()
         q_optimizer.step()
         return TensorDict(qf_loss=qf_loss.detach())
@@ -458,7 +426,6 @@ if __name__ == "__main__":
             if iter_indx % args.target_network_frequency == 0:
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
                 student_qnet_target.lerp_(student_qnet_params.data, args.tau)
-                tn_qnet_target.lerp_(tn_qnet_params.data, args.tau)
 
             if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
