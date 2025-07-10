@@ -78,15 +78,11 @@ class Args:
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
 
-    # DIAA/IAA specific arguments
-    introspection_threshold: float = 0.5
-    """Threshold for introspection. If the difference between the source and target Q-values is below this threshold, the teacher's action is used."""
-    introspection_decay: float = 0.99999
-    """Decay rate for the introspection probability. The probability of using the teacher's action decreases over time."""
-    burn_in: int = 1000
-    """Number of steps to burn in before starting introspection. During this period, the agent learns without using the teacher's actions."""
-    teacher_q_lr: float = 3e-4
-    """the learning rate of the teacher Q network optimizer"""
+    # TGRL specific arguments
+    teacher_coef: float = 1.0
+    """coefficient for the teacher loss"""
+    teacher_coef_update: float = 0.01
+    """update value for the teacher coefficient"""
 
     compile: bool = False
     """whether to use torch.compile."""
@@ -230,6 +226,12 @@ if __name__ == "__main__":
     from_module(actor).data.to_module(actor_detach)
     policy = TensorDictModule(actor_detach.get_action, in_keys=["observation"], out_keys=["action"])
 
+    aux_actor = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
+    aux_actor_detach = Actor(envs, device=device, n_act=n_act, n_obs=n_obs)
+    # Copy params to aux_actor_detach without grad
+    from_module(aux_actor).data.to_module(aux_actor_detach)
+    aux_policy = TensorDictModule(aux_actor_detach.get_action, in_keys=["observation"], out_keys=["action"])
+
     # teacher actor
     pretrained_actor_file = wandb.restore(actor_file, run_path=args.pretrained_run_id)
     pretrained_actor_state_dict = torch.load(pretrained_actor_file.name, map_location=device)
@@ -261,7 +263,7 @@ if __name__ == "__main__":
     kl_qnet_target.copy_(kl_qnet_params.data)
 
     q_optimizer = optim.Adam(
-        list(student_qnet.parameters() + kl_qnet.parameters()),
+        list(student_qnet.parameters()) + list(kl_qnet.parameters()),
         lr=args.q_lr,
         capturable=args.cudagraphs and not args.compile,
     )
@@ -293,16 +295,25 @@ if __name__ == "__main__":
         # optimize the model
         q_optimizer.zero_grad()
         with torch.no_grad():
-            next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
+            next_state_actions, next_state_log_pi, _, student_dist_next_obs = actor.get_action(data["next_observations"])
             qf_next_target = torch.vmap(batched_qf, (0, None, None))(student_qnet_target, data["next_observations"], next_state_actions)
             min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi  # noqa: PD011
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
+
+            _, _, _, teacher_dist_next_obs = teacher_actor.get_action(data["observations"])
+            kl_next_obs = torch.distributions.kl_divergence(student_dist_next_obs, teacher_dist_next_obs).sum(1)
+            next_qf_kl_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * (
+                min_qf_next_target.view(-1) + kl_next_obs.view(-1)
+            )
 
         # TD error for the student Q-function
         qf_a_values = torch.vmap(batched_qf, (0, None, None, None))(student_qnet_params, data["observations"], data["actions"], next_q_value)
         qf_loss_student = qf_a_values.sum(0)
 
-        qf_loss = qf_loss_student
+        qf_kl_a__values = torch.vmap(batched_qf, (0, None, None, None))(kl_qnet_params, data["observations"], data["actions"], next_qf_kl_value)
+        qf_loss_kl = qf_kl_a__values.sum(0)
+
+        qf_loss = qf_loss_student + qf_loss_kl
         qf_loss.backward()
         q_optimizer.step()
         return TensorDict(qf_loss=qf_loss.detach())
@@ -310,12 +321,24 @@ if __name__ == "__main__":
     def update_pol(data: any) -> TensorDict:
         """Update the policy network."""
         actor_optimizer.zero_grad()
-        pi, log_pi, _ = actor.get_action(data["observations"])
+        pi, log_pi, _, student_dist = actor.get_action(data["observations"])
         qf_pi = torch.vmap(batched_qf, (0, None, None))(student_qnet_params.data, data["observations"], pi)
         min_qf_pi = qf_pi.min(0).values  # noqa: PD011
         actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
 
-        actor_loss.backward()
+        aux_pi, aux_log_pi, _, _ = aux_actor.get_action(data["observations"])
+        aux_qf_pi = torch.vmap(batched_qf, (0, None, None))(student_qnet_params.data, data["observations"], aux_pi)
+        min_aux_qf_pi = aux_qf_pi.min(0).values  # noqa: PD011
+        aux_actor_loss = ((alpha * aux_log_pi) - min_aux_qf_pi).mean()
+
+        _, _, _, _, teacher_dist = teacher_actor.get_action(data["observations"])
+        cross_entropy = torch.distributions.kl_divergence(student_dist, teacher_dist).sum(1)
+        qf_pi_kl = torch.vmap(batched_qf, (0, None, None))(kl_qnet_params.data, data["observations"], pi)
+        min_qf_pi_kl = qf_pi_kl.min(0).values  # noqa: PD011
+        cross_entropy_loss = (cross_entropy - min_qf_pi_kl).mean()
+
+        overall_loss = actor_loss + aux_actor_loss + args.teacher_coef * cross_entropy_loss
+        overall_loss.backward()
         actor_optimizer.step()
 
         if args.autotune:
@@ -339,6 +362,7 @@ if __name__ == "__main__":
         update_main = torch.compile(update_main, mode=mode)
         update_pol = torch.compile(update_pol, mode=mode)
         policy = torch.compile(policy, mode=mode)
+        aux_policy = torch.compile(aux_policy, mode=mode)
 
     if args.cudagraphs:
         update_main = CudaGraphModule(update_main, in_keys=[], out_keys=[])
@@ -355,8 +379,8 @@ if __name__ == "__main__":
     start_time = None
     max_ep_ret = -float("inf")
     avg_returns = deque(maxlen=20)
-    h_t = torch.zeros(envs.num_envs, dtype=torch.int, device=device)
-    avg_advice = deque(maxlen=20)
+    actor_performance = deque(maxlen=20)
+    aux_performance = deque(maxlen=20)
     desc = ""
     episode_start = np.zeros(envs.num_envs, dtype=bool)
     abs_diff = torch.zeros(envs.num_envs, dtype=torch.float, device=device)
@@ -367,15 +391,26 @@ if __name__ == "__main__":
             start_time = time.time()
             measure_burnin = global_step
 
+        p = torch.distributions.Bernoulli(0.5).sample([envs.num_envs])
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            student_actions = policy(obs)
-            student_actions = student_actions.cpu().numpy()
+            main_actions = policy(obs)
+            main_actions = main_actions.cpu().numpy()
+
+            aux_actions = aux_policy(obs)
+            aux_actions = aux_actions.cpu().numpy()
+
+            actions = np.where(p.bool().unsqueeze(-1), main_actions, aux_actions)
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        for i, reward in enumerate(rewards):
+            if p[i].item():
+                actor_performance.append(reward)
+            else:
+                aux_performance.append(reward)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos and "episode" in infos["final_info"]:
@@ -427,6 +462,15 @@ if __name__ == "__main__":
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
                 student_qnet_target.lerp_(student_qnet_params.data, args.tau)
 
+            if global_step % args.coefficient_frequency == 0:
+                performance_difference = np.mean(actor_performance) - np.mean(aux_performance)
+                if performance_difference > 0:
+                    args.teacher_coef = args.teacher_coef + args.teacher_coef_update
+                else:
+                    teacher_coef = args.teacher_coef - args.teacher_coef_update
+                if args.teacher_coef < 0:
+                    args.teacher_coef = 0
+
             if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
                 pbar.set_description(f"{speed: 4.4f} sps, " + desc)
@@ -436,7 +480,6 @@ if __name__ == "__main__":
                         "actor_loss": out_main["actor_loss"].mean(),
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
-                        "advice": torch.tensor(avg_advice).mean(),
                         "introspection_threshold": args.introspection_threshold,
                         "abs_diff": abs_diff.mean().item(),
                     }
