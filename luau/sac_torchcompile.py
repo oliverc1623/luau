@@ -168,7 +168,7 @@ class Actor(nn.Module):
         log_prob -= torch.log(self.action_scale * (1 - y_t.pow(2)) + 1e-6)
         log_prob = log_prob.sum(1, keepdim=True)
         mean = torch.tanh(mean) * self.action_scale + self.action_bias
-        return action, log_prob, mean
+        return action, log_prob, mean, torch.distributions.Normal(mean, std)
 
 
 if __name__ == "__main__":
@@ -248,7 +248,7 @@ if __name__ == "__main__":
         # optimize the model
         q_optimizer.zero_grad()
         with torch.no_grad():
-            next_state_actions, next_state_log_pi, _ = actor.get_action(data["next_observations"])
+            next_state_actions, next_state_log_pi, _, _ = actor.get_action(data["next_observations"])
             qf_next_target = torch.vmap(batched_qf, (0, None, None))(qnet_target, data["next_observations"], next_state_actions)
             min_qf_next_target = qf_next_target.min(dim=0).values - alpha * next_state_log_pi
             next_q_value = data["rewards"].flatten() + (~data["dones"].flatten()).float() * args.gamma * min_qf_next_target.view(-1)
@@ -262,7 +262,7 @@ if __name__ == "__main__":
 
     def update_pol(data):
         actor_optimizer.zero_grad()
-        pi, log_pi, _ = actor.get_action(data["observations"])
+        pi, log_pi, _, _ = actor.get_action(data["observations"])
         qf_pi = torch.vmap(batched_qf, (0, None, None))(qnet_params.data, data["observations"], pi)
         min_qf_pi = qf_pi.min(0).values
         actor_loss = ((alpha * log_pi) - min_qf_pi).mean()
@@ -273,7 +273,7 @@ if __name__ == "__main__":
         if args.autotune:
             a_optimizer.zero_grad()
             with torch.no_grad():
-                _, log_pi, _ = actor.get_action(data["observations"])
+                _, log_pi, _, _ = actor.get_action(data["observations"])
             alpha_loss = (-log_alpha.exp() * (log_pi + target_entropy)).mean()
 
             alpha_loss.backward()
