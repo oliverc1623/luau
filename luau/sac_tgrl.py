@@ -331,7 +331,7 @@ if __name__ == "__main__":
         min_aux_qf_pi = aux_qf_pi.min(0).values  # noqa: PD011
         aux_actor_loss = ((alpha * aux_log_pi) - min_aux_qf_pi).mean()
 
-        _, _, _, _, teacher_dist = teacher_actor.get_action(data["observations"])
+        _, _, _, teacher_dist = teacher_actor.get_action(data["observations"])
         cross_entropy = torch.distributions.kl_divergence(student_dist, teacher_dist).sum(1)
         qf_pi_kl = torch.vmap(batched_qf, (0, None, None))(kl_qnet_params.data, data["observations"], pi)
         min_qf_pi_kl = qf_pi_kl.min(0).values  # noqa: PD011
@@ -344,7 +344,7 @@ if __name__ == "__main__":
         if args.autotune:
             a_optimizer.zero_grad()
             with torch.no_grad():
-                _, log_pi, _ = actor.get_action(data["observations"])
+                _, log_pi, _, _ = actor.get_action(data["observations"])
             alpha_loss = (-log_alpha.exp() * (log_pi + target_entropy)).mean()
 
             alpha_loss.backward()
@@ -462,7 +462,7 @@ if __name__ == "__main__":
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
                 student_qnet_target.lerp_(student_qnet_params.data, args.tau)
 
-            if global_step % args.coefficient_frequency == 0:
+            if iter_indx % 100 == 0:
                 performance_difference = np.mean(actor_performance) - np.mean(aux_performance)
                 if performance_difference > 0:
                     args.teacher_coef = args.teacher_coef + args.teacher_coef_update
@@ -480,8 +480,6 @@ if __name__ == "__main__":
                         "actor_loss": out_main["actor_loss"].mean(),
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
-                        "introspection_threshold": args.introspection_threshold,
-                        "abs_diff": abs_diff.mean().item(),
                     }
                 wandb.log(
                     {
