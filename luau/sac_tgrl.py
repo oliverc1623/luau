@@ -209,7 +209,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
+    envs = gym.vector.AsyncVectorEnv(
         [make_env(args.env_id, args.seed + i, 0, args.capture_video, run_name) for i in range(args.num_envs)],
         autoreset_mode=gym.vector.AutoresetMode.SAME_STEP,
     )
@@ -267,7 +267,11 @@ if __name__ == "__main__":
         lr=args.q_lr,
         capturable=args.cudagraphs and not args.compile,
     )
-    actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr, capturable=args.cudagraphs and not args.compile)
+    actor_optimizer = optim.Adam(
+        list(actor.parameters()) + list(aux_actor.parameters()),
+        lr=args.policy_lr,
+        capturable=args.cudagraphs and not args.compile,
+    )
 
     # Automatic entropy tuning
     if args.autotune:
@@ -349,7 +353,13 @@ if __name__ == "__main__":
 
             alpha_loss.backward()
             a_optimizer.step()
-        return TensorDict(alpha=alpha.detach(), actor_loss=actor_loss.detach(), alpha_loss=alpha_loss.detach())
+        return TensorDict(
+            alpha=alpha.detach(),
+            actor_loss=actor_loss.detach(),
+            alpha_loss=alpha_loss.detach(),
+            aux_actor_loss=aux_actor_loss.detach(),
+            cross_entropy_loss=cross_entropy_loss.detach(),
+        )
 
     def extend_and_sample(transition: any) -> TensorDict:
         """Extend the replay buffer and sample a batch of transitions."""
@@ -384,7 +394,7 @@ if __name__ == "__main__":
     desc = ""
     episode_start = np.zeros(envs.num_envs, dtype=bool)
     abs_diff = torch.zeros(envs.num_envs, dtype=torch.float, device=device)
-
+    performance_difference = 0.0
     for iter_indx in pbar:
         global_step = iter_indx * args.num_envs
         if global_step >= args.measure_burnin + args.learning_starts and start_time is None:
@@ -454,15 +464,15 @@ if __name__ == "__main__":
             if iter_indx % args.policy_frequency == 0:  # TD 3 Delayed update support
                 for _ in range(args.gradient_steps):  # compensate for the delay by doing 'actor_update_interval' instead of 1
                     out_main.update(update_pol(data))
-
                     alpha.copy_(log_alpha.detach().exp())
 
             # update the target networks
             if iter_indx % args.target_network_frequency == 0:
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
                 student_qnet_target.lerp_(student_qnet_params.data, args.tau)
+                kl_qnet_target.lerp_(kl_qnet_params.data, args.tau)
 
-            if iter_indx % 100 == 0:
+            if iter_indx % 1000 == 0:
                 performance_difference = np.mean(actor_performance) - np.mean(aux_performance)
                 if performance_difference > 0:
                     args.teacher_coef = args.teacher_coef + args.teacher_coef_update
@@ -480,6 +490,10 @@ if __name__ == "__main__":
                         "actor_loss": out_main["actor_loss"].mean(),
                         "alpha_loss": out_main.get("alpha_loss", 0),
                         "qf_loss": out_main["qf_loss"].mean(),
+                        "performance_difference": performance_difference,
+                        "teacher_coef": args.teacher_coef,
+                        "cross_entropy_loss": out_main.get("cross_entropy_loss", 0),
+                        "aux_actor_loss": out_main.get("aux_actor_loss", 0),
                     }
                 wandb.log(
                     {
