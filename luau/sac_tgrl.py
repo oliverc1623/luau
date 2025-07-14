@@ -394,6 +394,7 @@ if __name__ == "__main__":
     desc = ""
     episode_start = np.zeros(envs.num_envs, dtype=bool)
     abs_diff = torch.zeros(envs.num_envs, dtype=torch.float, device=device)
+    use_main_policy = torch.ones(envs.num_envs, dtype=torch.bool, device=device)
     performance_difference = 0.0
     for iter_indx in pbar:
         global_step = iter_indx * args.num_envs
@@ -401,26 +402,17 @@ if __name__ == "__main__":
             start_time = time.time()
             measure_burnin = global_step
 
-        p = torch.distributions.Bernoulli(0.5).sample([envs.num_envs])
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             main_actions = policy(obs)
-            main_actions = main_actions.cpu().numpy()
-
             aux_actions = aux_policy(obs)
-            aux_actions = aux_actions.cpu().numpy()
-
-            actions = np.where(p.bool().unsqueeze(-1), main_actions, aux_actions)
+            actions_tensor = torch.where(use_main_policy.unsqueeze(-1), main_actions, aux_actions)
+            actions = actions_tensor.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        for i, reward in enumerate(rewards):
-            if p[i].item():
-                actor_performance.append(reward)
-            else:
-                aux_performance.append(reward)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos and "episode" in infos["final_info"]:
@@ -429,11 +421,23 @@ if __name__ == "__main__":
             episodic_returns = infos["final_info"]["episode"]["r"][completed_mask]
             episodic_lengths = infos["final_info"]["episode"]["l"][completed_mask]
 
+            completed_mask_tensor = torch.as_tensor(completed_mask, device=device)
+            policy_for_completed_episodes = use_main_policy[completed_mask_tensor]
+            main_policy_mask = policy_for_completed_episodes.cpu().numpy()
+
+            main_policy_returns = episodic_returns[main_policy_mask]
+            aux_policy_returns = episodic_returns[~main_policy_mask]
+            actor_performance.extend(main_policy_returns)
+            aux_performance.extend(aux_policy_returns)
+
             # Log each completed episode
             for ep_return, _ in zip(episodic_returns, episodic_lengths, strict=False):
                 max_ep_ret = max(max_ep_ret, ep_return)
                 avg_returns.append(ep_return)
                 desc = f"global_step={global_step}, episodic_return={torch.tensor(avg_returns).mean(): 4.2f}, (max={max_ep_ret: 4.2f})"
+
+        dones_tensor = torch.as_tensor(terminations, dtype=torch.bool, device=device)
+        use_main_policy[dones_tensor] = ~use_main_policy[dones_tensor]
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         next_obs = torch.as_tensor(next_obs, device=device, dtype=torch.float)
@@ -477,7 +481,7 @@ if __name__ == "__main__":
                 if performance_difference > 0:
                     args.teacher_coef = args.teacher_coef + args.teacher_coef_update
                 else:
-                    teacher_coef = args.teacher_coef - args.teacher_coef_update
+                    args.teacher_coef = args.teacher_coef - args.teacher_coef_update
                 if args.teacher_coef < 0:
                     args.teacher_coef = 0
 
