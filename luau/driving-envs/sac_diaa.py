@@ -261,29 +261,9 @@ if __name__ == "__main__":
     student_qnet_params, student_qnet_target, student_qnet = get_q_params()
     student_qnet_target.copy_(student_qnet_params.data)
 
-    # load pretrained qnet params into teacher qnet
-    pretrained_qnet = wandb.restore(qnet_file, run_path=args.pretrained_run_id)
-    pretrained_qnet_tensordict = torch.load(pretrained_qnet.name, map_location=device)
-
-    # teacher new (tn) - to be trained
-    tn_qnet_params, tn_qnet_target, tn_qnet = get_q_params()
-    tn_qnet_params.copy_(pretrained_qnet_tensordict)
-    tn_qnet_target.copy_(tn_qnet_params.data)
-    tn_qnet_params.requires_grad_(True)  # noqa: FBT003
-
-    # teacher source (ts) - not to be trained
-    ts_qnet_params, _, ts_qnet = get_q_params()
-    ts_qnet_params.copy_(tn_qnet_params)
-    ts_qnet_params.requires_grad_(False)  # noqa: FBT003
-
     q_optimizer = optim.Adam(
         student_qnet.parameters(),  # add new teacher qnet params
         lr=args.q_lr,
-        capturable=args.cudagraphs and not args.compile,
-    )
-    q_optimizer_teacher = optim.Adam(
-        tn_qnet.parameters(),  # add new teacher qnet params
-        lr=args.teacher_q_lr,
         capturable=args.cudagraphs and not args.compile,
     )
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr, capturable=args.cudagraphs and not args.compile)
@@ -409,11 +389,6 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        for i, reward in enumerate(rewards):
-            if h_t[i].item():
-                iaa_performance.append(reward)
-            else:
-                aux_performance.append(reward)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos and "episode" in infos["final_info"]:
@@ -421,6 +396,15 @@ if __name__ == "__main__":
             completed_mask = infos["final_info"]["_episode"]
             episodic_returns = infos["final_info"]["episode"]["r"][completed_mask]
             episodic_lengths = infos["final_info"]["episode"]["l"][completed_mask]
+
+            completed_mask_tensor = torch.as_tensor(completed_mask, device=device)
+            policy_for_completed_episodes = h_t[completed_mask_tensor].bool()
+            main_policy_mask = policy_for_completed_episodes.cpu().numpy()
+
+            main_policy_returns = episodic_returns[main_policy_mask]
+            aux_policy_returns = episodic_returns[~main_policy_mask]
+            iaa_performance.extend(main_policy_returns)
+            aux_performance.extend(aux_policy_returns)
 
             # Log each completed episode
             for ep_return, _ in zip(episodic_returns, episodic_lengths, strict=False):
@@ -457,21 +441,24 @@ if __name__ == "__main__":
             if iter_indx % args.policy_frequency == 0:  # TD 3 Delayed update support
                 for _ in range(args.gradient_steps):  # compensate for the delay by doing 'actor_update_interval' instead of 1
                     out_main.update(update_pol(data))
-
                     alpha.copy_(log_alpha.detach().exp())
 
             # update the target networks
             if iter_indx % args.target_network_frequency == 0:
                 # lerp is defined as x' = x + w (y-x), which is equivalent to x' = (1-w) x + w y
                 student_qnet_target.lerp_(student_qnet_params.data, args.tau)
-                tn_qnet_target.lerp_(tn_qnet_params.data, args.tau)
 
             # update introspection threshold
-            if iter_indx % 100 == 0 and len(iaa_performance) and len(aux_performance):
+            # prolong the period of threshold updating, increase from 100 to 1000
+            if global_step % 1000 == 0 and len(iaa_performance) and len(aux_performance):
                 performance_difference = np.mean(iaa_performance) - np.mean(aux_performance)
-                step = 0.05
-                args.introspection_threshold += step * np.sign(performance_difference)
-                args.introspection_threshold = float(np.clip(args.introspection_threshold, 0.01, 100.0))
+                step = 0.01  # step size 0.01
+                if performance_difference > 0:
+                    args.introspection_threshold = args.introspection_threshold + step
+                else:
+                    args.introspection_threshold = args.introspection_threshold - step
+                if args.introspection_threshold < 0:
+                    args.introspection_threshold = 0
 
             if global_step % (100 * args.num_envs) == 0 and start_time is not None:
                 speed = (global_step - measure_burnin) / (time.time() - start_time)
