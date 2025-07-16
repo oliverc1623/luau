@@ -9,6 +9,7 @@ sns.set_theme(style="darkgrid")  # you can also pick 'darkgrid', 'white', etc.
 # Set font family to Times New Roman
 plt.rcParams["font.size"] = 34
 plt.rcParams["font.serif"] = ["Times New Roman"]
+plt.rcParams["font.family"] = "Times New Roman"
 plt.figure(figsize=(5, 4))
 
 # %%
@@ -29,6 +30,8 @@ df = df.rename(
         "Group: sac-diaa - episode_return__MAX": "DIAA_Max",
     },
 )
+df["Environment"] = "Bipedal Walker: Hardcore Mode"
+
 
 # %%
 
@@ -46,9 +49,9 @@ for algo, color in zip(algorithms, colors, strict=False):
 
 plt.xlabel("Step")
 plt.ylabel("Episodic Returns")
-plt.title("Two-lane Collision Avoidance Task")
+plt.title("Bipdedal Walker: Hardcore Mode")
 plt.tight_layout()
-plt.savefig("target_task_two_big_font.pdf", format="pdf")
+plt.savefig("bipedal_walker.pdf", format="pdf")
 plt.show()
 
 # %%
