@@ -75,12 +75,41 @@ df_curveroad = df_curveroad.rename(
         "Group: diaa - episode_return__MAX": "DIAA_Max",
     },
 )
-
 df_curveroad["Environment"] = "Curve Road, Dense Traffic"
 
 # %%
 
-combined_df = pd.concat([df_bipedal, df_lunar, df_curveroad], ignore_index=True)
+df_tintersection = pd.read_csv("t-inter.csv")
+df_tintersection = df_tintersection.dropna()
+df_tintersection = df_tintersection.rename(
+    columns={
+        "Group: sac-baseline - episode_return": "Baseline",
+        "Group: sac-baseline - episode_return__MIN": "Baseline_Min",
+        "Group: sac-baseline - episode_return__MAX": "Baseline_Max",
+        "Group: finetune - episode_return": "Finetune",
+        "Group: finetune - episode_return__MIN": "Finetune_Min",
+        "Group: finetune - episode_return__MAX": "Finetune_Max",
+        "Group: iaa - episode_return": "IAA",
+        "Group: iaa - episode_return__MIN": "IAA_Min",
+        "Group: iaa - episode_return__MAX": "IAA_Max",
+        "Group: diaa - episode_return": "DIAA",
+        "Group: diaa - episode_return__MIN": "DIAA_Min",
+        "Group: diaa - episode_return__MAX": "DIAA_Max",
+    },
+)
+df_tintersection["Environment"] = "T Intersection, Dense Traffic"
+
+# %%
+
+combined_df = pd.concat(
+    [
+        df_bipedal,
+        df_lunar,
+        df_curveroad,
+        df_tintersection,
+    ],
+    ignore_index=True,
+)
 
 # %% Sanity check plot
 
@@ -91,10 +120,10 @@ colors = sns.color_palette("Set2", 8)  # 8 discrete colors from "Set2"
 # Iterate over each algorithm
 for algo, color in zip(algorithms, colors, strict=False):
     # Plot the main line
-    plt.plot(df_curveroad["Step"], df_curveroad[algo], color=color, label=algo)
+    plt.plot(df_tintersection["Step"], df_tintersection[algo], color=color, label=algo)
 
     # Shade the min and max
-    plt.fill_between(df_curveroad["Step"], df_curveroad[f"{algo}_Min"], df_curveroad[f"{algo}_Max"], color=color, alpha=0.2)
+    plt.fill_between(df_tintersection["Step"], df_tintersection[f"{algo}_Min"], df_tintersection[f"{algo}_Max"], color=color, alpha=0.2)
 
 plt.xlabel("Step")
 plt.ylabel("Episodic Returns")
@@ -154,11 +183,11 @@ def generate_learningcurve_facets(df: pd.DataFrame) -> None:
                 color=color,
                 alpha=0.2,
             )
-
+    g.set_titles(col_template="{col_name}")
     sns.move_legend(
         g,
         "lower center",
-        bbox_to_anchor=(0.5, 1),  # Position it horizontally centered, just above the plots
+        bbox_to_anchor=(0.5, -0.05),  # Position it horizontally centered, just above the plots
         ncols=len(algorithms),  # Display all items in a single row
         title=None,  # Remove the legend title
         frameon=False,  # Remove the legend box frame
