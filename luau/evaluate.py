@@ -96,8 +96,8 @@ api = wandb.Api()
 
 def get_model_weights(run_id: str, file_suffix: str = "_actor.pt") -> Path:
     """Retrieve the model weights from a WandB run."""
-    teacher_run = api.run(f"luau/{run_id}")
-    actor_file = next(f.name for f in teacher_run.files() if f.name.endswith(file_suffix))
+    run = api.run(f"luau/{run_id}")
+    actor_file = next(f.name for f in run.files() if f.name.endswith(file_suffix))
     model_weights = wandb.restore(actor_file, run_path=f"luau/{run_id}")
     return model_weights
 
@@ -109,7 +109,13 @@ def run_evaluation(args: Args) -> None:
     print(f"Using device: {device}")
 
     # 1. Setup Environment
-    env = gym.make(args.env_id)
+    env_kwargs = args.env_kwargs if args.env_kwargs is not None else {}
+    for k, v in env_kwargs.items():
+        try:
+            env_kwargs[k] = float(v)
+        except (ValueError, TypeError):
+            env_kwargs[k] = v
+    env = gym.make(args.env_id, **env_kwargs)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env = gym.wrappers.RecordVideo(env, f"videos/inference/{args.env_id}/{args.student_run_id}")
     n_obs = math.prod(env.observation_space.shape)
@@ -117,13 +123,11 @@ def run_evaluation(args: Args) -> None:
 
     # 2. Load Models
     teacher_weights = get_model_weights(args.teacher_run_id)
-    student_weights = get_model_weights(args.student_run_id, file_suffix="_student_actor.pt")
+    student_weights = get_model_weights(args.student_run_id)
     teacher_actor = Actor(n_obs, n_act, device, env.action_space).to(device)
     student_actor = Actor(n_obs, n_act, device, env.action_space).to(device)
 
-    print(f"Loading teacher model from: {args.teacher_model_path}")
     teacher_actor.load_state_dict(torch.load(teacher_weights.name, map_location=device))
-    print(f"Loading student model from: {args.student_model_path}")
     student_actor.load_state_dict(torch.load(student_weights.name, map_location=device))
 
     teacher_actor.eval()
@@ -144,8 +148,9 @@ def run_evaluation(args: Args) -> None:
             teacher_actions_log.append(teacher_action.cpu().numpy().flatten())
             student_actions_log.append(student_action.cpu().numpy().flatten())
 
-        obs, _, terminated, truncated, _ = env.step(student_actions_log[-1])
+        obs, r, terminated, truncated, _ = env.step(student_actions_log[-1])
         if terminated or truncated:
+            print(f"Episode finished with reward: {r}")
             obs, _ = env.reset()
     env.close()
 
