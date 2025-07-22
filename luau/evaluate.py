@@ -165,8 +165,10 @@ def run_evaluation(args: Args) -> None:
     student_df = pd.DataFrame(student_actions, columns=action_dim_names)
     student_df["Source"] = "DIAA Student"
 
+    output_dest = f"{args.env_id}_{args.student_run_id}"
     combined_df = pd.concat([teacher_df, student_df])
     melted_df = combined_df.melt(id_vars=["Source"], var_name="Action Dimension", value_name="Value")
+    melted_df.to_csv(f"{output_dest}_actions.csv", index=False)
 
     g = sns.displot(
         data=melted_df,
@@ -185,8 +187,8 @@ def run_evaluation(args: Args) -> None:
     g.set_xlabels("Action Value")
 
     # 5. Save the Output
-    g.savefig(args.output_file, bbox_inches="tight")
-    print(f"✅ Plot successfully saved to {args.output_file}")
+    g.savefig(f"{output_dest}.png", bbox_inches="tight")
+    print(f"✅ Plot successfully saved to {output_dest}.png")
 
 
 if __name__ == "__main__":
