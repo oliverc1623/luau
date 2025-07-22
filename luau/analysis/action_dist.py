@@ -1,7 +1,15 @@
 # %%
+import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+
+sns.set_theme(style="darkgrid")  # you can also pick 'darkgrid', 'white', etc.
+# Set font family to Times New Roman
+plt.rcParams["font.size"] = 34
+plt.rcParams["font.serif"] = ["Times New Roman"]
+plt.rcParams["font.family"] = "Times New Roman"
+plt.figure(figsize=(5, 4))
 
 num_driving_actions = 2
 
@@ -31,6 +39,9 @@ g = sns.displot(
     aspect=1.2,
     col_wrap=min(num_driving_actions, 3),
 )
-g.set_axis_labels("Action Value")
+g.axes[0].set_xlabel("Steering Actions")
+g.axes[1].set_xlabel("Throttle Actions")
+
+plt.show()
 
 # %%
