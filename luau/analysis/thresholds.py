@@ -10,7 +10,7 @@ sns.set_theme(style="darkgrid")  # you can also pick 'darkgrid', 'white', etc.
 plt.rcParams["font.size"] = 34
 plt.rcParams["font.serif"] = ["Times New Roman"]
 plt.rcParams["font.family"] = "Times New Roman"
-plt.figure(figsize=(5, 4))
+plt.figure(figsize=(2, 1))
 sns.set_context("talk")
 
 # %%
@@ -21,7 +21,7 @@ df_bipedal = df_bipedal.rename(
         "Group: sac-diaa - introspection_threshold": "DIAA",
     },
 )
-df_bipedal["Environment"] = "Bipedal Walker: Hardcore Mode"
+df_bipedal["Environment"] = "Bipedal Walker: \nHardcore Mode"
 
 # %%
 
@@ -32,7 +32,7 @@ df_lunar = df_lunar.rename(
         "Group: sac-iaa-lunarlander-v3 - introspection_threshold": "IAA",
     },
 )
-df_lunar["Environment"] = "Lunar Lander: Wind Enabled"
+df_lunar["Environment"] = "Lunar Lander: \nWind Enabled"
 
 # %%
 
@@ -44,7 +44,7 @@ df_curveroad = df_curveroad.rename(
         "Group: diaa - introspection_threshold": "DIAA",
     },
 )
-df_curveroad["Environment"] = "Curve Road, Dense Traffic"
+df_curveroad["Environment"] = "Curve Road, \nDense Traffic"
 
 # %%
 
@@ -56,7 +56,7 @@ df_tintersection = df_tintersection.rename(
         "Group: diaa - introspection_threshold": "DIAA",
     },
 )
-df_tintersection["Environment"] = "T Intersection, Dense Traffic"
+df_tintersection["Environment"] = "T Intersection, \nDense Traffic"
 
 # %%
 
@@ -113,25 +113,13 @@ g = sns.relplot(
     hue="Algorithm",
     col="Environment",  # This creates the columns of subplots
     kind="line",
-    palette="Set2",
-    height=3.5,  # Height of each facet in inches
+    height=3,  # Height of each facet in inches
     aspect=1.0,  # Aspect ratio of each facet
     facet_kws={"sharey": False},
-    linewidth=1,
+    col_wrap=2,
 )
 
 g.set_titles(col_template="{col_name}")
-sns.move_legend(
-    g,
-    "lower center",
-    bbox_to_anchor=(0.5, -0.05),  # Position it horizontally centered, just above the plots
-    ncols=len(algorithms),  # Display all items in a single row
-    title=None,  # Remove the legend title
-    frameon=False,  # Remove the legend box frame
-)
-
-# 4. Set overall title and save the figure
-g.tight_layout()
 g.savefig("threshold-facet.pdf", format="pdf")
 plt.show()
 
