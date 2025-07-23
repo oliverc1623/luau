@@ -31,11 +31,10 @@ df_bipedal = df_bipedal.rename(
     },
 )
 df_bipedal["Environment"] = "Bipedal Walker: Hardcore Mode"
-df_bipedal.head(10)
 
 # %%
 
-df_lunar = pd.read_csv("lunar-learning-curves.csv")
+df_lunar = pd.read_csv("lunar-round2.csv")
 df_lunar = df_lunar.rename(
     columns={
         "Group: sac-baseline-lunarlander-v3 - episode_return": "Baseline",
@@ -53,7 +52,6 @@ df_lunar = df_lunar.rename(
     },
 )
 df_lunar["Environment"] = "Lunar Lander: Wind Enabled"
-df_lunar.head(10)
 
 # %%
 
@@ -110,6 +108,32 @@ combined_df = pd.concat(
     ],
     ignore_index=True,
 )
+
+# Apply a rolling mean to smooth the curves, calculated per environment
+window_size = 10
+algorithms = ["Baseline", "Finetune", "IAA", "DIAA"]
+
+# Columns to apply smoothing on
+cols_to_smooth = []
+for algo in algorithms:
+    cols_to_smooth.extend([algo, f"{algo}_Min", f"{algo}_Max"])
+
+# Group by environment and apply rolling mean
+for col in cols_to_smooth:
+    if col in combined_df.columns:
+        # Use transform to apply rolling mean within each group and align results
+        combined_df[col] = combined_df.groupby("Environment")[col].transform(
+            lambda x: x.rolling(window=window_size, min_periods=1).mean(),
+        )
+
+# %%
+
+algorithms = ["Baseline", "Finetune", "IAA", "DIAA"]
+for algo in algorithms:
+    # Estimate standard deviation from the range
+    std_dev_est = combined_df[f"{algo}_Max"] - combined_df[f"{algo}_Min"]
+    # Calculate standard error and add it as a new column
+    combined_df[f"{algo}_SE"] = std_dev_est / 4
 
 # %% Sanity check plot
 
@@ -178,8 +202,8 @@ def generate_learningcurve_facets(df: pd.DataFrame) -> None:
             color = color_map[algo]
             ax.fill_between(
                 df_env["Step"],
-                df_env[f"{algo}_Min"],
-                df_env[f"{algo}_Max"],
+                df_env[f"{algo}"] - df_env[f"{algo}_SE"],
+                df_env[f"{algo}"] + df_env[f"{algo}_SE"],
                 color=color,
                 alpha=0.2,
             )
