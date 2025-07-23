@@ -11,6 +11,7 @@ plt.rcParams["font.size"] = 34
 plt.rcParams["font.serif"] = ["Times New Roman"]
 plt.rcParams["font.family"] = "Times New Roman"
 plt.figure(figsize=(5, 4))
+sns.set_context("talk")
 
 # %%
 df_bipedal = pd.read_csv("bipedal-learning-curves.csv")
