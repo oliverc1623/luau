@@ -21,7 +21,8 @@ for script in "${scripts[@]}"; do
                     --map "yT" \
                     --use_lateral_reward \
                     --pretrained_run_id "luau/kg8xhrne" \
-                    --introspection_threshold $threshold
+                    --introspection_threshold $threshold \
+                    --burn_in 0
             else
                 python $script --seed=$seed
             fi
