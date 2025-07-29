@@ -61,6 +61,7 @@ class Args:
     map: str = "S"
     accident_prob: float = 1.0
     """the accident probability of the environment, 0.0 means no accidents, 1.0 means full accidents"""
+    use_lateral_reward: bool = False
 
     # Algorithm specific arguments
     total_timesteps: int = 1000000
@@ -111,6 +112,7 @@ def make_env(seed: int) -> callable:
                 start_seed=100,
                 traffic_density=float(args.traffic_density),
                 accident_prob=float(args.accident_prob),
+                use_lateral_reward=args.use_lateral_reward,
             ),
         )
         env = gym.wrappers.RecordEpisodeStatistics(env)
