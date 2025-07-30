@@ -100,12 +100,35 @@ df_tintersection["Environment"] = "T Intersection, Dense Traffic"
 
 # %%
 
+df_merge_turn = pd.read_csv("merge-turn.csv")
+df_merge_turn = df_merge_turn.dropna()
+df_merge_turn = df_merge_turn.rename(
+    columns={
+        "Group: sac-baseline - episode_return": "Baseline",
+        "Group: sac-baseline - episode_return__MIN": "Baseline_Min",
+        "Group: sac-baseline - episode_return__MAX": "Baseline_Max",
+        "Group: finetune - episode_return": "Finetune",
+        "Group: finetune - episode_return__MIN": "Finetune_Min",
+        "Group: finetune - episode_return__MAX": "Finetune_Max",
+        "Group: iaa - episode_return": "IAA",
+        "Group: iaa - episode_return__MIN": "IAA_Min",
+        "Group: iaa - episode_return__MAX": "IAA_Max",
+        "Group: diaa - episode_return": "DIAA",
+        "Group: diaa - episode_return__MIN": "DIAA_Min",
+        "Group: diaa - episode_return__MAX": "DIAA_Max",
+    },
+)
+df_merge_turn["Environment"] = "Merge Turn, Dense Traffic"
+
+# %%
+
 combined_df = pd.concat(
     [
-        df_bipedal,
         df_lunar,
-        df_curveroad,
+        df_bipedal,
         df_tintersection,
+        df_curveroad,
+        df_merge_turn,
     ],
     ignore_index=True,
 )

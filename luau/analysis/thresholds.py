@@ -60,12 +60,25 @@ df_tintersection["Environment"] = "T Intersection, \nDense Traffic"
 
 # %%
 
+df_merge_turn = pd.read_csv("merge-turn-thresholds.csv")
+df_merge_turn = df_merge_turn.dropna()
+df_merge_turn = df_merge_turn.rename(
+    columns={
+        "Group: iaa - introspection_threshold": "IAA",
+        "Group: diaa - introspection_threshold": "DIAA",
+    },
+)
+df_merge_turn["Environment"] = "Merge Turn, \nDense Traffic"
+
+# %%
+
 combined_df = pd.concat(
     [
         df_bipedal,
         df_lunar,
         df_curveroad,
         df_tintersection,
+        df_merge_turn,
     ],
     ignore_index=True,
 )
@@ -116,11 +129,13 @@ g = sns.relplot(
     height=3,  # Height of each facet in inches
     aspect=1.0,  # Aspect ratio of each facet
     facet_kws={"sharey": False},
-    col_wrap=2,
+    col_wrap=3,
 )
 
 g.set_titles(col_template="{col_name}")
 g.savefig("threshold-facet.pdf", format="pdf")
+sns.move_legend(g, "lower right")
+plt.tight_layout()
 plt.show()
 
 # %%
