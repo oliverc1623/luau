@@ -4,7 +4,7 @@ scripts=(
     sac_torchcompile.py
 )
 for script in "${scripts[@]}"; do
-    for seed in 21 31 41; do
+    for seed in 11; do
         if [[ $script == *.py ]]; then
             python $script --seed=$seed \
                 --env-id "BipedalWalker-v3" \

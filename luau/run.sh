@@ -1,12 +1,12 @@
 #!/bin/bash
 # Execute scripts with different seeds and additional arguments for torchcompile scripts
 scripts=(
-    sac_finetune.py
-    sac_iaa.py
+    # sac_finetune.py
+    # sac_iaa.py
     sac_diaa.py
 )
 for script in "${scripts[@]}"; do
-    for seed in 61 72 82 92; do
+    for seed in 61; do
         if [[ $script == *.py ]]; then
             python $script --seed=$seed \
                 --env-id "LunarLander-v3" \
