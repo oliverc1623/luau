@@ -14,29 +14,29 @@ plt.figure(figsize=(2, 1))
 sns.set_context("talk")
 
 # %%
-df_bipedal = pd.read_csv("bipedal-thresholds.csv")
+df_bipedal = pd.read_csv("data/bipedal-thresholds.csv")
 df_bipedal = df_bipedal.rename(
     columns={
         "Group: sac-iaa - introspection_threshold": "IAA",
         "Group: sac-diaa - introspection_threshold": "DIAA",
     },
 )
-df_bipedal["Environment"] = "Bipedal Walker: \nHardcore Mode"
+df_bipedal["Environment"] = "BWHM"
 
 # %%
 
-df_lunar = pd.read_csv("lunar-thresholds.csv")
+df_lunar = pd.read_csv("data/lunar-thresholds.csv")
 df_lunar = df_lunar.rename(
     columns={
         "Group: sac-diaa-lunarlander-v3 - introspection_threshold": "DIAA",
         "Group: sac-iaa-lunarlander-v3 - introspection_threshold": "IAA",
     },
 )
-df_lunar["Environment"] = "Lunar Lander: \nWind Enabled"
+df_lunar["Environment"] = "LLWE"
 
 # %%
 
-df_curveroad = pd.read_csv("curvemerge-thresholds.csv")
+df_curveroad = pd.read_csv("data/curvemerge-thresholds.csv")
 df_curveroad = df_curveroad.dropna()
 df_curveroad = df_curveroad.rename(
     columns={
@@ -44,11 +44,11 @@ df_curveroad = df_curveroad.rename(
         "Group: diaa - introspection_threshold": "DIAA",
     },
 )
-df_curveroad["Environment"] = "Curve Road, \nDense Traffic"
+df_curveroad["Environment"] = "CM"
 
 # %%
 
-df_tintersection = pd.read_csv("tintersection-thresholds.csv")
+df_tintersection = pd.read_csv("data/tintersection-thresholds.csv")
 df_tintersection = df_tintersection.dropna()
 df_tintersection = df_tintersection.rename(
     columns={
@@ -56,11 +56,11 @@ df_tintersection = df_tintersection.rename(
         "Group: diaa - introspection_threshold": "DIAA",
     },
 )
-df_tintersection["Environment"] = "T Intersection, \nDense Traffic"
+df_tintersection["Environment"] = "T-Int."
 
 # %%
 
-df_merge_turn = pd.read_csv("merge-turn-thresholds.csv")
+df_merge_turn = pd.read_csv("data/merge-turn-thresholds.csv")
 df_merge_turn = df_merge_turn.dropna()
 df_merge_turn = df_merge_turn.rename(
     columns={
@@ -68,7 +68,7 @@ df_merge_turn = df_merge_turn.rename(
         "Group: diaa - introspection_threshold": "DIAA",
     },
 )
-df_merge_turn["Environment"] = "Merge Turn, \nDense Traffic"
+df_merge_turn["Environment"] = "MT"
 
 # %%
 
@@ -131,11 +131,10 @@ g = sns.relplot(
     facet_kws={"sharey": False},
     col_wrap=3,
 )
+sns.move_legend(g, "upper left", bbox_to_anchor=(0.6, 0.45))
 
 g.set_titles(col_template="{col_name}")
 g.savefig("threshold-facet.pdf", format="pdf")
-sns.move_legend(g, "lower right")
-plt.tight_layout()
 plt.show()
 
 # %%
