@@ -14,7 +14,7 @@ plt.figure(figsize=(5, 4))
 sns.set_context("talk")
 
 # %%
-df_bipedal = pd.read_csv("bipedal-learning-curves.csv")
+df_bipedal = pd.read_csv("data/bipedal-learning-curves.csv")
 df_bipedal = df_bipedal.rename(
     columns={
         "Group: sac-baseline - episode_return": "Baseline",
@@ -31,11 +31,11 @@ df_bipedal = df_bipedal.rename(
         "Group: sac-diaa - episode_return__MAX": "DIAA_Max",
     },
 )
-df_bipedal["Environment"] = "Bipedal Walker: Hardcore Mode"
+df_bipedal["Environment"] = "BWHM"
 
 # %%
 
-df_lunar = pd.read_csv("lunar-round2.csv")
+df_lunar = pd.read_csv("data/lunar-round2.csv")
 df_lunar = df_lunar.rename(
     columns={
         "Group: sac-baseline-lunarlander-v3 - episode_return": "Baseline",
@@ -52,11 +52,11 @@ df_lunar = df_lunar.rename(
         "Group: sac-finetune-lunarlander-v3 - episode_return__MAX": "Finetune_Max",
     },
 )
-df_lunar["Environment"] = "Lunar Lander: Wind Enabled"
+df_lunar["Environment"] = "LLWE"
 
 # %%
 
-df_curveroad = pd.read_csv("curve-merge-learning-curves.csv")
+df_curveroad = pd.read_csv("data/curve-merge-learning-curves.csv")
 df_curveroad = df_curveroad.dropna()
 df_curveroad = df_curveroad.rename(
     columns={
@@ -74,11 +74,11 @@ df_curveroad = df_curveroad.rename(
         "Group: diaa - episode_return__MAX": "DIAA_Max",
     },
 )
-df_curveroad["Environment"] = "Curve Road, Dense Traffic"
+df_curveroad["Environment"] = "CM"
 
 # %%
 
-df_tintersection = pd.read_csv("t-inter.csv")
+df_tintersection = pd.read_csv("data/t-inter.csv")
 df_tintersection = df_tintersection.dropna()
 df_tintersection = df_tintersection.rename(
     columns={
@@ -96,11 +96,11 @@ df_tintersection = df_tintersection.rename(
         "Group: diaa - episode_return__MAX": "DIAA_Max",
     },
 )
-df_tintersection["Environment"] = "T Intersection, Dense Traffic"
+df_tintersection["Environment"] = "T-Int."
 
 # %%
 
-df_merge_turn = pd.read_csv("merge-turn.csv")
+df_merge_turn = pd.read_csv("data/merge-turn.csv")
 df_merge_turn = df_merge_turn.dropna()
 df_merge_turn = df_merge_turn.rename(
     columns={
@@ -118,7 +118,7 @@ df_merge_turn = df_merge_turn.rename(
         "Group: diaa - episode_return__MAX": "DIAA_Max",
     },
 )
-df_merge_turn["Environment"] = "Merge Turn, Dense Traffic"
+df_merge_turn["Environment"] = "MT"
 
 # %%
 
@@ -205,7 +205,7 @@ def generate_learningcurve_facets(df: pd.DataFrame) -> None:
         col="Environment",  # This creates the columns of subplots
         kind="line",
         palette="Set2",
-        height=3.5,  # Height of each facet in inches
+        height=4,  # Height of each facet in inches
         aspect=1.0,  # Aspect ratio of each facet
         facet_kws={"sharey": False},
         linewidth=1,
