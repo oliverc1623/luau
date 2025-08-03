@@ -10,7 +10,7 @@ for script in "${scripts[@]}"; do
             if [[ $script == *.py ]]; then
                 python $script --seed=$seed \
                     --env-id "BipedalWalker-v3" \
-                    --exp_name "student" \
+                    --exp_name "student_ablation" \
                     --num-envs 8 \
                     --gradient_steps -1 \
                     --cudagraphs \
@@ -18,8 +18,9 @@ for script in "${scripts[@]}"; do
                     --total-timesteps 1_000_000 \
                     --pretrained_run_id "luau/wxi10qyt" \
                     --env_kwargs hardcore True \
-                    --introspection_threshold $threshold \
-                    --burn_in 0
+                    --introspection_threshold 0.5 \
+                    --introspection_decay 0.999999 \
+                    --burn_in $burn_in
             else
                 python $script --seed=$seed
             fi
