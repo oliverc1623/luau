@@ -153,14 +153,14 @@ for col in cols_to_smooth:
 
 # %%
 
-tmp_df = df_lunar  # skip first 7 points for lunar lander
+tmp_df = df_merge_turn  # skip first 7 points for lunar lander
 steps = tmp_df["Step"].to_numpy()
 transfer_rewards = tmp_df["DIAA"].to_numpy()
 baseline_rewards = tmp_df["Baseline"].astype(float).to_numpy()
 
 min_reward = min(np.min(transfer_rewards), np.min(baseline_rewards))
-normalized_transfer = transfer_rewards - min_reward
-normalized_baseline = baseline_rewards - min_reward
+normalized_transfer = (transfer_rewards - min_reward).astype(float)
+normalized_baseline = (baseline_rewards - min_reward).astype(float)
 
 # 3. Compute AUC with the trapezoidal rule
 auc_transfer = np.trapz(normalized_transfer, steps)
@@ -182,3 +182,4 @@ final_reward_increase = ((normalized_transfer[-1] - normalized_baseline[-1]) / n
 print(f"Final Reward (% increase): {final_reward_increase:.2f}%")
 
 # %%
+(normalized_transfer[0] - normalized_baseline[0]) / normalized_baseline[0] * 100

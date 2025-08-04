@@ -208,7 +208,7 @@ def generate_learningcurve_facets(df: pd.DataFrame) -> None:
         height=4,  # Height of each facet in inches
         aspect=1.0,  # Aspect ratio of each facet
         facet_kws={"sharey": False},
-        linewidth=1,
+        linewidth=1.5,
     )
 
     # 3. Add the shaded min/max regions to each subplot (facet).
@@ -242,12 +242,12 @@ def generate_learningcurve_facets(df: pd.DataFrame) -> None:
     )
 
     # 4. Set overall title and save the figure
-    g.tight_layout()
     g.savefig("learning-curves-facet.pdf", format="pdf")
     plt.show()
 
 
 # Generate the plot
+sns.set_theme(context="paper", font_scale=2.3, font="Times New Roman")
 generate_learningcurve_facets(combined_df)
 
 # %%
