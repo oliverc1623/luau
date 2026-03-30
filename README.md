@@ -48,6 +48,26 @@ TE = (AUC_method - AUC_baseline) / AUC_baseline
 
 along with jumpstart (initial performance advantage) and asymptotic reward.
 
+## TODO
+
+### Easy
+- [ ] Fix Figure 3 caption: "SAC" appears twice — one should read "Baseline"
+- [ ] Add confidence intervals / shading to Figure 3 learning curves (4 seeds are already run)
+- [ ] Explain the large MetaDrive jumpstart values in Table 2 (670%, 935%, 599%) — add a sentence in Results
+- [ ] Explain why DIAA still outperforms SAC in BWHM even after the threshold collapses to zero (Discussion, p.8)
+- [ ] Clean up boilerplate sections below (tooling, Getting Started, Contributing — leftover from project template)
+
+### Medium
+- [ ] Ablation: burn-in (δ) and decay (λ) parameters for DIAA — the Discussion already attributes CM's slow learning to burn-in being too long, so this is a known gap
+- [ ] Ablation: coefficient learning rate (μ) — the one hyperparameter unique to DIAA's threshold update is never ablated
+- [ ] Disentangle DIAA's two changes from IAA: (1) student Q-functions in the introspection criterion vs. (2) dynamic threshold — ideally with an ablation showing each change's individual contribution
+- [ ] Add a 2D PCA action distribution plot for at least one environment to strengthen the interpretability contribution
+
+### Hard
+- [ ] Formalize the "threshold as task difficulty metric" contribution — correlate steady-state threshold value with an independent source-target similarity measure (e.g., behavioral distance or reward gap)
+- [ ] Add a direct TGRL baseline on at least one task — TGRL is the primary algorithmic inspiration and reviewers will expect an empirical comparison
+- [ ] Ablation: coefficient learning rate (μ) sensitivity across all five tasks
+
 * [Poetry](https://python-poetry.org/)
     * For dependency management, packaging, and publishing
 * [Ruff](https://github.com/astral-sh/ruff)
