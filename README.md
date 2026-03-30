@@ -1,9 +1,52 @@
 # luau
 
-Latent Unified Adaptive Upskilling.
-test.
+**Latent Unified Adaptive Upskilling** — a research framework for accelerating reinforcement learning in novel domains via teacher-student transfer.
 
-A project to accelerate reinforcement learning in novel domains on novel tasks.
+## Overview
+
+LUAU investigates how a pretrained "teacher" agent can selectively guide a "student" agent learning a new task, improving sample efficiency without blindly imitating the teacher. The core insight is **introspection**: the student queries whether the teacher's knowledge is still relevant for the current state before deciding to follow its advice.
+
+### Algorithms
+
+- **Baseline SAC** — Soft Actor-Critic with torch.compile and vectorized envs, used as the transfer learning baseline.
+- **Finetune** — SAC initialized from pretrained teacher weights; simple fine-tuning baseline.
+- **IAA (Introspection-Aware Agent)** — SAC student that uses teacher actions when the teacher's Q-value confidence exceeds a threshold, with exponential decay on teacher reliance over training.
+- **DIAA (Discriminative IAA)** — IAA variant that measures divergence between a frozen teacher Q-network and a trainable copy; uses teacher actions only when the divergence is low (i.e., the teacher's knowledge still applies).
+
+### Environments
+
+| Domain | Environment | Action Space |
+|---|---|---|
+| Grid world | MiniGrid Empty-5x5, FourRoomDoorKey | Discrete |
+| Continuous control | BipedalWalker-v3 (hardcore), LunarLander-v3 (wind) | Continuous |
+| Autonomous driving | CyCurveMerge-v0, MergeTurn-v0, TIntersection-v0 (MetaDrive) | Continuous |
+
+### Key Files
+
+```
+luau/
+├── sac_torchcompile.py     # Baseline SAC
+├── sac_finetune.py         # Fine-tuning from pretrained weights
+├── sac_iaa.py              # IAA (continuous)
+├── sac_diaa.py             # DIAA (continuous)
+├── ppo.py / iaa.py         # PPO + IAA (discrete, MiniGrid)
+├── inference.py            # Run a trained policy for one episode
+├── evaluate.py             # Compare teacher vs. student action distributions
+├── driving-envs/           # MetaDrive variants of all the above
+└── analysis/               # Learning curve plots, ablations, transfer efficacy
+```
+
+Experiments are tracked with [Weights & Biases](https://wandb.ai). Model checkpoints (actor.pt, qnet.pt) are saved as WandB artifacts.
+
+### Transfer Efficacy Metric
+
+Performance is measured by **Transfer Efficacy (TE)**:
+
+```
+TE = (AUC_method - AUC_baseline) / AUC_baseline
+```
+
+along with jumpstart (initial performance advantage) and asymptotic reward.
 
 * [Poetry](https://python-poetry.org/)
     * For dependency management, packaging, and publishing
