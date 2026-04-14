@@ -10,7 +10,7 @@ import wandb
 
 WANDB_PROJECT = "luau"
 EXP_NAME = "burnin_ablation"
-ENV_ID = "LunarLander-v3"
+ENV_IDS = ["LunarLander-v3", "BipedalWalker-v3"]
 METRICS = ["advice", "episode_return"]
 SMOOTH_WINDOW = 10
 
@@ -20,10 +20,10 @@ api = wandb.Api()
 runs = list(
     api.runs(
         WANDB_PROJECT,
-        filters={"config.exp_name": EXP_NAME, "config.env_id": ENV_ID},
+        filters={"config.exp_name": EXP_NAME, "config.env_id": {"$in": ENV_IDS}},
     ),
 )
-print(f"Found {len(runs)} runs for exp_name={EXP_NAME}, env_id={ENV_ID}")
+print(f"Found {len(runs)} runs for exp_name={EXP_NAME}, env_ids={ENV_IDS}")
 
 records = []
 for run in runs:
@@ -46,12 +46,10 @@ df = df.rename(columns={"_step": "Step", "advice": "Advice", "episode_return": "
 
 # %%
 
-# Average across seeds within (env_id, burn_in) at each step.
-agg = df.groupby(["env_id", "burn_in", "Step"], as_index=False)[["Advice", "Episodic Returns"]].mean().sort_values(["env_id", "burn_in", "Step"])
-
-# Smooth per group.
+# Smooth per (run_id) so seaborn can compute error bands across seeds.
+agg = df.sort_values(["env_id", "burn_in", "run_id", "Step"]).copy()
 for col in ["Advice", "Episodic Returns"]:
-    agg[col] = agg.groupby(["env_id", "burn_in"])[col].transform(
+    agg[col] = agg.groupby(["env_id", "burn_in", "run_id"])[col].transform(
         lambda x: x.rolling(window=SMOOTH_WINDOW, min_periods=1).mean(),
     )
 
@@ -74,14 +72,16 @@ def facet_plot(df: pd.DataFrame, value_col: str, ylabel: str, out_pdf: str) -> N
         aspect=1.5,
         col_wrap=3,
         linewidth=2,
+        errorbar="se",
         facet_kws={"sharey": False, "sharex": False},
     )
     g.set_titles(col_template="{col_name}")
     g.set_axis_labels("Step", ylabel)
+    g.figure.subplots_adjust(bottom=0.25)
     sns.move_legend(
         g,
-        "lower center",
-        bbox_to_anchor=(0.5, -0.05),
+        "upper center",
+        bbox_to_anchor=(0.35, 0.05),
         ncols=df["burn_in"].nunique(),
         title="Burn-in",
         frameon=False,
