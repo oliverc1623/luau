@@ -1,0 +1,98 @@
+# %%
+"""Decay ablation: pull runs from W&B, group by env_id and introspection_decay, plot facets."""
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
+import wandb
+
+
+WANDB_PROJECT = "luau"
+EXP_NAME = "decay_ablation"
+ENV_IDS = ["LunarLander-v3", "BipedalWalker-v3"]
+METRICS = ["advice", "episode_return"]
+SMOOTH_WINDOW = 10
+
+# %%
+
+api = wandb.Api()
+runs = list(
+    api.runs(
+        WANDB_PROJECT,
+        filters={"config.exp_name": EXP_NAME, "config.env_id": {"$in": ENV_IDS}},
+    ),
+)
+print(f"Found {len(runs)} runs for exp_name={EXP_NAME}, env_ids={ENV_IDS}")
+
+records = []
+for run in runs:
+    cfg = run.config
+    env_id = cfg.get("env_id")
+    decay = cfg.get("introspection_decay")
+    if env_id is None or decay is None:
+        continue
+    history = run.history(keys=METRICS, samples=500, pandas=True)
+    if history.empty:
+        continue
+    history["env_id"] = env_id
+    history["introspection_decay"] = decay
+    history["run_id"] = run.id
+    records.append(history)
+print(f"Collected history from {len(records)} runs")
+
+df = pd.concat(records, ignore_index=True)
+df = df.rename(columns={"_step": "Step", "advice": "Advice", "episode_return": "Episodic Returns"})
+
+# %%
+
+# Smooth per (run_id) so seaborn can compute error bands across seeds.
+agg = df.sort_values(["env_id", "introspection_decay", "run_id", "Step"]).copy()
+for col in ["Advice", "Episodic Returns"]:
+    agg[col] = agg.groupby(["env_id", "introspection_decay", "run_id"])[col].transform(
+        lambda x: x.rolling(window=SMOOTH_WINDOW, min_periods=1).mean(),
+    )
+
+agg["introspection_decay"] = agg["introspection_decay"].astype(str)
+
+# %%
+
+
+def facet_plot(df: pd.DataFrame, value_col: str, ylabel: str, out_pdf: str) -> None:
+    """Facet by env_id, color by introspection_decay."""
+    g = sns.relplot(
+        data=df,
+        x="Step",
+        y=value_col,
+        hue="introspection_decay",
+        col="env_id",
+        kind="line",
+        palette="Set2",
+        height=4.2,
+        aspect=1.5,
+        col_wrap=3,
+        linewidth=2,
+        errorbar="se",
+        facet_kws={"sharey": False, "sharex": False},
+    )
+    g.set_titles(col_template="{col_name}")
+    g.set_axis_labels("Step", ylabel)
+    g.figure.subplots_adjust(bottom=0.25)
+    sns.move_legend(
+        g,
+        "upper center",
+        bbox_to_anchor=(0.35, 0.05),
+        ncols=df["introspection_decay"].nunique(),
+        title="Decay",
+        frameon=False,
+    )
+    g.savefig(out_pdf, format="pdf", bbox_inches="tight")
+    plt.show()
+
+
+sns.set_theme(context="paper", font_scale=2.2, font="Times New Roman", style="darkgrid")
+
+facet_plot(agg, "Episodic Returns", "Episodic Returns", "decay-ablation-returns.pdf")
+facet_plot(agg, "Advice", "Advice", "decay-ablation-advice.pdf")
+
+# %%
