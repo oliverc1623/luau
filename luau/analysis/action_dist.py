@@ -57,15 +57,15 @@ g = sns.displot(
     palette={"Teacher": "#0A5FF5", "DIAA Student": "#f5a00a"},
     height=3,
     aspect=1.0,
-    col_wrap=3,
 )
-sns.move_legend(g, "upper left", bbox_to_anchor=(0.55, 0.45))
+sns.move_legend(g, "upper center", bbox_to_anchor=(0.45, 0.1), ncol=2)
 
-g.axes[0].text(-1.0, 0.24, "Steering Angle", fontsize=14)
-g.axes[1].text(-1.0, 0.24, "Driving Throttle", fontsize=14)
-g.axes[2].text(-1.0, 0.24, "Hip Throttle", fontsize=14)
-g.axes[3].text(-1.0, 0.24, "Lateral Throttle", fontsize=14)
-g.axes[4].text(-1.0, 0.24, "Steering Angle", fontsize=14)
+axes = g.axes.flat
+axes[0].text(-1.0, 0.24, "Steering Angle", fontsize=14)
+axes[1].text(-1.0, 0.24, "Driving Throttle", fontsize=14)
+axes[2].text(-1.0, 0.24, "Hip Throttle", fontsize=14)
+axes[3].text(-1.0, 0.24, "Lateral Throttle", fontsize=14)
+axes[4].text(-1.0, 0.24, "Steering Angle", fontsize=14)
 g.set_axis_labels("Action Value")
 g.set_titles(col_template="{col_name}")
 g.savefig("action_dist.pdf", dpi=300, bbox_inches="tight")
