@@ -123,105 +123,50 @@ plt.show()
 
 
 # %%
-def generate_learningcurve_facets(df: pd.DataFrame) -> None:
-    """Generate a faceted learning curve plot, separated by environment."""
-    # 1. Define algorithms and melt the DataFrame to a "tidy" format.
-    #    'Environment' is now an identifier variable.
-    algorithms = ["DIAA", "IAA"]
-    df_long = pd.melt(
-        df,
-        id_vars=["Step", "Threshold"],
-        value_vars=algorithms,
-        var_name="Algorithm",
-        value_name="Episodic Returns",
-    )
-
-    # 2. Create the faceted plot using sns.relplot.
-    #    This function returns a FacetGrid object.
-    g = sns.relplot(
-        data=df_long,
-        x="Step",
-        y="Episodic Returns",
-        hue="Algorithm",
-        col="Threshold",  # This creates the columns of subplots
-        kind="line",
-        palette="Set2",
-        height=5,  # Height of each facet in inches
-        col_wrap=3,
-        aspect=1.2,  # Aspect ratio of each facet
-        linewidth=1.5,
-    )
-
-    # 3. Add the shaded min/max regions to each subplot (facet).
-    #    We need to iterate through the axes of the FacetGrid.
-    for env_name, ax in g.axes_dict.items():
-        # Filter the original wide-format DataFrame for the specific environment
-        df_env = df[df["Threshold"] == env_name]
-
-        # Get the color mapping from the plot's legend
-        handles, labels = g.axes.flat[0].get_legend_handles_labels()
-        color_map = {label: handle.get_color() for label, handle in zip(labels, handles, strict=False)}
-
-        # Add a shaded region for each algorithm
-        for algo in algorithms:
-            color = color_map[algo]
-            ax.fill_between(
-                df_env["Step"],
-                df_env[f"{algo}"] - df_env[f"{algo}_SE"],
-                df_env[f"{algo}"] + df_env[f"{algo}_SE"],
-                color=color,
-                alpha=0.2,
-            )
-    g.set_titles(col_template="Initial Threshold: {col_name}")
-    g._legend.remove()  # noqa: SLF001
-
-    # 4. Set overall title and save the figure
-    g.savefig("ablation-lc.pdf", format="pdf")
-    plt.show()
-
-
-# Generate the plot
-sns.set_theme(context="paper", font_scale=2.5, font="Times New Roman")
-generate_learningcurve_facets(combined_df)
-
-# %%
-
 df_threshold = pd.concat([df_threshold_25, df_threshold_75], ignore_index=True)
-algorithms = ["DIAA", "IAA"]
-df_long = pd.melt(
-    df_threshold,
-    id_vars=["Step", "Threshold"],
-    value_vars=algorithms,
-    var_name="Algorithm",
-    value_name="Threshold Value",
-)
 
-# %%
-# 2. Create the faceted plot using sns.relplot.
-#    This function returns a FacetGrid object.
-g = sns.relplot(
-    data=df_long,
-    x="Step",
-    y="Threshold Value",
-    hue="Algorithm",
-    col="Threshold",  # This creates the columns of subplots
-    kind="line",
-    palette="Set2",
-    height=5,  # Height of each facet in inches
-    col_wrap=3,
-    aspect=1.2,  # Aspect ratio of each facet
-    linewidth=1.5,
-)
-g.set_titles(col_template="Initial Threshold: {col_name}")
-sns.move_legend(
-    g,
-    "lower center",
-    bbox_to_anchor=(0.35, -0.10),  # Position it horizontally centered, just above the plots
-    ncols=len(algorithms),  # Display all items in a single row
-    title=None,  # Remove the legend title
-    frameon=False,  # Remove the legend box frame
-)
-g.savefig("ablation-threshold.pdf", format="pdf")
+sns.set_theme(context="paper", font_scale=2.5, font="Times New Roman", style="darkgrid")
+
+algorithms = ["DIAA", "IAA"]
+palette = sns.color_palette("Set2", len(algorithms))
+color_map = dict(zip(algorithms, palette, strict=False))
+thresholds = ["0.25", "0.75"]
+
+fig, axes = plt.subplots(1, 4, figsize=(24, 5))
+
+# Learning curve panels (cols 0, 1)
+for i, thr in enumerate(thresholds):
+    ax = axes[i]
+    df_env = combined_df[combined_df["Threshold"] == thr]
+    for algo in algorithms:
+        ax.plot(df_env["Step"], df_env[algo], color=color_map[algo], label=algo, linewidth=1.5)
+        ax.fill_between(
+            df_env["Step"],
+            df_env[algo] - df_env[f"{algo}_SE"],
+            df_env[algo] + df_env[f"{algo}_SE"],
+            color=color_map[algo],
+            alpha=0.2,
+        )
+    ax.set_title(f"Initial Threshold: {thr}")
+    ax.set_xlabel("Step")
+    if i == 0:
+        ax.set_ylabel("Episodic Returns")
+
+# Threshold panels (cols 2, 3)
+for i, thr in enumerate(thresholds):
+    ax = axes[2 + i]
+    df_env = df_threshold[df_threshold["Threshold"] == thr]
+    for algo in algorithms:
+        ax.plot(df_env["Step"], df_env[algo], color=color_map[algo], label=algo, linewidth=1.5)
+    ax.set_title(f"Initial Threshold: {thr}")
+    ax.set_xlabel("Step")
+    if i == 0:
+        ax.set_ylabel("Threshold Value")
+
+handles = [plt.Line2D([0], [0], color=color_map[a], linewidth=2, label=a) for a in algorithms]
+fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 0.1), ncol=len(algorithms), frameon=False)
+fig.tight_layout()
+fig.savefig("ablation-combined.pdf", format="pdf", bbox_inches="tight")
 plt.show()
 
 # %%

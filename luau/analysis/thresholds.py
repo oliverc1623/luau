@@ -129,9 +129,8 @@ g = sns.relplot(
     height=3,  # Height of each facet in inches
     aspect=1.0,  # Aspect ratio of each facet
     facet_kws={"sharey": False},
-    col_wrap=3,
 )
-sns.move_legend(g, "upper left", bbox_to_anchor=(0.6, 0.45))
+sns.move_legend(g, "upper center", bbox_to_anchor=(0.45, 0.1), ncol=2)
 
 g.set_titles(col_template="{col_name}")
 g.savefig("threshold-facet.pdf", format="pdf")
