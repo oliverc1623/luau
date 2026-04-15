@@ -5,13 +5,8 @@ import pandas as pd
 import seaborn as sns
 
 
-sns.set_theme(style="darkgrid")  # you can also pick 'darkgrid', 'white', etc.
-# Set font family to Times New Roman
-plt.rcParams["font.size"] = 34
-plt.rcParams["font.serif"] = ["Times New Roman"]
-plt.rcParams["font.family"] = "Times New Roman"
-plt.figure(figsize=(5, 4))
-sns.set_context("talk")
+pd.set_option("display.max_columns", None)
+sns.set_theme(style="whitegrid", palette="pastel")
 
 # %%
 df_bipedal = pd.read_csv("data/bipedal-learning-curves.csv")
@@ -183,9 +178,7 @@ plt.show()
 
 
 def generate_learningcurve_facets(df: pd.DataFrame) -> None:
-    """Generate a faceted learning curve plot, separated by environment."""
-    # 1. Define algorithms and melt the DataFrame to a "tidy" format.
-    #    'Environment' is now an identifier variable.
+    """Generate a faceted learning curve plot, separated by environment, with independent y-axes."""
     algorithms = ["Baseline", "DIAA", "IAA", "Finetune"]
     df_long = pd.melt(
         df,
@@ -195,33 +188,27 @@ def generate_learningcurve_facets(df: pd.DataFrame) -> None:
         value_name="Episodic Returns",
     )
 
-    # 2. Create the faceted plot using sns.relplot.
-    #    This function returns a FacetGrid object.
+    # Set up the facet grid: 2 rows, 3 columns, larger size, independent y-axis
     g = sns.relplot(
         data=df_long,
         x="Step",
         y="Episodic Returns",
         hue="Algorithm",
-        col="Environment",  # This creates the columns of subplots
+        col="Environment",
         kind="line",
         palette="Set2",
-        height=4,  # Height of each facet in inches
-        aspect=1.0,  # Aspect ratio of each facet
-        facet_kws={"sharey": False},
-        linewidth=1.5,
+        height=4.2,
+        aspect=1.7,
+        col_wrap=3,
+        linewidth=2,
+        facet_kws={"sharey": False},  # <-- This disables shared y-axis
     )
 
-    # 3. Add the shaded min/max regions to each subplot (facet).
-    #    We need to iterate through the axes of the FacetGrid.
+    # Add shaded min/max regions to each subplot
     for env_name, ax in g.axes_dict.items():
-        # Filter the original wide-format DataFrame for the specific environment
         df_env = df[df["Environment"] == env_name]
-
-        # Get the color mapping from the plot's legend
         handles, labels = g.axes.flat[0].get_legend_handles_labels()
         color_map = {label: handle.get_color() for label, handle in zip(labels, handles, strict=False)}
-
-        # Add a shaded region for each algorithm
         for algo in algorithms:
             color = color_map[algo]
             ax.fill_between(
@@ -232,22 +219,23 @@ def generate_learningcurve_facets(df: pd.DataFrame) -> None:
                 alpha=0.2,
             )
     g.set_titles(col_template="{col_name}")
+
+    # Move legend into whitespace below the bottom row, centered
     sns.move_legend(
         g,
         "lower center",
-        bbox_to_anchor=(0.5, -0.05),  # Position it horizontally centered, just above the plots
-        ncols=len(algorithms),  # Display all items in a single row
-        title=None,  # Remove the legend title
-        frameon=False,  # Remove the legend box frame
+        bbox_to_anchor=(0.7, 0.2),
+        ncols=1,
+        title=None,
+        frameon=False,
     )
 
-    # 4. Set overall title and save the figure
     g.savefig("learning-curves-facet.pdf", format="pdf")
     plt.show()
 
 
 # Generate the plot
-sns.set_theme(context="paper", font_scale=2.3, font="Times New Roman")
+sns.set_theme(context="paper", font_scale=3, font="Times New Roman")
 generate_learningcurve_facets(combined_df)
 
 # %%
