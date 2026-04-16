@@ -1,0 +1,51 @@
+This is BibTeX, Version 0.99d (TeX Live 2023/Debian)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: collas2026_conference.aux
+The style file: collas2026_conference.bst
+Database file #1: main.bib
+Warning--can't use both volume and number fields in anand2021enhanced
+Warning--empty booktitle in kazemkhani_gpudrive_2024
+Warning--can't use both volume and number fields in sutton1998reinforcement
+Warning--can't use both volume and number fields in vincze2025smose
+You've used 30 entries,
+            2773 wiz_defined-function locations,
+            784 strings with 12683 characters,
+and the built_in function-call counts, 21446 in all, are:
+= -- 1883
+> -- 1679
+< -- 20
++ -- 560
+- -- 530
+* -- 1907
+:= -- 3234
+add.period$ -- 112
+call.type$ -- 30
+change.case$ -- 262
+chr.to.int$ -- 30
+cite$ -- 64
+duplicate$ -- 822
+empty$ -- 1403
+format.name$ -- 564
+if$ -- 4527
+int.to.chr$ -- 1
+int.to.str$ -- 1
+missing$ -- 31
+newline$ -- 168
+num.names$ -- 122
+pop$ -- 531
+preamble$ -- 1
+purify$ -- 233
+quote$ -- 0
+skip$ -- 744
+stack$ -- 0
+substring$ -- 856
+swap$ -- 203
+text.length$ -- 18
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 325
+warning$ -- 4
+while$ -- 151
+width$ -- 0
+write$ -- 430
+(There were 4 warnings)

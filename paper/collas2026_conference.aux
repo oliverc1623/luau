@@ -1,0 +1,144 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{mnih2015human}
+\citation{kazemkhani_gpudrive_2024}
+\citation{yu2020meta}
+\citation{kiran2021deep}
+\citation{haarnoja_soft_2018,fujimoto2018addressing,Lillicrap2015ContinuousCW,pmlr-v48-mniha16,schulman2017proximal}
+\citation{da2020agents,ye2020towards}
+\citation{da2020agents}
+\citation{ahn2025prevalence}
+\citation{khetarpal2022towards,campbell2023introspective}
+\citation{campbell2023introspective}
+\citation{shenfeld2023tgrl}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{1}{Introduction}{section.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Outline of DIAA: Given $\pi ^T$, DIAA determines to draw an action from $\pi ^T$ or $\pi ^S$. Based on the rewards from the selected action, DIAA updates the threshold, $\epsilon _T$.}}{1}{figure.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:enter-label}{{1}{1}{Outline of DIAA: Given $\pi ^T$, DIAA determines to draw an action from $\pi ^T$ or $\pi ^S$. Based on the rewards from the selected action, DIAA updates the threshold, $\epsilon _T$}{figure.caption.1}{}}
+\citation{shenfeld2023tgrl}
+\citation{campbell2023introspective}
+\citation{campbell2023introspective}
+\citation{czarnecki_distilling_2019}
+\citation{anand2021enhanced}
+\citation{guo2023explainable}
+\citation{shenfeld2023tgrl}
+\citation{shenfeld2023tgrl,kakade_approximately_2002,schulman2015trust}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{2}{section.2}\protected@file@percent }
+\newlabel{sec:related}{{2}{2}{Related Work}{section.2}{}}
+\newlabel{eq:introspection}{{1}{2}{Related Work}{equation.2.1}{}}
+\citation{campbell2023introspective}
+\citation{sutton1998reinforcement}
+\citation{campbell2023introspective}
+\citation{haarnoja_soft_2018}
+\citation{campbell2023introspective}
+\citation{fujimoto2018addressing}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Environment suite of source and target tasks.}}{3}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:env-setup}{{2}{3}{Environment suite of source and target tasks}{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Preliminaries}{3}{section.3}\protected@file@percent }
+\newlabel{sec:prelim}{{3}{3}{Preliminaries}{section.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Method}{3}{section.4}\protected@file@percent }
+\newlabel{sec:method}{{4}{3}{Method}{section.4}{}}
+\citation{campbell2023introspective}
+\citation{shenfeld2023tgrl}
+\citation{schulman2015trust,shenfeld2023tgrl,kakade_approximately_2002}
+\citation{fujimoto2018addressing}
+\citation{shenfeld2023tgrl}
+\citation{shenfeld2023tgrl}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Dynamically Introspective Action Advising (off-policy)}}{4}{figure.caption.3}\protected@file@percent }
+\newlabel{alg:diaa}{{1}{4}{Dynamically Introspective Action Advising (off-policy)}{figure.caption.3}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces INTROSPECT}}{4}{figure.caption.3}\protected@file@percent }
+\newlabel{alg:introspect}{{2}{4}{INTROSPECT}{figure.caption.3}{}}
+\newlabel{eq:q-introspection}{{3}{4}{Method}{equation.4.3}{}}
+\citation{campbell2023introspective}
+\citation{campbell2023introspective}
+\citation{li2022metadrive,towersgym2024}
+\citation{campbell2023introspective}
+\citation{taylor2009transfer}
+\newlabel{eq:q-introspection-iaa}{{5}{5}{Method}{equation.4.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Experiments}{5}{section.5}\protected@file@percent }
+\newlabel{sec:experiments}{{5}{5}{Experiments}{section.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Results}{5}{section.6}\protected@file@percent }
+\newlabel{sec:results}{{6}{5}{Results}{section.6}{}}
+\citation{gilpin2018explaining}
+\citation{jing2022inaction,chen2021interpretable}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Learning curves for SAC, DIAA, IAA, SAC, and Fine-tune for each target task.}}{6}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:learning-curves}{{3}{6}{Learning curves for SAC, DIAA, IAA, SAC, and Fine-tune for each target task}{figure.caption.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Interpretability}{6}{subsection.6.1}\protected@file@percent }
+\citation{glanois2024survey}
+\citation{vincze2025smose}
+\citation{furelos2021induction}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Results for IAA, DIAA, and Fine-tune across the five target tasks. This table compares transfer efficacy (TE), jumpstart, and final reward; all metrics are calculated in relation to the baseline, SAC.}}{7}{table.caption.5}\protected@file@percent }
+\newlabel{tbl:results}{{1}{7}{Results for IAA, DIAA, and Fine-tune across the five target tasks. This table compares transfer efficacy (TE), jumpstart, and final reward; all metrics are calculated in relation to the baseline, SAC}{table.caption.5}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces The density of actions the student and teacher took across all tasks. LLWE shows the lateral throttle actions, BWHM shows throttle actions for one leg, T-Int. and MT show the steering angle the car took, and CM shows the distribution of the vehicle's throttle command.}}{7}{figure.caption.6}\protected@file@percent }
+\newlabel{fig:act-dist}{{4}{7}{The density of actions the student and teacher took across all tasks. LLWE shows the lateral throttle actions, BWHM shows throttle actions for one leg, T-Int. and MT show the steering angle the car took, and CM shows the distribution of the vehicle's throttle command}{figure.caption.6}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Introspective threshold adjusting throughout the student learning. Each plot shows the median thresholds used for IAA and DIAA across four seeded runs.}}{8}{figure.caption.7}\protected@file@percent }
+\newlabel{fig:threshold}{{5}{8}{Introspective threshold adjusting throughout the student learning. Each plot shows the median thresholds used for IAA and DIAA across four seeded runs}{figure.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Ablation Study}{8}{subsection.6.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Ablation study in BWHM; initial thresholds are set to 0.25 and 0.75. The bottom row shows the median threshold values over four seeded runs.}}{8}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:ablation}{{6}{8}{Ablation study in BWHM; initial thresholds are set to 0.25 and 0.75. The bottom row shows the median threshold values over four seeded runs}{figure.caption.8}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Burn-in and decay ablation study. The left two plots show advice over timesteps with burn-in values of 100, 1000, and 5000. The right plots sweep across decay rates of 0.9999, 0.99999, and 0.999999. The y-axis shows the binarized advice from each eight sub-environments.}}{9}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:burn-in-decay-ablation}{{7}{9}{Burn-in and decay ablation study. The left two plots show advice over timesteps with burn-in values of 100, 1000, and 5000. The right plots sweep across decay rates of 0.9999, 0.99999, and 0.999999. The y-axis shows the binarized advice from each eight sub-environments}{figure.caption.9}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Discussion}{9}{section.7}\protected@file@percent }
+\newlabel{sec:discuss}{{7}{9}{Discussion}{section.7}{}}
+\citation{shenfeld2023tgrl}
+\bibdata{main}
+\bibcite{ahn2025prevalence}{{1}{2025}{{Ahn et~al.}}{{Ahn, Hyeon, Oh, Hwang, and Moon}}}
+\bibcite{anand2021enhanced}{{2}{2021}{{Anand et~al.}}{{Anand, Gupta, Paruchuri, and Ravindran}}}
+\bibcite{campbell2023introspective}{{3}{2023}{{Campbell et~al.}}{{Campbell, Guo, Xie, Stepputtis, and Sycara}}}
+\bibcite{chen2021interpretable}{{4}{2021}{{Chen et~al.}}{{Chen, Li, and Tomizuka}}}
+\bibcite{czarnecki_distilling_2019}{{5}{2019}{{Czarnecki et~al.}}{{Czarnecki, Pascanu, Osindero, Jayakumar, Swirszcz, and Jaderberg}}}
+\bibcite{da2020agents}{{6}{2020}{{Da~Silva et~al.}}{{Da~Silva, Warnell, Costa, and Stone}}}
+\bibcite{fujimoto2018addressing}{{7}{2018}{{Fujimoto et~al.}}{{Fujimoto, Hoof, and Meger}}}
+\bibcite{furelos2021induction}{{8}{2021}{{Furelos-Blanco et~al.}}{{Furelos-Blanco, Law, Jonsson, Broda, and Russo}}}
+\bibcite{gilpin2018explaining}{{9}{2018}{{Gilpin et~al.}}{{Gilpin, Bau, Yuan, Bajwa, Specter, and Kagal}}}
+\bibcite{glanois2024survey}{{10}{2024}{{Glanois et~al.}}{{Glanois, Weng, Zimmer, Li, Yang, Hao, and Liu}}}
+\bibcite{guo2023explainable}{{11}{2023}{{Guo et~al.}}{{Guo, Campbell, Stepputtis, Li, Hughes, Fang, and Sycara}}}
+\bibcite{haarnoja_soft_2018}{{12}{2018}{{Haarnoja et~al.}}{{Haarnoja, Zhou, Abbeel, and Levine}}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Future Work and Conclusion}{10}{section.8}\protected@file@percent }
+\newlabel{sec:conclusion}{{8}{10}{Future Work and Conclusion}{section.8}{}}
+\bibcite{jing2022inaction}{{13}{2022}{{Jing et~al.}}{{Jing, Xia, Tian, Ding, Luo, Domeyer, Sherony, and Ding}}}
+\bibcite{kakade_approximately_2002}{{14}{2002}{{Kakade \& Langford}}{{Kakade and Langford}}}
+\bibcite{kazemkhani_gpudrive_2024}{{15}{2024}{{Kazemkhani et~al.}}{{Kazemkhani, Pandya, Cornelisse, Shacklett, and Vinitsky}}}
+\bibcite{khetarpal2022towards}{{16}{2022}{{Khetarpal et~al.}}{{Khetarpal, Riemer, Rish, and Precup}}}
+\bibcite{kiran2021deep}{{17}{2021}{{Kiran et~al.}}{{Kiran, Sobh, Talpaert, Mannion, Al~Sallab, Yogamani, and P{\'e}rez}}}
+\bibcite{li2022metadrive}{{18}{2022}{{Li et~al.}}{{Li, Peng, Feng, Zhang, Xue, and Zhou}}}
+\bibcite{Lillicrap2015ContinuousCW}{{19}{2015}{{Lillicrap et~al.}}{{Lillicrap, Hunt, Pritzel, Heess, Erez, Tassa, Silver, and Wierstra}}}
+\bibcite{mnih2015human}{{20}{2015}{{Mnih et~al.}}{{Mnih, Kavukcuoglu, Silver, Rusu, Veness, Bellemare, Graves, Riedmiller, Fidjeland, Ostrovski, et~al.}}}
+\bibcite{pmlr-v48-mniha16}{{21}{2016}{{Mnih et~al.}}{{Mnih, Badia, Mirza, Graves, Lillicrap, Harley, Silver, and Kavukcuoglu}}}
+\bibcite{schulman2015trust}{{22}{2015}{{Schulman et~al.}}{{Schulman, Levine, Abbeel, Jordan, and Moritz}}}
+\bibcite{schulman2017proximal}{{23}{2017}{{Schulman et~al.}}{{Schulman, Wolski, Dhariwal, Radford, and Klimov}}}
+\bibcite{shenfeld2023tgrl}{{24}{2023}{{Shenfeld et~al.}}{{Shenfeld, Hong, Tamar, and Agrawal}}}
+\bibcite{sutton1998reinforcement}{{25}{1998}{{Sutton et~al.}}{{Sutton, Barto, et~al.}}}
+\bibcite{taylor2009transfer}{{26}{2009}{{Taylor \& Stone}}{{Taylor and Stone}}}
+\bibcite{towersgym2024}{{27}{2024}{{Towers et~al.}}{{Towers, Kwiatkowski, Terry, Balis, Cola, Deleu, Goulão, Kallinteris, Krimmel, KG, Perez-Vicente, Pierré, Schulhoff, Tai, Tan, and Younis}}}
+\bibcite{vincze2025smose}{{28}{2025}{{Vincze et~al.}}{{Vincze, Ferrarotti, Custode, Lepri, and Iacca}}}
+\bibcite{ye2020towards}{{29}{2020}{{Ye et~al.}}{{Ye, Chen, Zhang, Chen, Yuan, Liu, Chen, Liu, Qiu, Yu, et~al.}}}
+\bibcite{yu2020meta}{{30}{2020}{{Yu et~al.}}{{Yu, Quillen, He, Julian, Hausman, Finn, and Levine}}}
+\bibstyle{collas2026_conference}
+\citation{towersgym2024}
+\citation{towersgym2024}
+\citation{li2022metadrive}
+\citation{li2022metadrive}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Appendix}{12}{appendix.A}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {B}Environment Details}{12}{appendix.B}\protected@file@percent }
+\newlabel{appx:envs}{{B}{12}{Environment Details}{appendix.B}{}}
+\newlabel{eq:metadrive-rf}{{7}{12}{Environment Details}{equation.B.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {B.1}Hyperparameters}{12}{subsection.B.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Hyperparameter table for SAC and IAA/DIAA.}}{12}{table.caption.11}\protected@file@percent }
+\newlabel{tbl:hyperparams}{{2}{12}{Hyperparameter table for SAC and IAA/DIAA}{table.caption.11}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {C}Ablation Study}{12}{appendix.C}\protected@file@percent }
+\newlabel{appx:ablation}{{C}{12}{Ablation Study}{appendix.C}{}}
+\newlabel{fig:llwe-ablation}{{8a}{13}{Introspective threshold ablation for LLWE.\caption@thelabel }{figure.caption.12}{}}
+\newlabel{sub@fig:llwe-ablation}{{a}{13}{Introspective threshold ablation for LLWE.\caption@thelabel }{figure.caption.12}{}}
+\newlabel{fig:cm-ablation}{{8b}{13}{Introspective threshold ablation for CM.\caption@thelabel }{figure.caption.12}{}}
+\newlabel{sub@fig:cm-ablation}{{b}{13}{Introspective threshold ablation for CM.\caption@thelabel }{figure.caption.12}{}}
+\newlabel{fig:mt-ablation}{{8c}{13}{Introspective threshold ablation for MT.\caption@thelabel }{figure.caption.12}{}}
+\newlabel{sub@fig:mt-ablation}{{c}{13}{Introspective threshold ablation for MT.\caption@thelabel }{figure.caption.12}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Ablation study.}}{13}{figure.caption.12}\protected@file@percent }
+\newlabel{fig:experiments}{{8}{13}{Ablation study}{figure.caption.12}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Ablation study in BWHM; initial thresholds are set to 0.25 and 0.75. The bottom row shows the median threshold values over four seeded runs.}}{14}{figure.caption.13}\protected@file@percent }
+\newlabel{fig:ablation-returns}{{9}{14}{Ablation study in BWHM; initial thresholds are set to 0.25 and 0.75. The bottom row shows the median threshold values over four seeded runs}{figure.caption.13}{}}
+\gdef \@abspage@last{14}

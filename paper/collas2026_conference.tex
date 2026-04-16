@@ -1,0 +1,471 @@
+% This file was adapted from ICLR2022_conference.tex example provided for the ICLR conference
+\documentclass{article} % For LaTeX2e
+\usepackage{collas2026_conference,times}
+\usepackage{easyReview}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{multirow}
+\usepackage{subcaption}
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+% Please leave these options as they are
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=red,
+    filecolor=magenta,
+    urlcolor=blue,
+    citecolor=purple,
+    pdftitle={Overleaf Example},
+    pdfpagemode=FullScreen,
+    }
+
+
+
+
+\title{Dynamically Introspective Action Advising}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \collasfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{Antiquus S.~Hippocampus, Natalia Cerebro  \thanks{ Use footnote for providing further information
+about author (webpage, alternative address)---\emph{not} for acknowledging
+funding agencies.  Funding acknowledgements go at the end of the paper.} \\
+Department of Computer Science\\
+Random University\\
+Country \\
+\texttt{\{hippo,brain\}@cs.random.edu} \\
+\And % Use And to have authors side by side
+Koala Learnus \& D. Q. ResNet  \\
+Department of Computational Neuroscience \\
+University of Random City \\
+Another Country \\
+\texttt{\{koala,net\}@random.rand} \\
+\AND % Use AND to have authors block one under the other
+Coauthor \\
+Affiliation \\
+Address \\
+\texttt{email}
+}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+%\collasfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+
+%\preprintcopy % Uncomment for the preprint version, but NOT for submission.
+
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+Transfer learning in deep reinforcement learning (DRL) accelerates learning speed and improves generalizability. Action advising and teacher imitation, in particular, can help a DRL agent learn a novel task with guidance from a teacher model. The algorithm, Introspective Action Advising (IAA), has been shown to improve transfer learning through an introspection mechanism while also being interpretable. IAA, however, relies on a fixed introspective threshold to determine when a teacher should issue advice to the student. In this work, we dynamically update the introspection threshold in IAA and benchmark transfer learning methods from one task to multiple tasks in increasing difficulty. Performance estimation from teacher-guided reinforcement learning replaces the static  threshold with a dynamically updating threshold, modulating how much advice should be given to the student. Dynamically Introspective Action Advising (DIAA) elucidates and accelerates a student's policy convergence in novel environments.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Deep reinforcement learning (DRL) has achieved superhuman performance across video games \citep{mnih2015human}, autonomous driving \citep{kazemkhani_gpudrive_2024}, and robotic manipulation \citep{yu2020meta}, but each new task typically demands millions of fresh interactions, even when a competent policy for a related task already exists. This challenge is compounded when the environment issues sparse rewards or the simulator itself is the bottleneck \citep{kiran2021deep}. 
+
+Off-policy methods and parallelization improve data utilization and throughput but they do not exploit knowledge gained from previously learned tasks to reduce sample complexity in new ones \citep{haarnoja_soft_2018, fujimoto2018addressing, Lillicrap2015ContinuousCW, pmlr-v48-mniha16, schulman2017proximal}. Action advising can accelerate training by reusing information from a pre-trained model to guide a newly initialized model \citep{da2020agents, ye2020towards}. However, action advising approaches need an optimal teacher to facilitate demonstrations \cite{da2020agents}, risk negative transfer \cite{ahn2025prevalence}, and rely on temporal heuristics to issue advice \cite{khetarpal2022towards, campbell2023introspective}.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{oliver_fig.pdf}
+    \caption{Outline of DIAA: Given $\pi^T$, DIAA determines to draw an action from $\pi^T$ or $\pi^S$. Based on the rewards from the selected action, DIAA updates the threshold, $\epsilon_T$.}
+    \label{fig:enter-label}
+\end{figure}
+
+In this work, we introduce a dynamic method that combines ideas from action advising and suboptimal imitation learning. Introspective action advising presents a  mechanism for the teacher to assess whether issuing advice will benefit the student more than the student's own actions \citep{campbell2023introspective}. This work is based on a fixed threshold: advice is given if the difference between the value function of the teacher and the value function of a fine-tuned copy of the teacher falls within this threshold bound. Consequently, the introspection threshold requires task specific tuning. Since a copy of the teacher's critic is being fine-tuned, there is added computational overhead. 
+
+To overcome these limitations, we draw inspiration from \citet{shenfeld2023tgrl} who propose Teacher Guided Reinforcement Learning (TGRL): a method that balances the importance of the teacher based on the student's performance. The intuition behind TGRL is that if a student outperforms a comparative policy with teacher advice, then the teacher's importance should decrease. Otherwise, if the student under-performs, then increase the teacher's importance. 
+
+We adopt the balancing coefficient approach from \citet{shenfeld2023tgrl} to introduce dynamically introspective action advising (DIAA), which features a dynamic introspection threshold. Adapting the introspective threshold broadens the applicability of transfer learning, serves as a metric of task difficulty, and eliminates the need for a comprehensive hyperparameter search. Given a teacher agent, trained on a source task, a student agent learns a different target task with the teacher's advice. Using IAA, the introspection mechanism gauges when it should give advice. In addition, based on performance of the student with advice and student without advice, we increase or decrease the threshold to reflect when the student should use the teacher's action. We directly compare DIAA against IAA in two target tasks, different than the source task the teacher was trained on. In summary, our paper makes three novel contributions: 
+\begin{itemize}
+    \item We extend IAA to SAC to transfer action advice in tasks with continuous action spaces.
+    \item We introduce a dynamic introspection threshold for more adaptable transfer learning in novel tasks.
+    \item We establish the dynamic introspection threshold as a metric for quantifying the difficulty of cross-task knowledge transfer.
+\end{itemize}
+Our paper is organized as follows: Related Works provides an overview of IAA and TGRL. Preliminaries describes the problem formulation that we solve. Method explains DIAA in detail. Experiments outlines the experiments we ran to compare IAA, DIAA, and Fine-tuning. Results presents and analyzes our findings across the algorithms. Finally, the Discussion and Conclusion sections deliberate the implications of our experiments' results and discuss future work and limitations.
+
+\section{Related Work}
+\label{sec:related}
+
+\textbf{Introspective Action Advising} is a transfer learning method by \citet{campbell2023introspective}. IAA aims to accelerate a student agent learning a novel \textit{target} task that is distinct from the \textit{source} task that the teacher was trained on. IAA introduces an introspection mechanism: a method for the teacher to give the student advice (in the form of an action) in states where a teacher's action yields a better outcome than the student's action. Given a teacher policy and a value function trained on a source task, $\pi_T$ and $V_{\pi_T}^{\text{Source}}$, an action, $a_t$, is transferable from the teacher to the student if 
+\begin{equation}
+\label{eq:introspection}
+    |V_{\pi_T}^{\text{Target}}(s_t) - V_{\pi_T}^{\text{Source}}(s_t)| \leq \epsilon.
+\end{equation}
+$V_{\pi_T}^{\text{Target}}$ is a copy of the teacher's source value function, fine-tuned based on the rewards garnered by the student in the target task. Intuitively, at the beginning of a transfer learning scenario with IAA, the values of $V_{\pi_T}^{\text{Target}}$ and $V_{\pi_T}^{\text{Source}}$ will be identical. However, $V_{\pi_T}^{\text{Target}}$ learns the value-estimate of the target task from the student's observations and rewards, gradually diverging from $V_{\pi^T}^{\text{Source}}$, making it unable to determine states in which the teacher's action is beneficial. \citet{campbell2023introspective} implements IAA with proximal policy optimization (PPO) for discrete tasks, requiring an off-policy importance sampling correction since out-of-distribution actions are being drawn from the teacher. Another limitation of IAA is that the introspection threshold is fixed. This prevents IAA from scaling its application use, requiring a subjective process to determine when to apply transfer learning. 
+
+% Therefore, complete hyperparameter tuning is warranted when applying IAA.
+
+\begin{figure}[ht]
+    \centering
+        \includegraphics[width=0.85\linewidth]{figures/env-setup-diaa-fig.pdf}
+    \caption{Environment suite of source and target tasks.}
+    \label{fig:env-setup}
+\end{figure}
+
+Similar teacher-student paradigms have been explored using policy distillation \citep{czarnecki_distilling_2019}, teacher state assessments \citep{anand2021enhanced}, and student reflection \citep{guo2023explainable}. However, these methods still face generalizability issues due to their dependence on the teacher and the need for additional computational overhead. 
+
+\textbf{Teacher Guided Reinforcement Learning} introduces a balanced approach to imitating a teacher while learning from the student's rewards \citep{shenfeld2023tgrl}. TGRL accelerates transfer learning tasks where the teacher is suboptimal or when blindly following the teacher would not be beneficial. In transfer learning tasks where a teacher has privileged information, i.e., trained in an observation space with more information, a student blindly imitating the teacher could learn suboptimal behaviors in environments that call for greater exploration. Formally, TGRL optimizes the joint learning objective:
+\begin{equation}
+    \text{max}_{\pi} J_{R+I}(\pi, \alpha) = \text{max}_{\pi} \mathbb{E}[\sum_{t=0}^H \gamma^t(r_t-\alpha H_t^X(\pi|\bar{\pi}))],
+\end{equation}
+or in other words, the cumulative sum of rewards and cumulative sum of rewards computed as the cross-entropy  ($H_t^X$) between the teacher, $\bar{\pi}$, and student's, $\pi$, action distributions. TGRL solves for $\alpha$ using a dual lagrangian optimizer. Algorithmically, TGRL updates $\alpha$ with the \textit{objective difference lemma} for an off-policy case, computing $J(\pi) - J(\pi_R)$ - i.e., the performance difference between the policy with teacher guidance and the policy without teacher guidance \citep{shenfeld2023tgrl, kakade_approximately_2002, schulman2015trust}. TRGL is designed for transfer learning scenarios where a suboptimal teacher guides a student in a partially observable environment. This limits its applicability to tasks where the state-action pairs come from the same environmental state distribution. Our focus of cross-task transfer learning was not examined. 
+
+
+\section{Preliminaries}
+\label{sec:prelim}
+
+Consider a Markov Decision Process (MDP) to model our reinforcement learning environment. Let $\mathcal{M}$ designate the MDP composed of $(\mathcal{S}, \mathcal{A}, p, r, \gamma)$. $\mathcal{S}$ is a measurable state space, indexed by $s\in \mathcal{S}$; $\mathcal{A}$ is a measurable action space, indexed by $a\in \mathcal{A}$; $p$ is a transition function, mapping state-action pairs $(s, a)$ to a probability distribution over next states; $r$ is a reward function that maps state-action pairs $(s,a)$ to a real-valued rewards; $\gamma \in (0,1]$ is the discount factor, represented as a real number between zero and one. 
+
+To formalize transfer learning scenarios in reinforcement learning, we define a source and target task as $\mathcal{M}_S = (\mathcal{S}_\text{S}, \mathcal{A}_\text{S}, p_\text{S}, r_\text{S}, \gamma_\text{S})$ and $\mathcal{M}_T=(\mathcal{S}_\text{T}, \mathcal{A}_\text{T}, p_\text{T}, r_\text{T}, \gamma_\text{T})$. The student agent solves a target task where the state space is the same as the source task, but their distribution may differ. Formally, $S_S = S_T$ but $d_S(s)\neq d_T(s)$ where $d_S(s)$ and $d_T(s)$ denote the state distribution in the source and target tasks, respectively. $p_\text{S}$ may not be the same as $p_\text{T}$, depending on the environment. In LLWE, for example, the wind in the target task will change the probability transition function. Conversely, the MetaDrive target tasks add more vehicles, but the interval kinematics of the vehicles remain the same. The other environmental components remains the same, so $\mathcal{A}_\text{S} = \mathcal{A}_\text{T}, r_\text{S} = r_\text{T}, \gamma_\text{S} = \gamma_\text{T}$. 
+
+Following the formalism in  \citet{campbell2023introspective} and \citet{sutton1998reinforcement}, let the student agent policy be $\pi^S$. Suppose $\pi^S$ has access to a teacher policy, $\pi^T$, which was trained on a source task (we remain agnostic to how the teacher was trained). Given, $\pi^T$, we aim to train $\pi^S$ by leveraging teacher-generated actions, where $a_t \sim \pi^T(s_t)$. Introspection trains an indicator function, $I_H:S_t\rightarrow[0,1]$, to determine when teacher advice should be used. $I_H$ maps a state to zero or one. If $I_H(s_t)=1$ then $\pi^T$ issues actions where $V_{\pi^T}(s_t) > V_{\pi^S}(s_t) \;\forall s_t \in S_T$. $I_H$ is contingent on Equation \ref{eq:introspection}, an exponentiation decay rate ($\lambda$), and a burn-in ($\delta$) parameter. Intuitively, a higher threshold $\epsilon$ causes the teacher to provide more advice, whereas a lower $\epsilon$ results in less teacher advice. Based on $I_H$, we measure the performance difference of the student with teacher actions $J_R(\pi^{S+T})$ and the student without teacher actions $J_R(\pi^S)$. Here, $\pi^{S+T}$ and $\pi^S$ refer to the same underlying policy. However, under $\pi^{S+T}$, the teacher agent overrides the student policy with its own action choice, $a\sim\pi^T(s_t)$ in states where $I_H(s_t)=1$, whereas $\pi^S$ always follows its own policy. 
+
+\section{Method}
+\label{sec:method}
+
+We first extend IAA so that the underlying RL algorithm is SAC instead of PPO \cite{campbell2023introspective}. SAC is an off-policy algorithm that uses a replay buffer to sample state-action transitions from multiple policies \citep{haarnoja_soft_2018}. In our adaptation, we remove the off-policy correction that was introduced in \citet{campbell2023introspective}. We use the version of SAC that utilizes double Q-functions which are parameterized as neural networks \citep{fujimoto2018addressing}. To incorporate these Q-functions, we modify the introspection mechanism by replacing the value functions of the teacher with the action-value function, $Q(s_t, a_t)$. Since SAC uses two Q-functions, we take the absolute difference of each student's Q-value in the introspection inequality as shown in Equation \ref{eq:q-introspection}. 
+
+\begin{equation}
+\label{eq:q-introspection}
+|Q_{\pi^S 1}^{\text{Target}}(s_t,a_t)- Q_{\pi^S 2}^{\text{Target}}(s_t,a_t)| \leq \epsilon.
+\end{equation} 
+Here, $Q_{\pi_S 1}^{\text{Target}}(s_t,a_t)$ and $Q_{\pi_S 2}^{\text{Target}}(s_t,a_t)$ are the student's \\ two Q-functions. We shift introspection from the teacher to the student: the gate fires on the student's critic disagreement, not the teacher's value drift. The motivation behind using the student's Q-network is that the value estimates from the teacher applied to the target task could become unstable as the source and target differ \cite{campbell2023introspective}. We choose the student's Q-network to ensure the critics operate in the same distribution and avoid having to fine-tune the teacher's critic in the target task.
+
+At initialization, the Q-networks have similar small weights, leading to a minimal difference in their outputs. Because the inequality is easily satisfied, the teacher's action is used frequently in early training when the student has not yet formed reliable value estimates. As training progresses, the networks specialize and their value estimates diverge, causing the absolute difference to grow beyond $\epsilon$. At this point, the inequality is no longer satisfied, so the student relies on its own policy. Intuitively, low critic disagreement signals that the student's value estimates are underdeveloped and the teacher's guidance is beneficial, while high disagreement indicates that the student has formed its own informed estimates and no longer needs the teacher's advice. In the introspection step, actions are pre-sampled from both the teacher and student policies in order to compute the corresponding Q-values; see Algorithm \ref{alg:diaa}.
+
+% \begin{algorithm}[tb]
+%     \caption{Dynamically Introspective Action Advising (off-policy)}
+%     \label{alg:diaa}
+%     \begin{algorithmic}[1]
+%     \STATE \textbf{Input:} $\pi^T, \epsilon_{\text{init}}, \mu$
+%     \STATE Initialize $\pi^S, Q_{\pi^S1}^{\text{target}}, Q_{\pi^S2}^{\text{target}}, $ \text{ and } $ \epsilon_0 \leftarrow \epsilon_\text{init}$  
+%     \FOR{t=1,2,\dots}
+%         \STATE $h_t, a_t^T, a_t^S \leftarrow $ \\ 
+%         $\text{INTROSPECT}(s_t, \pi^S, \pi^T , Q_{\pi^S1}^{\text{target}}, Q_{\pi^S2}^{\text{target}}, \epsilon_t, t)$
+%         \IF{$h_t = 1$}
+%             \STATE $a_t \leftarrow a_t^T$
+%         \ELSE
+%             \STATE $a_t \leftarrow a_t^S$
+%         \ENDIF
+%     \STATE Add $s_t$, $s_{t+1}, a_t, r_t, d_t$ to replay buffer.
+%     \FOR{j=1,\dots,$N_{\text{update}}$}
+%         \STATE Sample batch of trajectories from replay buffer.
+%         \STATE Update student Q-functions.
+%         \STATE Update student policy by optimizing $Q_{\pi^S1}^{\text{target}}, Q_{\pi^S2}^{\text{target}}.$
+%     \ENDFOR
+%     \STATE $\epsilon_t \leftarrow \epsilon_{t-1} + \mu[J_R(\pi^{S+T}) - J_R(\pi^S)]$
+%     \ENDFOR
+%     \end{algorithmic}
+% \end{algorithm}
+
+\begin{figure}[tb]
+\begin{minipage}[t]{0.52\textwidth}
+\begin{algorithm}[H]
+    \caption{Dynamically Introspective Action Advising (off-policy)}
+    \label{alg:diaa}
+    \begin{algorithmic}[1]
+    \STATE \textbf{Input:} $\pi^T, \epsilon_{\text{init}}, \mu$
+    \STATE Initialize $\pi^S, Q_{\pi^S1}^{\text{target}}, Q_{\pi^S2}^{\text{target}}, $ \text{ and } $ \epsilon_0 \leftarrow \epsilon_\text{init}$  
+    \FOR{t=1,2,\dots}
+        \STATE $h_t, a_t^T, a_t^S \leftarrow $ \\ 
+        $\text{INTROSPECT}(s_t, \pi^S, \pi^T , Q_{\pi^S1}^{\text{target}}, Q_{\pi^S2}^{\text{target}}, \epsilon_t, t)$
+        \IF{$h_t = 1$}
+            \STATE $a_t \leftarrow a_t^T$
+        \ELSE
+            \STATE $a_t \leftarrow a_t^S$
+        \ENDIF
+    \STATE Add $s_t$, $s_{t+1}, a_t, r_t, d_t$ to replay buffer.
+    \FOR{j=1,\dots,$N_{\text{update}}$}
+        \STATE Sample batch of trajectories from replay buffer.
+        \STATE Update student Q-functions.
+        \STATE Update student policy by optimizing $Q_{\pi^S1}^{\text{target}}, Q_{\pi^S2}^{\text{target}}.$
+    \ENDFOR
+    \STATE $\epsilon_t \leftarrow \epsilon_{t-1} + \mu[J_R(\pi^{S+T}) - J_R(\pi^S)]$
+    \ENDFOR
+    \end{algorithmic}
+\end{algorithm}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.45\textwidth}
+\begin{algorithm}[H]
+    \caption{INTROSPECT}\label{alg:introspect}
+    \begin{algorithmic}[1]
+    \STATE \textbf{Input:} $s_t, \pi^S, \pi^T, Q_{\pi^S1}^{\text{Target}}, Q_{\pi^S2}^{\text{Target}}, \epsilon_i, t$
+    \STATE $h_t\leftarrow0$
+    \STATE $p \sim Bern(\lambda^{\text{max}(0,t-\delta)})$
+    \STATE $a_t^T \sim \pi^T(s_t)$
+    \STATE $a_t^S \sim \pi^S(s_t)$
+    \IF{$t>\delta$ and $p=1$}
+        \IF{$|Q_{\pi^S 1}^{\text{Target}}(s_t,a_t)- Q_{\pi^S 2}^{\text{Target}}(s_t,a_t)|\leq \epsilon_i$}
+        \STATE $h_t\leftarrow1$
+        \ENDIF
+    \ENDIF
+    \STATE Return $h_t$, $a_t^T$, $a_t^S$
+    \end{algorithmic}
+\end{algorithm}
+\end{minipage}
+\end{figure}
+
+
+Next, we introduce a dynamic introspection threshold $\epsilon_t$ which adjusts its value based on the performance difference between $\pi^S$ and $\pi^{S+T}$. Given that SAC is an off-policy algorithm, we can use Proposition 3.2 from \cite{shenfeld2023tgrl} to compare $\pi^S$ and $\pi^{S+T}$. Since we sample actions using a Bernoulli distribution and store transitions in a replay buffer, we can apply the performance difference lemma for the off-policy case as established in \citet{schulman2015trust, shenfeld2023tgrl,kakade_approximately_2002}. This allows us to quantify how introspection-driven teacher actions impact student policy performance in an off-policy setting. Formally, we define the dynamic introspection threshold as
+\begin{equation}
+    \epsilon_i = \epsilon_{i-1} + \mu[J_R(\pi^{S+T})-J_R(\pi^{S})].
+\end{equation}          
+$J_R$ denotes the objective function of maximizing the cumulative sum of rewards. The parameter $\mu$ denotes a coefficient learning rate for $\epsilon_t$. More specifically, the performance difference is given by $J(\pi^{S+T})-J(\pi^{S}) =  \mathbb{E}_{(s,a,t)\sim p}[\gamma^t(A_{\pi^{S+T}}(s,a) - A_{\pi^{S}}(s,a)]$. Given the absence of an explicit value functions in SAC, we approximate the advantages using episodic returns \citep{fujimoto2018addressing}. For stability, we clip the threshold update so that its lower bound is zero. Note that unlike the Q-functions in \cite{shenfeld2023tgrl}, our Q-functions only evaluate the action-value Q-function of the rewards - we do not include $Q_I$ from \cite{shenfeld2023tgrl}, which denotes imitation rewards. 
+
+% \begin{algorithm}[tb]
+%     \caption{INTROSPECT}\label{introspect}
+%     \begin{algorithmic}[1]
+%     \STATE \textbf{Input:} $s_t, \pi^S, \pi^T, Q_{\pi^S1}^{\text{Target}}, Q_{\pi^S2}^{\text{Target}}, \epsilon_i, t$
+%     \STATE $h_t\leftarrow0$
+%     \STATE $p \sim Bern(\lambda^{\text{max}(0,t-\delta)})$
+%     \STATE $a_t^T \sim \pi^T(s_t)$
+%     \STATE $a_t^S \sim \pi^S(s_t)$
+%     \IF{$t>\delta$ and $p=1$}
+%         \IF{$|Q_{\pi^S 1}^{\text{Target}}(s_t,a_t)- Q_{\pi^S 2}^{\text{Target}}(s_t,a_t)|\leq \epsilon_i$}
+%         \STATE $h_t\leftarrow1$
+%         \ENDIF
+%     \ENDIF
+%     \STATE Return $h_t$, $a_t^T$, $a_t^S$
+%     \end{algorithmic}
+% \end{algorithm}
+
+In Algorithm \ref{alg:introspect}, we keep the burn-in and decay parameters from the original IAA formulation, which orchestrates a fuzzy, approximated temporal cut-off for triggering introspection \cite{campbell2023introspective}. To properly compare IAA to DIAA, we use the following introspection inequality for the SAC-IAA implementation:
+\begin{equation}
+\label{eq:q-introspection-iaa}
+\begin{split}
+    | & \min(Q_{\pi_T 1}^{\text{Target}}(s_t,a_t), Q_{\pi_T 2}^{\text{Target}}(s_t,a_t)) \\
+    & - \min(Q_{\pi_T 1}^{\text{Source}}(s_t,a_t), Q_{\pi_T 2}^{\text{Source}}(s_t,a_t))| \leq \epsilon.
+\end{split}
+\end{equation}$Q_{\pi_T 1}^{\text{Target}}(s_t,a_t)$ and $Q_{\pi_T 2}^{\text{Target}}(s_t,a_t)$ are fined-tuned copies of the teacher's critics. This inequality reflects the introspection mechanism in \citet{campbell2023introspective}. We implement this extension so that we compare introspection mechanisms - not algorithmic backbones. 
+
+\section{Experiments}
+\label{sec:experiments}
+
+We conduct a set of experiments in Box2D and MetaDrive \cite{li2022metadrive, towersgym2024}. MetaDrive is a light-weight autonomous driving simulator, providing customized road, traffic, and hazard configurations. Within Box2D, we use \textbf{BipedalWalker-v3} and \textbf{LunarLander-v3}; both environments are configured so that the target task is more challenging than the source task. Following the formalization in the Preliminary Section, the reward function, action space, and observation space remain the same throughout each Source-Target pair. 
+
+We examine Fine-tuning, IAA, DIAA in five sets of tasks. Figure \ref{fig:env-setup} shows the five tasks under consideration. For \textbf{LunarLander-v3}, the source task involves landing in the landing zone under earth-like gravitational conditions. The source task for \textbf{BipedalWalker-v3} has the agent walk across a flat plain. \textbf{MetaDrive}'s source task trains an agent to follow a straight road where lane-keeping is not necessary. 
+
+We include a SAC agent as our baseline. This student baseline receives no guidance from the teacher and serves as the control in our experiments. The second baseline, Fine-tuning, is a transfer learning method where the student agent is initialized with the teacher's weight and then trained directly in the target task. For fine-tuning, the student copies the teacher's input layers while the remaining layers are randomly initialized. We use this fine-tuning method because it was used as a baseline in the original IAA paper and performed the strongest among the fine-tuning variants \cite{campbell2023introspective}. 
+
+The target task, \textbf{LunarLander-v3: Wind Enabled (LLWE)}, is a rocket trajectory optimization problem where the agent must dock on a landing pad with wind and gravitational pull of $-4m/s^2$; the purpose of \textbf{LLWE}, is to see if the student can leverage the lateral engines to correct its trajectory. The teacher was trained with a gravitational pull of $-10m/s^2$ and no wind. \textbf{BipedalWalker-v3: Hardcore Mode (BWHM)}, has the student agent learning how to walk among uneven terrain with obstacles. The student is expected to learn a policy that controls its legs (represented as four joints) so that it can clear obstacles and walk through uneven terrain. The teacher did not encounter any obstacles. See Appendix \ref{appx:envs} for environment specifications.
+
+The MetaDrive environments feature three target tasks. In all three tasks, the student agent has a goal destination it must reach as quickly as possible. Also, we enabled lane keeping and increased the traffic density and accident probability. \textbf{T-Intersection (T-Int.)} has the student agent turning left with dense traffic. This task requires the student to learn a new driving maneuver. \textbf{CurveMerge (CM)} introduces a left bend in the road followed by the road narrowing; this environment is designed to train the student to decelerate and brake to avoid. Lastly, \textbf{MergeTurn (MT)} starts off on a straight road with merging lanes. Then, the student agent must make a right turn at the intersection. Appendix \ref{appx:envs} specifies the MetaDrive environments' configurations.
+
+The actor neural network architecture includes an input layer for a state observation, two hidden layers with 256 neurons and ReLU activation functions, and two output layers. One output layer is the mean while the other is the log standard deviation for each action. The critic shares the same neural network backbone but its input layer includes an action and the output layer returns a scalar soft Q-value. The entire hyperparameter list can be found in the Appendix in Table \ref{tbl:hyperparams}.
+
+\section{Results}
+\label{sec:results}
+
+\begin{figure*}
+\centering
+\includegraphics[width=1.0\textwidth]{learning-curves-facet.pdf}
+\caption{Learning curves for SAC, DIAA, IAA, SAC, and Fine-tune for each target task.}
+\label{fig:learning-curves}
+\end{figure*}
+
+Here, we present our results from the experiments described in the Experiments section. We train method for 1 million timesteps; each includes four seeds per task, totaling to 4 million timesteps for each algorithm per task. 
+
+Three metrics we refer to throughout results are jumpstart, transfer efficacy (TE), and asymptotic performance which are defined in \citet{taylor2009transfer}. The TE metric is defined as the ratio of areas defined by two learning curves. That is, 
+\begin{equation}
+    TE=\frac{\text{AUC}_\text{transfer} - \text{AUC}_\text{baseline}}{\text{AUC}_\text{baseline}}.
+\end{equation}
+Jumpstart is the percentage increase of the initial reward under the transfer learning method, relative to the SAC baseline. Final reward is the asymptotic reward where training ends. We compute the percentage increase for the final reward relative to the SAC baseline. 
+
+% learning curve DIAA
+Figure \ref{fig:learning-curves} illustrates the learning curves for each algorithm and task. In every task, DIAA (orange curve) achieved a higher jumpstart value; figure \ref{fig:learning-curves} shows a steeper initial slope and y-axis intercept compared to the other methods. While the fine-tuning approach (pink curve) shared the same final reward with DIAA in \textbf{LLWE}, \textbf{T-Int.}, and \textbf{CM}, DIAA reaches the final reward in fewer timesteps. In \textbf{T-Int.}, for example, DIAA reached a reward of 150 by 250,000 steps, while the fine-tuning reached the maximum reward slightly before 500,000 timesteps. 
+
+DIAA shows a higher TE compared to IAA across all tasks. For instance, in Table \ref{tbl:results}, DIAA's three largest TE values were $1.60$, $0.99$, and $0.17$ in \textbf{LLWE}, \textbf{BWHM}, and \textbf{T-Int.}, respectively. In contrast, IAA yielded negative TE values of $-0.69$ and $-0.03$ in \textbf{LLWE} and \textbf{BWHM}, indicating IAA hindered the student agent compared to SAC. DIAA and IAA shared the same $\epsilon$, $\delta$, and $\lambda$ values, ensuring that any observed differences in performance can be attributed to core algorithmic distinctions.
+
+Fine-tuning performed well in all tasks, achieving a positive TE against SAC per Table \ref{tbl:results}. However, fine-tuning consistently had a worse jumpstart than IAA and DIAA, with values of $0.76\%, -0.30\%,$ and $11.\%$ in the MetaDrive environments. Fine-tuning hit final reward values, comparable to DIAA except for \textbf{BWHM} and \textbf{MT}, where fine-tuning ended training with reward increases of $22.5\%$ and $8.1\%$, respectively.
+
+IAA facilitates a sizable jumpstart boost, reaching percentage increases of $40.9\%$, $17.6\%$, and $67.5\%$ in the MetaDrive environments. For TE, IAA performs on pair or worse than the SAC baseline. This is most striking in Figure \ref{fig:learning-curves}, where IAA (blue curve) is consistently below the SAC baseline (green curve). IAA showed an increase in asymptotic reward in \textbf{T-Int.} and \textbf{MT} with percentages of $4.88\%$ and $13.3\%$ respectively.  
+
+In addition to learning curves, we present the distribution of actions taken for each algorithm during training in Figure \ref{fig:act-dist}. These distributions highlight how distinct exploration strategies emerge, ultimately shaping the learned policy. We select one action dimension to highlight key strategies the student learned from the teacher. For example, CM shows that DIAA learned a throttle policy favoring maximum speed with a density greater than 0.2. T-Int. and MT illustrates steering angle; in these plots, DIAA favored a slightly skewed distribution past 0.0. Meanwhile the teacher favored steering policies at -1.0 and 1.0.
+
+\begin{table*}[t]
+\centering
+\begin{tabular}{lllllll}
+\hline
+\textbf{Method} & \textbf{Metric} & \textbf{LLWE} & \textbf{BWHM} & \textbf{T-Inters.} & \textbf{Curve Merge} & \textbf{Merge Turn} \\ \hline
+\multirow{3}{*}{IAA} & TE & -0.69 & -0.03 & 0.02 & -0.09 & -0.01 \\
+ & Jumpstart & -3.2\% & \textbf{0.0\%} & 40.9\% & 17.6\% & 67.5\% \\
+ & Final Reward & -16.5\% & -7.7\% & 4.99\% & -10.1\% & 13.3\% \\ \hline
+\multirow{3}{*}{DIAA} & TE & \textbf{1.60} & \textbf{0.99} & \textbf{0.17} & 0.11 & 0.05 \\
+     & Jumpstart & \textbf{22.0\%} & \textbf{1.6\%} & \textbf{670\%} & \textbf{935\%} & \textbf{599\%} \\
+ & Final Reward & 10.0\% & \textbf{161\%} & \textbf{11.2\%} & \textbf{3.7\%} & \textbf{15.1\%} \\ \hline
+\multirow{3}{*}{Fine-tune} & TE & 1.08 & 0.17 & 0.16 & 0.15 & 0.05 \\
+ & Jumpstart & 14.0\% & 0.0\% & 0.76\% & -0.30\% & 11.7\% \\
+ & Final Reward & 10.9\% & 22.5\% & 10.1\% & 1.8\% & 8.1\% \\ \hline
+\end{tabular}
+\caption{Results for IAA, DIAA, and Fine-tune across the five target tasks. This table compares transfer efficacy (TE), jumpstart, and final reward; all metrics are calculated in relation to the baseline, SAC.}
+\label{tbl:results}
+\end{table*}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{action_dist.pdf}
+    \caption{The density of actions the student and teacher took across all tasks. LLWE shows the lateral throttle actions, BWHM shows throttle actions for one leg, T-Int. and MT show the steering angle the car took, and CM shows the distribution of the vehicle's throttle command.}
+    \label{fig:act-dist}
+\end{figure}
+
+% ############ Interpretability ############
+\subsection{Interpretability}
+
+Although the action space is continuous, the density plots in Figure \ref{fig:act-dist} are an interpretable way to visualize how policies manifest through training. Interpretability is crucial to validate learned behaviors, identifying model errors, and to ensure continuous improvement in models\citep{gilpin2018explaining}. In the context of autonomous driving, understanding why an agent chose a particular maneuver directly impacts the safety of the passenger. We can diagnose how an agent learns its driving policy by visualizing action distributions and making them interpretable. Interpretable decision making in autonomous vehicles as in \cite{jing2022inaction, chen2021interpretable}, focuses more on creating a visually interpretable representation of the vehicle and its surrounding, rather than understanding the decision-making process. 
+
+For example, the SAC baseline in T-Int. found itself in a suboptimal policy since the throttle values were mainly clustered at -1.0 and 1.0.  Recall in this example that the teacher did not need to learn lane keeping, so it could follow the road while oscillating its steering angle. This suggests that the agent found it more beneficial to lane-keep and perform a turning maneuver.
+
+Extracting relevant explanations or interpretations from DRL environments from high-dimensional continuous environments is a challenge in interpretable RL \cite{glanois2024survey}. Methods like in \citet{vincze2025smose} or \citet{furelos2021induction} use a hierarchical approach to interpretability, breaking down behaviors or goals into understandable symbols. Our approach offers a high-level behavioral summary of the student's policy. The teacher's and student's actions plotted in Figure \ref{fig:act-dist} can help machine learning practitioners visualize emerging strategies for tasks. Differing actions from the student reveal the teacher's limitations.
+
+\begin{figure}[t]
+    \centering
+     \includegraphics[width=\linewidth]{threshold-facet.pdf}
+    \caption{Introspective threshold adjusting throughout the student learning. Each plot shows the median thresholds used for IAA and DIAA across four seeded runs.}
+    \label{fig:threshold}
+\end{figure}
+
+Figure \ref{fig:threshold} provides a way to interpret the policies by using the introspection threshold itself as a metric for quantifying the difficulty of the target task. In BWHM, we see the threshold increases within the first 250,000 timesteps but quickly descends towards 0. The student trained with DIAA quickly finds that the teacher's advice does not improve performance. Hence, BWHM is noticeably more challenging than regular BipedalWalker-v3, since DIAA places greater weight on the student without guidance. DIAA also reduces the risk of potential negative transfer by cutting off the teacher's advice through the threshold. DIAA shifts the emphasis on the student's intuition in challenging tasks. 
+
+Conversely, LLWE presents a scenario where the threshold increases steadily throughout all 1 million timesteps. This indicates that the student benefits from the teacher's advice. This also implies that LLWE and LunarLander-v3 are similar tasks due to the lighter gravitational pull. T-Int. stands out by having a fluctuating pattern. In the beginning, DIAA encourages more advice from the teacher in the first 100,000 timesteps; after, the threshold drops sharply but increases around 250,000 timesteps. T-Int. requires the student to drive straight, turn, then drive straight again. We attribute this fluctuating threshold pattern to the task design, which leverages the teacher's advice most when the map is straight. 
+
+
+\subsection{Ablation Study}
+
+In this section, we analyze how changing the initial introspection threshold value influences rewards. This case-study will verify the effectiveness of our dynamic threshold under different initial conditions. In \textbf{BWHM}, we run two experiments where the initial threshold is $0.25$ and $0.75$. An initial threshold value of $0.25$ suggests that that source-target task pair are markedly different; here, the teacher selectively gives advice. A more generous threshold at $0.75$ implies more advice is issues due to the target being similar to the source task. This ablation is designed to understand how DIAA adjusts the introspection threshold when it is not set to $0.5$ where the weighted importance of the teacher and student are equal. All ablation study experiments were conducted over four seeded runs and 1 million timesteps. 
+
+\begin{figure}[th]
+    \centering
+    \includegraphics[width=\linewidth]{ablation-combined.pdf}
+    \caption{Ablation study in BWHM; initial thresholds are set to 0.25 and 0.75. The bottom row shows the median threshold values over four seeded runs.}
+    \label{fig:ablation}
+\end{figure}
+
+Figure \ref{fig:ablation} shows the rewards and threshold values for each algorithm in the ablation study. Observe that when the initial threshold is 0.25, DAA increases the threshold for a longer duration. Conversely, when the threshold is 0.75, DIAA increases it promptly but for a short time before plummeting to zero. In both threshold settings, DIAA ultimately set the threshold to 0.0. We attribute this to BWHM being significantly more challenging than the source task. Finally, the reward for DIAA were greater then the threshold was 0.75 instead of 0.25. 
+
+% \begin{figure}[tb]
+%     \centering
+%     \includegraphics[width=1.0\linewidth]{figures/}
+%     \caption{}
+%     \label{fig:llwe-ablation}
+% \end{figure}
+
+
+Figure \ref{fig:llwe-ablation} demonstrates varying initial thresholds for DIAA and IAA. DIAA shows consistent optimal convergence across all three thresholds. Meanwhile, IAA shows optimal convergence for threshold values 0.9 and 0.75 but concludes training on a suboptimal policy for threshold 0.25. Figure \ref{fig:cm-ablation} reveals a larger discrepancy between DIAA and IAA. In the CM target task, DIAA shows steady improvement across all three threshold values, although there is higher variance when the threshold is set to 0.25. IAA on the other hand, shows high variance across all three thresholds. In IAA, a threshold of 0.25 outperformed the other thresholds, unlike DIAA. DIAA shows an improved transfer efficacy over IAA by garnering more episodic returns throughout training. The ablation study for MT in Figure \ref{fig:mt-ablation} show consistent trends among the previous ablation results. DIAA displays high variance when the threshold is set to 0.9, but otherwise consistent between the other two threshold values. Specifically, the models show greater variance after the 600,000th timestep. While IAA shows convergence for threshold 0.9, thresholds 0.75 and 0.25 finish slightly below at around 140 episodic returns.
+
+\begin{figure}[th]
+    \centering
+    \includegraphics[width=\linewidth]{burn-in-decay-ablation-advice.pdf}
+    \caption{Burn-in and decay ablation study. The left two plots show advice over timesteps with burn-in values of 100, 1000, and 5000. The right plots sweep across decay rates of 0.9999, 0.99999, and 0.999999. The y-axis shows the binarized advice from each eight sub-environments.}
+    \label{fig:burn-in-decay-ablation}
+\end{figure}
+
+We investigate the burn-in and decay rate's impact on advice given over time. In Figure \ref{fig:burn-in-decay-ablation}, we run three burn-in values: 100, 1000, 5000 across four seeds. The advice issued generally remains the same for each burn-in value; this holds for LLWE and BWHM. The Decay ablation in Figure \ref{fig:burn-in-decay-ablation} shows advice given over time across 0.9999, 0.99999, and 0.999999. When increasing the decay rate advice given decreases more slowly over time in both environments. We measure the same ablation study against episodic rewards in Appendix \ref{appx:ablation} Figure \ref{fig:ablation-returns}. 
+
+\section{Discussion}
+\label{sec:discuss}
+
+In our experiments, we measure the transfer learning efficacy of DIAA and IAA. These experiments open future research directions towards making action advising and transfer learning in general, more resilient to novel tasks without needing to specify precise hyperparameters. Overall, DIAA demonstrated more robust transfer learning across all tasks over IAA while accelerating overall training. In Figure \ref{fig:learning-curves}, BWHM showed a stark contrast in learning curves between DIAA and the baseline. In BWHM, the agent had to discover policies that correctly controlled four joints so that the robot's leg can climb over obstacles in uneven terrain. The source task, BipedalWalker-v3, being devoid of obstacles, implies that the transfer learning method has to uncover a novel strategy in the action space. IAA's lower returns suggest that the teacher's $Q_{\pi^T1,2}^{\text{target}}$, evaluating the target task, did not converge to $*Q_{\pi^T1,2}^{\text{target}}$, yielding small differences between $Q_{\pi^T1,2}^{\text{source}}$. Since $\epsilon$ is fixed in IAA, the introspection mechanism uses the teacher's action. 
+
+Figure \ref{fig:act-dist} provides further evidence that DIAA exhibit adaptive capabilities in the BWHM density plot. The teacher agent did not utilize the hip throttle, seeing that the action's command is distributed around negative one - it remained in a suboptimal policy. Observe, however, that DIAA skews rightward towards zero and positive one. This suggests that applying greater throttle force to the hip joint allows the student to raise its leg higher to climb obstacles. DIAA also exhibits adaptive capabilities in LLWE. Observe in Figure \ref{fig:act-dist} how the student in LLWE takes a more uniformly distributed behavior around zero instead of the bimodal policy from the teacher. In LLWE, the agent is faced with more wind and a slower gravitational pull. Thus, a delicate balance of the lateral thrusters is required to dock on the landing pad. Since the lateral throttle distribution  is uniform around zero. This suggests that student correctly found a new policy that better suits LLWE. Meanwhile, the teacher's distribution in LLWE, would be ideal in an environment where the gravitational pull is stronger. 
+
+While DIAA improved performance across all tasks relative to the baseline, it has limitations. In CM,  DIAA provided a sizable jumpstart, but the overall TE value of 0.11 was lower than fine-tuning's TE value, as shown in Table \ref{tbl:results}. This can be attributed to the burn-in period being too long, given the disparity of CM and the StraightRoad. The slow learning speed of DIAA could be credited to the introspection threshold not updating quickly enough to account for the disparity of this task. Moreover, in training a student agent in a target task with little disparity from the source task, it might not be necessary to include an adaptive introspection threshold, as IAA followed closely to DIAA in performance in MT. A large threshold value means the student is more receptive to guidance, but this could bias the student towards a suboptimal policy early on. For instance, the drop in episodic returns for the MT plot in Figure \ref{fig:learning-curves}, could suggest early bias in training. The TE metrics for LLWE, BWHM, and the MetaDrive tasks in Table \ref{tbl:results} indicate that while DIAA consistently provides better performance than IAA, its effectiveness compared to fine-tuning varies between tasks.
+
+The ablation study in Figures \ref{fig:ablation}, \ref{fig:llwe-ablation}, and \ref{fig:cm-ablation} supports the claim that DIAA robustifies transfer learning while avoiding a hyperparameter search. Observe that in both threshold columns DIAA outperforms IAA. DIAA ends training with an episodic return of -50 under a 0.25 threshold and $-15$ under a 0.75 threshold. This suggests that even under different threshold conditions, DIAA was able to adapt the threshold and learn a better policy over IAA. No hyperparameter tuning method is required, thus reducing computational cost and time. Throughout all experiments with DIAA, the resulting rewards were localized within a narrow range. IAA, however, showed clear differences in final rewards based on each initial threshold. This demonstrates that DIAA's self-modulating threshold capabilities make it a robust transfer learning approach for reinforcement learning.
+
+\section{Future Work and Conclusion}
+\label{sec:conclusion}
+
+% In this work, we improve IAA by introducing an adaptive introspection threshold. 
+In this work, we contribute an introspective action advising method for continuous control with an adaptive threshold. Although our experiments were conducted using 1 million timesteps, longer training periods will reveal the true asymptotic upper bounds of policy returns. Algorithmically, DIAA relies on the student's Q-network as a proxy for uncertainty. Future work to address this could involve ensembling more than two critics to enrich value estimates. Lastly, the interpretability plots in Figure \ref{fig:act-dist} show one-dimension of the action space. For large action spaces, we believe principle component analysis could be used to address this concern. 
+
+To implement the adaptive threshold, we extended IAA with SAC. We leverage the off-policy performance difference lemma from \cite{shenfeld2023tgrl} by storing actions taken from the teacher or the student. We analyzed DIAA and IAA across five target tasks with various complexities. The results section demonstrate similar performance with fine-tuning, but with an interpretable way to view decision-making strategies. Moreover, we presented a novel metric to gauge the difference between a source and target task. The contributions of our work enhance interpretable transfer learning by quantifying the disparity of tasks, introducing a dynamic threshold, and extending IAA to continuous environments.
+
+
+\bibliography{main}
+\bibliographystyle{collas2026_conference}
+
+\appendix
+\section{Appendix}
+
+\section{Environment Details}
+\label{appx:envs}
+
+LunarLander-v3 had an action space of shape $(2,)$ which action inputs were bounded between $[-1,1].$ The observation is a vector of size $(8,)$, encoding the agent's position along with other dynamic information. LunarLander-v3 has a sparse rewards of -100 or +100 for crashing or docking on the landing \cite{towersgym2024}. In addition, a dense reward shapes the agent's behavior as it lands. The action space is $(4,)$ where each vector contained values between negative one and positive one. The observation space is a one-dimensional vector of length 24, containing information about the agent's physics dynamics along with a 10-point LiDAR point cloud. The agent is reward for forward progress, for a maximum of 300+ points at the end of an episode \cite{towersgym2024}; conversely, the agent receives -100 points for falling. 
+
+MetaDrive's observation space is a 259 feature vector, which represents the LiDAR state. This vector contains the ego state, navigation information, and lidar-like point clouds. The action space for the vehicles is $[-1,1]^2.$ The first value controls steering while the second value control throttle. We did not enable reverse throttling. We use the default reward function defined in \cite{li2022metadrive}; the equation is stated in Appendix \ref{appx:envs}. The MetaDrive reward function is defined as
+\begin{equation}
+    R = c1R_{driving} + c2 R_{speed} + R_{terminiation}
+\label{eq:metadrive-rf}
+\end{equation} where $R_{driving}$ measures the longitudinal progress, $R_{speed}$ encourages driving at the speed limit, and $R_{termination}$ incentivizes navigational success or punishes crashes and off-road behavior. We use the default constants from \cite{li2022metadrive} where $c1 = 1.0$ and $c2=0.1$.
+
+
+\subsection{Hyperparameters}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l||l|l|}
+\hline
+\textbf{Hyperparameter} & \textbf{Value} & \textbf{Hyperparameter} & \textbf{Value} \\ \hline
+Alpha                      & 0.2      & Policy Learning Rate      & 0.0003 \\
+Batch Size                 & 256      & Q Learning Rate           & 0.001  \\
+Buffer                     & 1M       & Target Network Frequency  & 1      \\
+Gamma                      & 0.99     & Tau                       & 0.005  \\
+Learning Starts            & 100      & Num Envs                  & 8      \\
+Policy Update Frequency    & 2        & Gradient Steps            & -1     \\ \hline
+\multicolumn{4}{|l|}{\textit{IAA/DIAA Specific Parameters}} \\ \hline
+Burn-In                    & 1000     & Introspection Threshold   & 0.5    \\
+Introspection Decay        & 0.99999  & Coefficient Learning Rate & 0.01   \\ \hline
+\end{tabular}
+\caption{Hyperparameter table for SAC and IAA/DIAA.}
+\label{tbl:hyperparams}
+\end{table}
+
+\section{Ablation Study}
+\label{appx:ablation}
+
+\begin{figure}
+    \centering
+    \subfloat[Introspective threshold ablation for LLWE.]{%
+      \includegraphics[clip,width=0.7\columnwidth]{figures/ll-ablation.pdf}%
+      \label{fig:llwe-ablation}
+    }
+
+    \subfloat[Introspective threshold ablation for CM.]{%
+      \includegraphics[clip,width=0.7\columnwidth]{figures/cm-ablation.pdf}
+      \label{fig:cm-ablation}
+    }
+
+    \subfloat[Introspective threshold ablation for MT.]{%
+      \includegraphics[clip,width=0.7\columnwidth]{figures/mt-ablation.pdf}
+      \label{fig:mt-ablation}
+    }
+    \caption{Ablation study.}
+    \label{fig:experiments}
+\end{figure}
+
+\begin{figure}[th]
+    \centering
+    \includegraphics[width=\linewidth]{burn-in-decay-ablation-returns.pdf}
+    \caption{Ablation study in BWHM; initial thresholds are set to 0.25 and 0.75. The bottom row shows the median threshold values over four seeded runs.}
+    \label{fig:ablation-returns}
+\end{figure}
+
+\end{document}

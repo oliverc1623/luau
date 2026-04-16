@@ -1,0 +1,709 @@
+% RLC main.bib Version 2025.0
+
+@book{sutton1998introduction,
+    title={Reinforcement Learning: {A}n Introduction},
+    author={Sutton, Richard S. and Barto, Andrew G.},
+	publisher={The MIT Press},
+	year={1998},
+	address={Cambridge, MA},
+}
+
+@inproceedings{Sutton2000,
+	author="R. S. Sutton and D. McAllester and S. Singh and Y. Mansour",
+	title="Policy Gradient Methods for Reinforcement Learning with Function Approximation",
+	booktitle="Advances in Neural Information Processing Systems 12",
+	year="2000",
+	pages="1057--1063",
+	}
+
+@article{Williams1992,
+	author="R. J. Williams",
+	title="Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning",
+	year="1992",
+	Journal="Machine Learning",
+	volume="8",
+	pages="229--256",
+	}
+
+
+@article{yang_transfer_2024,
+	title = {A Transfer Approach Using Graph Neural Networks in Deep Reinforcement Learning},
+	volume = {38},
+	rights = {Copyright (c) 2024 Association for the Advancement of Artificial Intelligence},
+	issn = {2374-3468},
+	url = {https://ojs.aaai.org/index.php/AAAI/article/view/29571},
+	doi = {10.1609/aaai.v38i15.29571},
+	abstract = {Transfer learning ({TL}) has shown great potential to improve Reinforcement Learning ({RL}) efficiency by leveraging prior knowledge in new tasks. However, much of the existing {TL} research focuses on transferring knowledge between tasks that share the same state-action spaces.  Further, transfer from multiple source tasks that have different state-action spaces is more challenging and needs to be solved urgently to improve the generalization and practicality of the method in real-world scenarios. This paper proposes {TURRET} (Transfer Using {gRaph} {neuRal} {nETworks}), to utilize the generalization capabilities of Graph Neural Networks ({GNNs}) to facilitate efficient and effective multi-source policy transfer learning in the state-action mismatch setting.  {TURRET} learns a semantic representation by accounting for the intrinsic property of the agent through {GNNs}, which leads to a unified state embedding space for all tasks. As a result, {TURRET} achieves more efficient transfer with strong generalization ability between different tasks and can be easily combined with existing Deep {RL} algorithms. Experimental results show that {TURRET} significantly outperforms other {TL} methods on multiple continuous action control tasks, successfully transferring across robots with different state-action spaces.},
+	pages = {16352--16360},
+	number = {15},
+	journaltitle = {Proceedings of the {AAAI} Conference on Artificial Intelligence},
+	author = {Yang, Tianpei and You, Heng and Hao, Jianye and Zheng, Yan and Taylor, Matthew E.},
+	urldate = {2024-06-12},
+	date = {2024-03-24},
+	langid = {english},
+	note = {Number: 15},
+	keywords = {{ML}: Deep Neural Architectures and Foundation Models},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/WA6X5YWE/Yang et al. - 2024 - A Transfer Approach Using Graph Neural Networks in.pdf:application/pdf},
+}
+
+@article{amitai_explaining_2024,
+	title = {Explaining Reinforcement Learning Agents through Counterfactual Action Outcomes},
+	volume = {38},
+	rights = {Copyright (c) 2024 Association for the Advancement of Artificial Intelligence},
+	issn = {2374-3468},
+	url = {https://ojs.aaai.org/index.php/AAAI/article/view/28863},
+	doi = {10.1609/aaai.v38i9.28863},
+	abstract = {Explainable reinforcement learning ({XRL}) methods aim to help elucidate agent policies and decision-making processes. The majority of {XRL} approaches focus on local explanations, seeking to shed light on the reasons an agent acts the way it does at a specific world state. While such explanations are both useful and necessary, they typically do not portray the outcomes of the agent's selected choice of action. 
+In this work, we propose ``{COViz}'', a new local explanation method that visually compares the outcome of an agent's chosen action to a counterfactual one. In contrast to most local explanations that provide state-limited observations of the agent's motivation, our method depicts alternative trajectories the agent could have taken from the given state and their outcomes. 
+We evaluated the usefulness of {COViz} in supporting people's understanding of agents' preferences and compare it with reward decomposition, a local explanation method that describes an agent's expected utility for different actions by decomposing it into meaningful reward types. Furthermore, we examine the complementary benefits of integrating both methods. Our results show that such integration significantly improved participants' performance.},
+	pages = {10003--10011},
+	number = {9},
+	journaltitle = {Proceedings of the {AAAI} Conference on Artificial Intelligence},
+	author = {Amitai, Yotam and Septon, Yael and Amir, Ofra},
+	urldate = {2024-06-12},
+	date = {2024-03-24},
+	langid = {english},
+	note = {Number: 9},
+	keywords = {Interpretability \& Explainability, {PEAI}: Accountability},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/H6P4TQ95/Amitai et al. - 2024 - Explaining Reinforcement Learning Agents through C.pdf:application/pdf},
+}
+
+@article{amitai_i_2022,
+	title = {“I Don’t Think So”: Summarizing Policy Disagreements for Agent Comparison},
+	volume = {36},
+	rights = {Copyright (c) 2022 Association for the Advancement of Artificial Intelligence},
+	issn = {2374-3468},
+	url = {https://ojs.aaai.org/index.php/AAAI/article/view/20463},
+	doi = {10.1609/aaai.v36i5.20463},
+	shorttitle = {“I Don’t Think So”},
+	abstract = {With Artificial Intelligence on the rise, human interaction with autonomous agents becomes more frequent. Effective human-agent collaboration requires users to understand the agent's behavior, as failing to do so may cause reduced productivity, misuse or frustration. Agent strategy summarization methods are used to describe the strategy of an agent to users through demonstrations. A summary's objective is to maximize the user's understanding of the agent's aptitude by showcasing its behaviour in a selected set of world states. While shown to be useful, we show that current methods are limited when tasked with comparing between agents, as each summary is independently generated for a specific agent. In this paper, we propose a novel method for generating dependent and contrastive summaries that emphasize the differences between agent policies by identifying states in which the agents disagree on the best course of action. We conducted user studies to assess the usefulness of disagreement-based summaries for identifying superior agents and conveying agent differences. Results show disagreement-based summaries lead to improved user performance compared to summaries generated using {HIGHLIGHTS}, a strategy summarization algorithm which generates summaries for each agent independently.},
+	pages = {5269--5276},
+	number = {5},
+	journaltitle = {Proceedings of the {AAAI} Conference on Artificial Intelligence},
+	author = {Amitai, Yotam and Amir, Ofra},
+	urldate = {2024-06-12},
+	date = {2022-06-28},
+	langid = {english},
+	note = {Number: 5},
+	keywords = {Humans And {AI} ({HAI})},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/C47Y8L8J/Amitai and Amir - 2022 - “I Don’t Think So” Summarizing Policy Disagreemen.pdf:application/pdf},
+}
+
+@inproceedings{finn_model-agnostic_2017,
+	title = {Model-Agnostic Meta-Learning for Fast Adaptation of Deep Networks},
+	url = {https://proceedings.mlr.press/v70/finn17a.html},
+	abstract = {We propose an algorithm for meta-learning that is model-agnostic, in the sense that it is compatible with any model trained with gradient descent and applicable to a variety of different learning problems, including classification, regression, and reinforcement learning. The goal of meta-learning is to train a model on a variety of learning tasks, such that it can solve new learning tasks using only a small number of training samples. In our approach, the parameters of the model are explicitly trained such that a small number of gradient steps with a small amount of training data from a new task will produce good generalization performance on that task. In effect, our method trains the model to be easy to fine-tune. We demonstrate that this approach leads to state-of-the-art performance on two few-shot image classification benchmarks, produces good results on few-shot regression, and accelerates fine-tuning for policy gradient reinforcement learning with neural network policies.},
+	eventtitle = {International Conference on Machine Learning},
+	pages = {1126--1135},
+	booktitle = {Proceedings of the 34th International Conference on Machine Learning},
+	publisher = {{PMLR}},
+	author = {Finn, Chelsea and Abbeel, Pieter and Levine, Sergey},
+	urldate = {2024-06-15},
+	date = {2017-07-17},
+	langid = {english},
+	note = {{ISSN}: 2640-3498},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/NNQIDPUS/Finn et al. - 2017 - Model-Agnostic Meta-Learning for Fast Adaptation o.pdf:application/pdf;Supplementary PDF:/Users/oliverchang/Zotero/storage/IBSWNDLY/Finn et al. - 2017 - Model-Agnostic Meta-Learning for Fast Adaptation o.pdf:application/pdf},
+}
+
+@article{zhu_transfer_2023,
+	title = {Transfer Learning in Deep Reinforcement Learning: A Survey},
+	volume = {45},
+	rights = {https://ieeexplore.ieee.org/Xplorehelp/downloads/license-information/{IEEE}.html},
+	issn = {0162-8828, 2160-9292, 1939-3539},
+	url = {https://ieeexplore.ieee.org/document/10172347/},
+	doi = {10.1109/TPAMI.2023.3292075},
+	shorttitle = {Transfer Learning in Deep Reinforcement Learning},
+	pages = {13344--13362},
+        year = {2023},
+	number = {11},
+	journaltitle = {{IEEE} Transactions on Pattern Analysis and Machine Intelligence},
+	shortjournal = {{IEEE} Trans. Pattern Anal. Mach. Intell.},
+	author = {Zhu, Zhuangdi and Lin, Kaixiang and Jain, Anil K. and Zhou, Jiayu},
+	urldate = {2024-12-17},
+	date = {2023-11-01},
+	file = {Accepted Version:/Users/oliverchang/Zotero/storage/WY4NJ8Y6/Zhu et al. - 2023 - Transfer Learning in Deep Reinforcement Learning .pdf:application/pdf},
+}
+
+@article{plisnier_guiding_nodate,
+	title = {Guiding the Exploration Strategy of a Reinforcement Learning Agent},
+	author = {Plisnier, Hélène},
+	langid = {english},
+	file = {Plisnier - Guiding the Exploration Strategy of a Reinforcemen.pdf:/Users/oliverchang/Zotero/storage/J5CLB4SJ/Plisnier - Guiding the Exploration Strategy of a Reinforcemen.pdf:application/pdf},
+}
+
+@inproceedings{griffith_policy_2013,
+	title = {Policy Shaping: Integrating Human Feedback with Reinforcement Learning},
+	volume = {26},
+	url = {https://proceedings.neurips.cc/paper_files/paper/2013/hash/e034fb6b66aacc1d48f445ddfb08da98-Abstract.html},
+	shorttitle = {Policy Shaping},
+	abstract = {A long term goal of Interactive Reinforcement Learning is to incorporate non-expert human feedback to solve complex tasks. State-of-the-art methods have approached this problem by mapping human information to reward and value signals to indicate preferences and then iterating over them to compute the necessary control policy. In this paper we argue for an alternate, more effective characterization of human feedback: Policy Shaping. We introduce Advise, a Bayesian approach that attempts to maximize the information gained from human feedback by utilizing it as direct labels on the policy. We compare Advise to state-of-the-art approaches and highlight scenarios where it outperforms them and importantly is robust to infrequent and inconsistent human feedback.},
+	booktitle = {Advances in Neural Information Processing Systems},
+	publisher = {Curran Associates, Inc.},
+	author = {Griffith, Shane and Subramanian, Kaushik and Scholz, Jonathan and Isbell, Charles L and Thomaz, Andrea L},
+	urldate = {2025-01-06},
+	date = {2013},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/A3C8PMTP/Griffith et al. - 2013 - Policy Shaping Integrating Human Feedback with Re.pdf:application/pdf},
+}
+
+@inproceedings{czarnecki_distilling_2019,
+	title = {Distilling Policy Distillation},
+	url = {https://proceedings.mlr.press/v89/czarnecki19a.html},
+	abstract = {The transfer of knowledge from one policy to another is an important tool in Deep Reinforcement Learning. This process, referred to as distillation, has been used to great success, for example, by enhancing the optimisation of agents, leading to stronger performance faster, on harder domains. Despite the widespread use and conceptual simplicity of distillation, many different formulations are used in practice, and the subtle variations between them can often drastically change the performance and the resulting objective that is being optimised. In this work, we rigorously explore the entire landscape of policy distillation, comparing the motivations and strengths of each variant through theoretical and empirical analysis. Our results point to three distillation techniques, that are preferred depending on specifics of the task. Specifically a newly proposed expected entropy regularised distillation allows for quicker learning in a wide range of situations, while still guaranteeing convergence.},
+	eventtitle = {The 22nd International Conference on Artificial Intelligence and Statistics},
+	pages = {1331--1340},
+	booktitle = {Proceedings of the Twenty-Second International Conference on Artificial Intelligence and Statistics},
+	publisher = {{PMLR}},
+	author = {Czarnecki, Wojciech M. and Pascanu, Razvan and Osindero, Simon and Jayakumar, Siddhant and Swirszcz, Grzegorz and Jaderberg, Max},
+	urldate = {2025-01-14},
+        year = {2019},
+	date = {2019-04-11},
+	langid = {english},
+	note = {{ISSN}: 2640-3498},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/3JV289SR/Czarnecki et al. - 2019 - Distilling Policy Distillation.pdf:application/pdf;Supplementary PDF:/Users/oliverchang/Zotero/storage/QT2SCUQL/Czarnecki et al. - 2019 - Distilling Policy Distillation.pdf:application/pdf},
+}
+
+@article{wen_multi-robot_2021,
+	title = {A multi-robot path-planning algorithm for autonomous navigation using meta-reinforcement learning based on transfer learning},
+	volume = {110},
+	issn = {1568-4946},
+	url = {https://www.sciencedirect.com/science/article/pii/S1568494621005263},
+	doi = {10.1016/j.asoc.2021.107605},
+	abstract = {The adaptability of multi-robot systems in complex environments is a hot topic. Aiming at static and dynamic obstacles in complex environments, this paper presents dynamic proximal meta policy optimization with covariance matrix adaptation evolutionary strategies (dynamic-{PMPO}-{CMA}) to avoid obstacles and realize autonomous navigation. Firstly, we propose dynamic proximal policy optimization with covariance matrix adaptation evolutionary strategies (dynamic-{PPO}-{CMA}) based on original proximal policy optimization ({PPO}) to obtain a valid policy of obstacles avoidance. The simulation results show that the proposed dynamic-{PPO}-{CMA} can avoid obstacles and reach the designated target position successfully. Secondly, in order to improve the adaptability of multi-robot systems in different environments, we integrate meta-learning with dynamic-{PPO}-{CMA} to form the dynamic-{PMPO}-{CMA} algorithm. In training process, we use the proposed dynamic-{PMPO}-{CMA} to train robots to learn multi-task policy. Finally, in testing process, transfer learning is introduced to the proposed dynamic-{PMPO}-{CMA} algorithm. The trained parameters of meta policy are transferred to new environments and regarded as the initial parameters. The simulation results show that the proposed algorithm can have faster convergence rate and arrive the destination more quickly than {PPO}, {PMPO} and dynamic-{PPO}-{CMA}.},
+	pages = {107605},
+	journaltitle = {Applied Soft Computing},
+	shortjournal = {Applied Soft Computing},
+	author = {Wen, Shuhuan and Wen, Zeteng and Zhang, Di and Zhang, Hong and Wang, Tao},
+	urldate = {2025-01-15},
+	date = {2021-10-01},
+	keywords = {Deep reinforcement learning, Meta learning, Multi-robot system, Path planning, Transfer learning},
+	file = {ScienceDirect Snapshot:/Users/oliverchang/Zotero/storage/U26PJGLW/S1568494621005263.html:text/html;Wen et al. - 2021 - A multi-robot path-planning algorithm for autonomo.pdf:/Users/oliverchang/Zotero/storage/HYPSYYLM/Wen et al. - 2021 - A multi-robot path-planning algorithm for autonomo.pdf:application/pdf},
+}
+
+@inproceedings{shenfeld2023tgrl,
+  title={TGRL: An algorithm for teacher guided reinforcement learning},
+  author={Shenfeld, Idan and Hong, Zhang-Wei and Tamar, Aviv and Agrawal, Pulkit},
+  booktitle={International Conference on Machine Learning},
+  pages={31077--31093},
+  year={2023},
+  organization={PMLR}
+}
+
+@article{moon_discovering_2023,
+	title = {Discovering Hierarchical Achievements in Reinforcement Learning via Contrastive Learning},
+	volume = {36},
+	url = {https://proceedings.neurips.cc/paper_files/paper/2023/hash/c919a2b5ec1de69f2629f9119676e336-Abstract-Conference.html},
+	pages = {63674--63686},
+	journaltitle = {Advances in Neural Information Processing Systems},
+	author = {Moon, Seungyong and Yeom, Junyoung and Park, Bumsoo and Song, Hyun Oh},
+	urldate = {2025-01-15},
+	date = {2023-12-15},
+	langid = {english},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/IVD4WIQI/Moon et al. - 2023 - Discovering Hierarchical Achievements in Reinforce.pdf:application/pdf},
+}
+
+@article{taylor2009transfer,
+  title={Transfer learning for reinforcement learning domains: A survey.},
+  author={Taylor, Matthew E and Stone, Peter},
+  journal={Journal of Machine Learning Research},
+  volume={10},
+  number={7},
+  year={2009}
+}
+
+@article{lin2018multi,
+  title={Multi-hop knowledge graph reasoning with reward shaping},
+  author={Lin, Xi Victoria and Socher, Richard and Xiong, Caiming},
+  journal={arXiv preprint arXiv:1808.10568},
+  year={2018}
+}
+
+@inproceedings{guo2023explainable,
+  title={Explainable action advising for multi-agent reinforcement learning},
+  author={Guo, Yue and Campbell, Joseph and Stepputtis, Simon and Li, Ruiyu and Hughes, Dana and Fang, Fei and Sycara, Katia},
+  booktitle={2023 IEEE International Conference on Robotics and Automation (ICRA)},
+  pages={5515--5521},
+  year={2023},
+  organization={IEEE}
+}
+
+@inproceedings{da2020uncertainty,
+  title={Uncertainty-aware action advising for deep reinforcement learning agents},
+  author={Da Silva, Felipe Leno and Hernandez-Leal, Pablo and Kartal, Bilal and Taylor, Matthew E},
+  booktitle={Proceedings of the AAAI conference on artificial intelligence},
+  volume={34},
+  number={04},
+  pages={5792--5799},
+  year={2020}
+}
+
+@article{zare2024survey,
+  title={A survey of imitation learning: Algorithms, recent developments, and challenges},
+  author={Zare, Maryam and Kebria, Parham M and Khosravi, Abbas and Nahavandi, Saeid},
+  journal={IEEE Transactions on Cybernetics},
+  year={2024},
+  publisher={IEEE}
+}
+
+@article{de2019causal,
+  title={Causal confusion in imitation learning},
+  author={De Haan, Pim and Jayaraman, Dinesh and Levine, Sergey},
+  journal={Advances in neural information processing systems},
+  volume={32},
+  year={2019}
+}
+
+@inproceedings{chuang2022resolving,
+  title={Resolving copycat problems in visual imitation learning via residual action prediction},
+  author={Chuang, Chia-Chi and Yang, Donglin and Wen, Chuan and Gao, Yang},
+  booktitle={European Conference on Computer Vision},
+  pages={392--409},
+  year={2022},
+  organization={Springer}
+}
+
+@article{pomerleau1991efficient,
+  title={Efficient training of artificial neural networks for autonomous navigation},
+  author={Pomerleau, Dean A},
+  journal={Neural computation},
+  volume={3},
+  number={1},
+  pages={88--97},
+  year={1991},
+  publisher={MIT Press One Rogers Street, Cambridge, MA 02142-1209, USA journals-info~…}
+}
+
+@ARTICLE{10602544,
+  author={Zare, Maryam and Kebria, Parham M. and Khosravi, Abbas and Nahavandi, Saeid},
+  journal={IEEE Transactions on Cybernetics}, 
+  title={A Survey of Imitation Learning: Algorithms, Recent Developments, and Challenges}, 
+  year={2024},
+  volume={54},
+  number={12},
+  pages={7173-7186},
+  keywords={Training;Robots;Surveys;Costs;Autonomous vehicles;Trajectory;Reinforcement learning;Imitation learning;Imitation learning (IL);learning from demonstrations;reinforcement learning (RL);robotics;survey},
+  doi={10.1109/TCYB.2024.3395626}}
+
+
+@article{da2020agents,
+  title={Agents teaching agents: a survey on inter-agent transfer learning},
+  author={Da Silva, Felipe Leno and Warnell, Garrett and Costa, Anna Helena Reali and Stone, Peter},
+  journal={Autonomous Agents and Multi-Agent Systems},
+  volume={34},
+  pages={1--17},
+  year={2020},
+  publisher={Springer}
+}
+
+@article{kiran2021deep,
+  title={Deep reinforcement learning for autonomous driving: A survey},
+  author={Kiran, B Ravi and Sobh, Ibrahim and Talpaert, Victor and Mannion, Patrick and Al Sallab, Ahmad A and Yogamani, Senthil and P{\'e}rez, Patrick},
+  journal={IEEE transactions on intelligent transportation systems},
+  volume={23},
+  number={6},
+  pages={4909--4926},
+  year={2021},
+  publisher={IEEE}
+}
+
+@InProceedings{pmlr-v48-mniha16,
+  title = 	 {Asynchronous Methods for Deep Reinforcement Learning},
+  author = 	 {Mnih, Volodymyr and Badia, Adria Puigdomenech and Mirza, Mehdi and Graves, Alex and Lillicrap, Timothy and Harley, Tim and Silver, David and Kavukcuoglu, Koray},
+  booktitle = 	 {Proceedings of The 33rd International Conference on Machine Learning},
+  pages = 	 {1928--1937},
+  year = 	 {2016},
+  editor = 	 {Balcan, Maria Florina and Weinberger, Kilian Q.},
+  volume = 	 {48},
+  series = 	 {Proceedings of Machine Learning Research},
+  address = 	 {New York, New York, USA},
+  month = 	 {20--22 Jun},
+  publisher =    {PMLR},
+  pdf = 	 {http://proceedings.mlr.press/v48/mniha16.pdf},
+  url = 	 {https://proceedings.mlr.press/v48/mniha16.html},
+  abstract = 	 {We propose a conceptually simple and lightweight framework for deep reinforcement learning that uses asynchronous gradient descent for optimization of deep neural network controllers. We present asynchronous variants of four standard reinforcement learning algorithms and show that parallel actor-learners have a stabilizing effect on training allowing all four methods to successfully train neural network controllers. The best performing method, an asynchronous variant of actor-critic, surpasses the current state-of-the-art on the Atari domain while training for half the time on a single multi-core CPU instead of a GPU. Furthermore, we show that asynchronous actor-critic succeeds on a wide variety of continuous motor control problems as well as on a new task of navigating random 3D mazes using a visual input.}
+}
+
+
+@article{lillicrap2015continuous,
+  title={Continuous control with deep reinforcement learning},
+  author={Lillicrap, Timothy P and Hunt, Jonathan J and Pritzel, Alexander and Heess, Nicolas and Erez, Tom and Tassa, Yuval and Silver, David and Wierstra, Daan},
+  journal={arXiv preprint arXiv:1509.02971},
+  year={2015}
+}
+
+@article{Lillicrap2015ContinuousCW,
+  title={Continuous control with deep reinforcement learning},
+  author={Timothy P. Lillicrap and Jonathan J. Hunt and Alexander Pritzel and Nicolas Manfred Otto Heess and Tom Erez and Yuval Tassa and David Silver and Daan Wierstra},
+  journal={CoRR},
+  year={2015},
+  volume={abs/1509.02971},
+  url={https://api.semanticscholar.org/CorpusID:16326763}
+}
+
+@article{turk_eigenfaces_1991,
+	title = {Eigenfaces for Recognition},
+	volume = {3},
+	issn = {0898-929X},
+	url = {https://doi.org/10.1162/jocn.1991.3.1.71},
+	doi = {10.1162/jocn.1991.3.1.71},
+	abstract = {We have developed a near-real-time computer system that can locate and track a subject's head, and then recognize the person by comparing characteristics of the face to those of known individuals. The computational approach taken in this system is motivated by both physiology and information theory, as well as by the practical requirements of near-real-time performance and accuracy. Our approach treats the face recognition problem as an intrinsically two-dimensional (2-D) recognition problem rather than requiring recovery of three-dimensional geometry, taking advantage of the fact that faces are normally upright and thus may be described by a small set of 2-D characteristic views. The system functions by projecting face images onto a feature space that spans the significant variations among known face images. The significant features are known as "eigenfaces," because they are the eigenvectors (principal components) of the set of faces; they do not necessarily correspond to features such as eyes, ears, and noses. The projection operation characterizes an individual face by a weighted sum of the eigenface features, and so to recognize a particular face it is necessary only to compare these weights to those of known individuals. Some particular advantages of our approach are that it provides for the ability to learn and later recognize new faces in an unsupervised manner, and that it is easy to implement using a neural network architecture.},
+	pages = {71--86},
+	number = {1},
+	journaltitle = {Journal of Cognitive Neuroscience},
+	shortjournal = {Journal of Cognitive Neuroscience},
+	author = {Turk, Matthew and Pentland, Alex},
+	urldate = {2025-01-24},
+	date = {1991-01-01},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/QB64U7J6/Turk and Pentland - 1991 - Eigenfaces for Recognition.pdf:application/pdf;Snapshot:/Users/oliverchang/Zotero/storage/R28RL6SA/Eigenfaces-for-Recognition.html:text/html},
+}
+
+@inproceedings{peng_safe_2022,
+	title = {Safe Driving via Expert Guided Policy Optimization},
+	url = {https://proceedings.mlr.press/v164/peng22a.html},
+	abstract = {When learning common skills like driving, beginners usually have domain experts standing by to ensure the safety of the learning process. We formulate such learning scheme under the Expert-in-the-loop Reinforcement Learning where a guardian is introduced to safeguard the exploration of the learning agent. While allowing the sufficient exploration in the uncertain environment, the guardian intervenes under dangerous situations and demonstrates the correct actions to avoid potential accidents. Thus {ERL} enables both exploration and expert’s partial demonstration as two training sources. Following such a setting, we develop a novel Expert Guided Policy Optimization ({EGPO}) method which integrates the guardian in the loop of reinforcement learning. The guardian is composed of an expert policy to generate demonstration and a switch function to decide when to intervene. Particularly, a constrained optimization technique is used to tackle the trivial solution that the agent deliberately behaves dangerously to deceive the expert into taking over. Offline {RL} technique is further used to learn from the partial demonstration generated by the expert. Safe driving experiments show that our method achieves superior training and test-time safety, outperforms baselines with a substantial margin in sample efficiency, and preserves the generalizabiliy to unseen environments in test-time. Demo video and source code are available at: https://decisionforce.github.io/{EGPO}/},
+	eventtitle = {Conference on Robot Learning},
+	pages = {1554--1563},
+	booktitle = {Proceedings of the 5th Conference on Robot Learning},
+	publisher = {{PMLR}},
+	author = {Peng, Zhenghao and Li, Quanyi and Liu, Chunxiao and Zhou, Bolei},
+	urldate = {2025-01-24},
+	date = {2022-01-11},
+	langid = {english},
+	note = {{ISSN}: 2640-3498},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/6RHTRZDW/Peng et al. - 2022 - Safe Driving via Expert Guided Policy Optimization.pdf:application/pdf},
+}
+
+@inproceedings{walsman_impossibly_2022,
+	title = {Impossibly Good Experts and How to Follow Them},
+	url = {https://openreview.net/forum?id=sciA_xgYofB},
+	abstract = {We consider the sequential decision making problem of learning from an expert that has access to more information than the learner. For many problems this extra information will enable the expert to achieve greater long term reward than any policy without this privileged information access. We call these experts ``Impossibly Good'' because no learning algorithm will be able to reproduce their behavior. However, in these settings it is reasonable to attempt to recover the best policy possible given the agent's restricted access to information. We provide a set of necessary criteria on the expert that will allow a learner to recover the optimal policy in the reduced information space from the expert's advice alone. We also provide a new approach called Elf Distillation (Explorer Learning from Follower) that can be used in cases where these criteria are not met and environmental rewards must be taken into account. We show that this algorithm performs better than a variety of strong baselines on a challenging suite of Minigrid and Vizdoom environments.},
+	eventtitle = {The Eleventh International Conference on Learning Representations},
+	author = {Walsman, Aaron and Zhang, Muru and Choudhury, Sanjiban and Fox, Dieter and Farhadi, Ali},
+	urldate = {2025-01-30},
+	date = {2022-09-29},
+	langid = {english},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/SIVHDPP5/Walsman et al. - 2022 - Impossibly Good Experts and How to Follow Them.pdf:application/pdf},
+}
+
+@article{mnih2015human,
+  title={Human-level control through deep reinforcement learning},
+  author={Mnih, Volodymyr and Kavukcuoglu, Koray and Silver, David and Rusu, Andrei A and Veness, Joel and Bellemare, Marc G and Graves, Alex and Riedmiller, Martin and Fidjeland, Andreas K and Ostrovski, Georg and others},
+  journal={nature},
+  volume={518},
+  number={7540},
+  pages={529--533},
+  year={2015},
+  publisher={Nature Publishing Group}
+}
+
+@inproceedings{fujimoto2018addressing,
+  title={Addressing function approximation error in actor-critic methods},
+  author={Fujimoto, Scott and Hoof, Herke and Meger, David},
+  booktitle={International conference on machine learning},
+  pages={1587--1596},
+  year={2018},
+  organization={PMLR}
+}
+
+@inproceedings{anand2021enhanced,
+  title={An enhanced advising model in teacher-student framework using state categorization},
+  author={Anand, Daksh and Gupta, Vaibhav and Paruchuri, Praveen and Ravindran, Balaraman},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={35},
+  number={8},
+  pages={6653--6660},
+  year={2021}
+}
+
+@inproceedings{gilpin2018explaining,
+  title={Explaining explanations: An overview of interpretability of machine learning},
+  author={Gilpin, Leilani H and Bau, David and Yuan, Ben Z and Bajwa, Ayesha and Specter, Michael and Kagal, Lalana},
+  booktitle={2018 IEEE 5th International Conference on data science and advanced analytics (DSAA)},
+  pages={80--89},
+  year={2018},
+  organization={IEEE}
+}
+
+@article{chen2021interpretable,
+  title={Interpretable end-to-end urban autonomous driving with latent deep reinforcement learning},
+  author={Chen, Jianyu and Li, Shengbo Eben and Tomizuka, Masayoshi},
+  journal={IEEE Transactions on Intelligent Transportation Systems},
+  volume={23},
+  number={6},
+  pages={5068--5078},
+  year={2021},
+  publisher={IEEE}
+}
+
+@inproceedings{jing2022inaction,
+  title={Inaction: Interpretable action decision making for autonomous driving},
+  author={Jing, Taotao and Xia, Haifeng and Tian, Renran and Ding, Haoran and Luo, Xiao and Domeyer, Joshua and Sherony, Rini and Ding, Zhengming},
+  booktitle={European Conference on Computer Vision},
+  pages={370--387},
+  year={2022},
+  organization={Springer}
+}
+
+@inproceedings{haarnoja_soft_2018,
+	title = {Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor},
+	url = {https://proceedings.mlr.press/v80/haarnoja18b.html},
+	shorttitle = {Soft Actor-Critic},
+	abstract = {Model-free deep reinforcement learning ({RL}) algorithms have been demonstrated on a range of challenging decision making and control tasks. However, these methods typically suffer from two major challenges: very high sample complexity and brittle convergence properties, which necessitate meticulous hyperparameter tuning. Both of these challenges severely limit the applicability of such methods to complex, real-world domains. In this paper, we propose soft actor-critic, an off-policy actor-critic deep {RL} algorithm based on the maximum entropy reinforcement learning framework. In this framework, the actor aims to maximize expected reward while also maximizing entropy. That is, to succeed at the task while acting as randomly as possible. Prior deep {RL} methods based on this framework have been formulated as Q-learning methods. By combining off-policy updates with a stable stochastic actor-critic formulation, our method achieves state-of-the-art performance on a range of continuous control benchmark tasks, outperforming prior on-policy and off-policy methods. Furthermore, we demonstrate that, in contrast to other off-policy algorithms, our approach is very stable, achieving very similar performance across different random seeds.},
+	eventtitle = {International Conference on Machine Learning},
+	pages = {1861--1870},
+	booktitle = {Proceedings of the 35th International Conference on Machine Learning},
+	publisher = {{PMLR}},
+	author = {Haarnoja, Tuomas and Zhou, Aurick and Abbeel, Pieter and Levine, Sergey},
+	urldate = {2025-01-30},
+	date = {2018-07-03},
+        year = {2018},
+	langid = {english},
+	note = {{ISSN}: 2640-3498},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/CRRQGK2G/Haarnoja et al. - 2018 - Soft Actor-Critic Off-Policy Maximum Entropy Deep.pdf:application/pdf;Supplementary PDF:/Users/oliverchang/Zotero/storage/3VMKIR2R/Haarnoja et al. - 2018 - Soft Actor-Critic Off-Policy Maximum Entropy Deep.pdf:application/pdf},
+}
+
+
+@article{huang2022cleanrl,
+  author  = {Shengyi Huang and Rousslan Fernand Julien Dossa and Chang Ye and Jeff Braga and Dipam Chakraborty and Kinal Mehta and João G.M. Araújo},
+  title   = {CleanRL: High-quality Single-file Implementations of Deep Reinforcement Learning Algorithms},
+  journal = {Journal of Machine Learning Research},
+  year    = {2022},
+  volume  = {23},
+  number  = {274},
+  pages   = {1--18},
+  url     = {http://jmlr.org/papers/v23/21-1342.html}
+}
+
+@article{schulman2017proximal,
+  title={Proximal policy optimization algorithms},
+  author={Schulman, John and Wolski, Filip and Dhariwal, Prafulla and Radford, Alec and Klimov, Oleg},
+  journal={arXiv preprint arXiv:1707.06347},
+  year={2017}
+}
+
+@misc{highway-env,
+  author = {Leurent, Edouard},
+  title = {An Environment for Autonomous Driving Decision-Making},
+  year = {2018},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/eleurent/highway-env}},
+}
+
+@inproceedings{schulman2015trust,
+  title={Trust region policy optimization},
+  author={Schulman, John and Levine, Sergey and Abbeel, Pieter and Jordan, Michael and Moritz, Philipp},
+  booktitle={International conference on machine learning},
+  pages={1889--1897},
+  year={2015},
+  organization={PMLR}
+}
+
+@book{sutton1998reinforcement,
+  title={Reinforcement learning: An introduction},
+  author={Sutton, Richard S and Barto, Andrew G and others},
+  volume={1},
+  number={1},
+  year={1998},
+  publisher={MIT press Cambridge}
+}
+
+@inproceedings{kakade_approximately_2002,
+	location = {San Francisco, {CA}, {USA}},
+	title = {Approximately Optimal Approximate Reinforcement Learning},
+	isbn = {978-1-55860-873-3},
+	series = {{ICML} '02},
+	pages = {267--274},
+	booktitle = {Proceedings of the Nineteenth International Conference on Machine Learning},
+	publisher = {Morgan Kaufmann Publishers Inc.},
+	author = {Kakade, Sham and Langford, John},
+	urldate = {2025-02-21},
+	date = {2002-07-08},
+        year = {2002},
+	file = {PDF:/Users/oliverchang/Zotero/storage/R3CRKGE9/Kakade and Langford - 2002 - Approximately Optimal Approximate Reinforcement Learning.pdf:application/pdf},
+}
+
+@inproceedings{campbell2023introspective,
+  title={Introspective action advising for interpretable transfer learning},
+  author={Campbell, Joseph and Guo, Yue and Xie, Fiona and Stepputtis, Simon and Sycara, Katia},
+  booktitle={Conference on Lifelong Learning Agents},
+  pages={1072--1090},
+  year={2023},
+  organization={PMLR}
+}
+
+@article{schmitt_kickstarting_2018,
+	title = {Kickstarting Deep Reinforcement Learning},
+	url = {https://www.semanticscholar.org/paper/Kickstarting-Deep-Reinforcement-Learning-Schmitt-Hudson/ebf3b0c284cb776d89951e4e67a59df6403fc9a6},
+	abstract = {We present a method for using previously-trained 'teacher' agents to kickstart the training of a new 'student' agent. To this end, we leverage ideas from policy distillation and population based training. Our method places no constraints on the architecture of the teacher or student agents, and it regulates itself to allow the students to surpass their teachers in performance. We show that, on a challenging and computationally-intensive multi-task benchmark ({DMLab}-30), kickstarted training improves the data efficiency of new agents, making it significantly easier to iterate on their design. We also show that the same kickstarting pipeline can allow a single student agent to leverage multiple 'expert' teachers which specialize on individual tasks. In this setting kickstarting yields surprisingly large gains, with the kickstarted agent matching the performance of an agent trained from scratch in almost 10x fewer steps, and surpassing its final performance by 42 percent. Kickstarting is conceptually simple and can easily be incorporated into reinforcement learning experiments.},
+	journaltitle = {{ArXiv}},
+	author = {Schmitt, Simon and Hudson, Jonathan J. and Žídek, Augustin and Osindero, Simon and Doersch, Carl and Czarnecki, Wojciech M. and Leibo, Joel Z. and Küttler, Heinrich and Zisserman, Andrew and Simonyan, K. and Eslami, S.},
+	urldate = {2025-02-25},
+	date = {2018-03-10},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/GXII64QU/Schmitt et al. - 2018 - Kickstarting Deep Reinforcement Learning.pdf:application/pdf},
+}
+
+@inproceedings{kazemkhani_gpudrive_2024,
+	title = {{GPUDrive}: Data-driven, multi-agent driving simulation at 1 million {FPS}},
+	url = {https://openreview.net/forum?id=ERv8ptegFi},
+	shorttitle = {{GPUDrive}},
+	abstract = {Multi-agent learning algorithms have been successful at generating superhuman planning in various games but have had limited impact on the design of deployed multi-agent planners. A key bottleneck in applying these techniques to multi-agent planning is that they require billions of steps of experience. To enable the study of multi-agent planning at scale, we present {GPUDrive}, a {GPU}-accelerated, multi-agent simulator built on top of the Madrona Game Engine capable of generating over a million simulation steps per second. Observation, reward, and dynamics functions are written directly in C++, allowing users to define complex, heterogeneous agent behaviors that are lowered to high-performance {CUDA}. Despite these low-level optimizations, {GPUDrive} is fully accessible through Python, offering a seamless and efficient workflow for multi-agent, closed-loop simulation. Using {GPUDrive}, we train reinforcement learning agents on the Waymo Open Motion Dataset, achieving efficient goal-reaching in minutes and scaling to thousands of scenarios in hours. We open-source the code and pre-trained agents at {\textbackslash}url\{www.github.com/Emerge-Lab/gpudrive\}.},
+	eventtitle = {The Thirteenth International Conference on Learning Representations},
+	author = {Kazemkhani, Saman and Pandya, Aarav and Cornelisse, Daphne and Shacklett, Brennan and Vinitsky, Eugene},
+	urldate = {2025-02-25},
+	date = {2024-10-04},
+        year = {2024},
+	langid = {english},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/JPQ6JM5E/Kazemkhani et al. - 2024 - GPUDrive Data-driven, multi-agent driving simulation at 1 million FPS.pdf:application/pdf},
+}
+
+@inproceedings{yu2020meta,
+  title={Meta-world: A benchmark and evaluation for multi-task and meta reinforcement learning},
+  author={Yu, Tianhe and Quillen, Deirdre and He, Zhanpeng and Julian, Ryan and Hausman, Karol and Finn, Chelsea and Levine, Sergey},
+  booktitle={Conference on robot learning},
+  pages={1094--1100},
+  year={2020},
+  organization={PMLR}
+}
+
+@inproceedings{cornelisse_human-compatible_2024,
+	title = {Human-compatible driving partners through data-regularized self-play reinforcement learning},
+	url = {https://openreview.net/forum?id=cS0ggkvtpj},
+	abstract = {A central challenge for autonomous vehicles is coordinating with humans. Therefore, incorporating realistic human agents is essential for scalable training and evaluation of autonomous driving systems in simulation. Simulation agents are typically developed by imitating large-scale, high-quality datasets of human driving. However, pure imitation learning agents empirically have high collision rates when executed in a multi-agent closed-loop setting. To build agents that are realistic and effective in closed-loop settings, we propose Human-Regularized {PPO} ({HR}-{PPO}), a multi- agent algorithm where agents are trained through self-play with a small penalty for deviating from a human reference policy. In contrast to prior work, our approach is {RL}-first and only uses 30 minutes of imperfect human demonstrations. We evaluate agents in a large set of multi-agent traffic scenes. Results show our {HR}-{PPO} agents are highly effective in achieving goals, with a success rate of 93\%, an off-road rate of 3.5 \%, and a collision rate of 3 \%. At the same time, the agents drive in a human-like manner, as measured by their similarity to existing human driving logs. We also find that {HR}-{PPO} agents show considerable improvements on proxy measures for coordination with human driving, particularly in highly interactive scenarios. We open-source our code and trained agents and share demonstrations of agent behaviors at https://sites.google.com/view/rlc-sub/home.},
+	eventtitle = {Coordination and Cooperation for Multi-Agent Reinforcement Learning Methods Workshop},
+	author = {Cornelisse, Daphne and Vinitsky, Eugene},
+	urldate = {2025-02-25},
+	date = {2024-05-18},
+	langid = {english},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/JJPLIIGX/Cornelisse and Vinitsky - 2024 - Human-compatible driving partners through data-regularized self-play reinforcement learning.pdf:application/pdf},
+}
+
+@inproceedings{lu_imitation_2023,
+	title = {Imitation Is Not Enough: Robustifying Imitation with Reinforcement Learning for Challenging Driving Scenarios},
+	url = {https://ieeexplore.ieee.org/document/10342038},
+	doi = {10.1109/IROS55552.2023.10342038},
+	shorttitle = {Imitation Is Not Enough},
+	abstract = {Imitation learning ({IL}) is a simple and powerful way to use high-quality human driving data, which can be collected at scale, to produce human-like behavior. However, policies based on imitation learning alone often fail to sufficiently account for safety and reliability concerns. In this paper, we show how imitation learning combined with reinforcement learning using simple rewards can substan-tially improve the safety and reliability of driving policies over those learned from imitation alone. In particular, we train a policy on over {lOOk} miles of urban driving data, and measure its effectiveness in test scenarios grouped by different levels of collision likelihood. Our analysis shows that while imitation can perform well in low-difficulty scenarios that are well-covered by the demonstration data, our proposed approach significantly improves robustness on the most challenging scenarios (over 38 \% reduction in failures). To our knowledge, this is the first application of a combined imitation and reinforcement learning approach in autonomous driving that utilizes large amounts of real- world human driving data.},
+	eventtitle = {2023 {IEEE}/{RSJ} International Conference on Intelligent Robots and Systems ({IROS})},
+	pages = {7553--7560},
+	booktitle = {2023 {IEEE}/{RSJ} International Conference on Intelligent Robots and Systems ({IROS})},
+	author = {Lu, Yiren and Fu, Justin and Tucker, George and Pan, Xinlei and Bronstein, Eli and Roelofs, Rebecca and Sapp, Benjamin and White, Brandyn and Faust, Aleksandra and Whiteson, Shimon and Anguelov, Dragomir and Levine, Sergey},
+	urldate = {2025-02-25},
+	date = {2023-10},
+	note = {{ISSN}: 2153-0866},
+	keywords = {Atmospheric measurements, Behavioral sciences, Particle measurements, Reinforcement learning, Robustness, Safety, Training},
+	file = {Full Text PDF:/Users/oliverchang/Zotero/storage/JCPLQXEI/Lu et al. - 2023 - Imitation Is Not Enough Robustifying Imitation with Reinforcement Learning for Challenging Driving.pdf:application/pdf;IEEE Xplore Abstract Record:/Users/oliverchang/Zotero/storage/C7KBC7FW/10342038.html:text/html},
+}
+
+@article{ye2020towards,
+  title={Towards playing full moba games with deep reinforcement learning},
+  author={Ye, Deheng and Chen, Guibin and Zhang, Wen and Chen, Sheng and Yuan, Bo and Liu, Bo and Chen, Jia and Liu, Zhao and Qiu, Fuhao and Yu, Hongsheng and others},
+  journal={Advances in Neural Information Processing Systems},
+  volume={33},
+  pages={621--632},
+  year={2020}
+}
+
+@inproceedings{zhu2022self,
+  title={Self-adaptive imitation learning: Learning tasks with delayed rewards from sub-optimal demonstrations},
+  author={Zhu, Zhuangdi and Lin, Kaixiang and Dai, Bo and Zhou, Jiayu},
+  booktitle={Proceedings of the AAAI conference on artificial intelligence},
+  volume={36},
+  number={8},
+  pages={9269--9277},
+  year={2022}
+}
+
+@article{kostrikov2019imitation,
+  title={Imitation learning via off-policy distribution matching},
+  author={Kostrikov, Ilya and Nachum, Ofir and Tompson, Jonathan},
+  journal={arXiv preprint arXiv:1912.05032},
+  year={2019}
+}
+
+@inproceedings{
+ahn2025prevalence,
+title={Prevalence of Negative Transfer in Continual Reinforcement Learning: Analyses and a Simple Baseline},
+author={Hongjoon Ahn and Jinu Hyeon and Youngmin Oh and Bosun Hwang and Taesup Moon},
+booktitle={The Thirteenth International Conference on Learning Representations},
+year={2025},
+url={https://openreview.net/forum?id=KAIqwkB3dT}
+}
+
+@article{khetarpal2022towards,
+  title={Towards continual reinforcement learning: A review and perspectives},
+  author={Khetarpal, Khimya and Riemer, Matthew and Rish, Irina and Precup, Doina},
+  journal={Journal of Artificial Intelligence Research},
+  volume={75},
+  pages={1401--1476},
+  year={2022}
+}
+
+@article{li2021metadrive,
+  title={MetaDrive: Composing Diverse Driving Scenarios for Generalizable Reinforcement Learning},
+  author={Li, Quanyi and Peng, Zhenghao and Xue, Zhenghai and Zhang, Qihang and Zhou, Bolei},
+  journal={arXiv preprint arXiv:2109.12674},
+  year={2021}
+}
+
++@article{towersgym2024,
+  publtype={informal},
+  author={Mark Towers and Ariel Kwiatkowski and Jordan K. Terry and John U. Balis and Gianluca De Cola and Tristan Deleu and Manuel Goulão and Andreas Kallinteris and Markus Krimmel and Arjun KG and Rodrigo Perez-Vicente and Andrea Pierré and Sander Schulhoff and Jun Jet Tai and Hannah Tan and Omar G. Younis},
+  title={Gymnasium: A Standard Interface for Reinforcement Learning Environments},
+  year={2024},
+  cdate={1704067200000},
+  journal={CoRR},
+  volume={abs/2407.17032},
+  url={https://doi.org/10.48550/arXiv.2407.17032}
+}
+
+@article{glanois2024survey,
+  title={A survey on interpretable reinforcement learning},
+  author={Glanois, Claire and Weng, Paul and Zimmer, Matthieu and Li, Dong and Yang, Tianpei and Hao, Jianye and Liu, Wulong},
+  journal={Machine Learning},
+  volume={113},
+  number={8},
+  pages={5847--5890},
+  year={2024},
+  publisher={Springer}
+}
+
+@inproceedings{vincze2025smose,
+  title={Smose: Sparse mixture of shallow experts for interpretable reinforcement learning in continuous control tasks},
+  author={Vincze, M{\'a}ty{\'a}s and Ferrarotti, Laura and Custode, Leonardo Lucio and Lepri, Bruno and Iacca, Giovanni},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={39},
+  number={20},
+  pages={20982--20990},
+  year={2025}
+}
+
+@article{furelos2021induction,
+  title={Induction and exploitation of subgoal automata for reinforcement learning},
+  author={Furelos-Blanco, Daniel and Law, Mark and Jonsson, Anders and Broda, Krysia and Russo, Alessandra},
+  journal={Journal of Artificial Intelligence Research},
+  volume={70},
+  pages={1031--1116},
+  year={2021}
+}
+
+@article{li2022metadrive,
+  title={Metadrive: Composing diverse driving scenarios for generalizable reinforcement learning},
+  author={Li, Quanyi and Peng, Zhenghao and Feng, Lan and Zhang, Qihang and Xue, Zhenghai and Zhou, Bolei},
+  journal={IEEE transactions on pattern analysis and machine intelligence},
+  volume={45},
+  number={3},
+  pages={3461--3475},
+  year={2022},
+  publisher={IEEE}
+}
+
+@article{huang2022cleanrl,
+  author  = {Shengyi Huang and Rousslan Fernand Julien Dossa and Chang Ye and Jeff Braga and Dipam Chakraborty and Kinal Mehta and João G.M. Araújo},
+  title   = {CleanRL: High-quality Single-file Implementations of Deep Reinforcement Learning Algorithms},
+  journal = {Journal of Machine Learning Research},
+  year    = {2022},
+  volume  = {23},
+  number  = {274},
+  pages   = {1--18},
+  url     = {http://jmlr.org/papers/v23/21-1342.html}
+}

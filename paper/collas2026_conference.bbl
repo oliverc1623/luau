@@ -1,0 +1,168 @@
+\begin{thebibliography}{30}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Ahn et~al.(2025)Ahn, Hyeon, Oh, Hwang, and Moon]{ahn2025prevalence}
+Hongjoon Ahn, Jinu Hyeon, Youngmin Oh, Bosun Hwang, and Taesup Moon.
+\newblock Prevalence of negative transfer in continual reinforcement learning: Analyses and a simple baseline.
+\newblock In \emph{The Thirteenth International Conference on Learning Representations}, 2025.
+\newblock URL \url{https://openreview.net/forum?id=KAIqwkB3dT}.
+
+\bibitem[Anand et~al.(2021)Anand, Gupta, Paruchuri, and Ravindran]{anand2021enhanced}
+Daksh Anand, Vaibhav Gupta, Praveen Paruchuri, and Balaraman Ravindran.
+\newblock An enhanced advising model in teacher-student framework using state categorization.
+\newblock In \emph{Proceedings of the AAAI Conference on Artificial Intelligence}, volume~35, pp.\  6653--6660, 2021.
+
+\bibitem[Campbell et~al.(2023)Campbell, Guo, Xie, Stepputtis, and Sycara]{campbell2023introspective}
+Joseph Campbell, Yue Guo, Fiona Xie, Simon Stepputtis, and Katia Sycara.
+\newblock Introspective action advising for interpretable transfer learning.
+\newblock In \emph{Conference on Lifelong Learning Agents}, pp.\  1072--1090. PMLR, 2023.
+
+\bibitem[Chen et~al.(2021)Chen, Li, and Tomizuka]{chen2021interpretable}
+Jianyu Chen, Shengbo~Eben Li, and Masayoshi Tomizuka.
+\newblock Interpretable end-to-end urban autonomous driving with latent deep reinforcement learning.
+\newblock \emph{IEEE Transactions on Intelligent Transportation Systems}, 23\penalty0 (6):\penalty0 5068--5078, 2021.
+
+\bibitem[Czarnecki et~al.(2019)Czarnecki, Pascanu, Osindero, Jayakumar, Swirszcz, and Jaderberg]{czarnecki_distilling_2019}
+Wojciech~M. Czarnecki, Razvan Pascanu, Simon Osindero, Siddhant Jayakumar, Grzegorz Swirszcz, and Max Jaderberg.
+\newblock Distilling policy distillation.
+\newblock In \emph{Proceedings of the Twenty-Second International Conference on Artificial Intelligence and Statistics}, pp.\  1331--1340. {PMLR}, 2019.
+\newblock URL \url{https://proceedings.mlr.press/v89/czarnecki19a.html}.
+\newblock {ISSN}: 2640-3498.
+
+\bibitem[Da~Silva et~al.(2020)Da~Silva, Warnell, Costa, and Stone]{da2020agents}
+Felipe~Leno Da~Silva, Garrett Warnell, Anna Helena~Reali Costa, and Peter Stone.
+\newblock Agents teaching agents: a survey on inter-agent transfer learning.
+\newblock \emph{Autonomous Agents and Multi-Agent Systems}, 34:\penalty0 1--17, 2020.
+
+\bibitem[Fujimoto et~al.(2018)Fujimoto, Hoof, and Meger]{fujimoto2018addressing}
+Scott Fujimoto, Herke Hoof, and David Meger.
+\newblock Addressing function approximation error in actor-critic methods.
+\newblock In \emph{International conference on machine learning}, pp.\  1587--1596. PMLR, 2018.
+
+\bibitem[Furelos-Blanco et~al.(2021)Furelos-Blanco, Law, Jonsson, Broda, and Russo]{furelos2021induction}
+Daniel Furelos-Blanco, Mark Law, Anders Jonsson, Krysia Broda, and Alessandra Russo.
+\newblock Induction and exploitation of subgoal automata for reinforcement learning.
+\newblock \emph{Journal of Artificial Intelligence Research}, 70:\penalty0 1031--1116, 2021.
+
+\bibitem[Gilpin et~al.(2018)Gilpin, Bau, Yuan, Bajwa, Specter, and Kagal]{gilpin2018explaining}
+Leilani~H Gilpin, David Bau, Ben~Z Yuan, Ayesha Bajwa, Michael Specter, and Lalana Kagal.
+\newblock Explaining explanations: An overview of interpretability of machine learning.
+\newblock In \emph{2018 IEEE 5th International Conference on data science and advanced analytics (DSAA)}, pp.\  80--89. IEEE, 2018.
+
+\bibitem[Glanois et~al.(2024)Glanois, Weng, Zimmer, Li, Yang, Hao, and Liu]{glanois2024survey}
+Claire Glanois, Paul Weng, Matthieu Zimmer, Dong Li, Tianpei Yang, Jianye Hao, and Wulong Liu.
+\newblock A survey on interpretable reinforcement learning.
+\newblock \emph{Machine Learning}, 113\penalty0 (8):\penalty0 5847--5890, 2024.
+
+\bibitem[Guo et~al.(2023)Guo, Campbell, Stepputtis, Li, Hughes, Fang, and Sycara]{guo2023explainable}
+Yue Guo, Joseph Campbell, Simon Stepputtis, Ruiyu Li, Dana Hughes, Fei Fang, and Katia Sycara.
+\newblock Explainable action advising for multi-agent reinforcement learning.
+\newblock In \emph{2023 IEEE International Conference on Robotics and Automation (ICRA)}, pp.\  5515--5521. IEEE, 2023.
+
+\bibitem[Haarnoja et~al.(2018)Haarnoja, Zhou, Abbeel, and Levine]{haarnoja_soft_2018}
+Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine.
+\newblock Soft actor-critic: Off-policy maximum entropy deep reinforcement learning with a stochastic actor.
+\newblock In \emph{Proceedings of the 35th International Conference on Machine Learning}, pp.\  1861--1870. {PMLR}, 2018.
+\newblock URL \url{https://proceedings.mlr.press/v80/haarnoja18b.html}.
+\newblock {ISSN}: 2640-3498.
+
+\bibitem[Jing et~al.(2022)Jing, Xia, Tian, Ding, Luo, Domeyer, Sherony, and Ding]{jing2022inaction}
+Taotao Jing, Haifeng Xia, Renran Tian, Haoran Ding, Xiao Luo, Joshua Domeyer, Rini Sherony, and Zhengming Ding.
+\newblock Inaction: Interpretable action decision making for autonomous driving.
+\newblock In \emph{European Conference on Computer Vision}, pp.\  370--387. Springer, 2022.
+
+\bibitem[Kakade \& Langford(2002)Kakade and Langford]{kakade_approximately_2002}
+Sham Kakade and John Langford.
+\newblock Approximately optimal approximate reinforcement learning.
+\newblock In \emph{Proceedings of the Nineteenth International Conference on Machine Learning}, {ICML} '02, pp.\  267--274. Morgan Kaufmann Publishers Inc., 2002.
+\newblock ISBN 978-1-55860-873-3.
+
+\bibitem[Kazemkhani et~al.(2024)Kazemkhani, Pandya, Cornelisse, Shacklett, and Vinitsky]{kazemkhani_gpudrive_2024}
+Saman Kazemkhani, Aarav Pandya, Daphne Cornelisse, Brennan Shacklett, and Eugene Vinitsky.
+\newblock {GPUDrive}: Data-driven, multi-agent driving simulation at 1 million {FPS}.
+\newblock 2024.
+\newblock URL \url{https://openreview.net/forum?id=ERv8ptegFi}.
+
+\bibitem[Khetarpal et~al.(2022)Khetarpal, Riemer, Rish, and Precup]{khetarpal2022towards}
+Khimya Khetarpal, Matthew Riemer, Irina Rish, and Doina Precup.
+\newblock Towards continual reinforcement learning: A review and perspectives.
+\newblock \emph{Journal of Artificial Intelligence Research}, 75:\penalty0 1401--1476, 2022.
+
+\bibitem[Kiran et~al.(2021)Kiran, Sobh, Talpaert, Mannion, Al~Sallab, Yogamani, and P{\'e}rez]{kiran2021deep}
+B~Ravi Kiran, Ibrahim Sobh, Victor Talpaert, Patrick Mannion, Ahmad~A Al~Sallab, Senthil Yogamani, and Patrick P{\'e}rez.
+\newblock Deep reinforcement learning for autonomous driving: A survey.
+\newblock \emph{IEEE transactions on intelligent transportation systems}, 23\penalty0 (6):\penalty0 4909--4926, 2021.
+
+\bibitem[Li et~al.(2022)Li, Peng, Feng, Zhang, Xue, and Zhou]{li2022metadrive}
+Quanyi Li, Zhenghao Peng, Lan Feng, Qihang Zhang, Zhenghai Xue, and Bolei Zhou.
+\newblock Metadrive: Composing diverse driving scenarios for generalizable reinforcement learning.
+\newblock \emph{IEEE transactions on pattern analysis and machine intelligence}, 45\penalty0 (3):\penalty0 3461--3475, 2022.
+
+\bibitem[Lillicrap et~al.(2015)Lillicrap, Hunt, Pritzel, Heess, Erez, Tassa, Silver, and Wierstra]{Lillicrap2015ContinuousCW}
+Timothy~P. Lillicrap, Jonathan~J. Hunt, Alexander Pritzel, Nicolas Manfred~Otto Heess, Tom Erez, Yuval Tassa, David Silver, and Daan Wierstra.
+\newblock Continuous control with deep reinforcement learning.
+\newblock \emph{CoRR}, abs/1509.02971, 2015.
+\newblock URL \url{https://api.semanticscholar.org/CorpusID:16326763}.
+
+\bibitem[Mnih et~al.(2015)Mnih, Kavukcuoglu, Silver, Rusu, Veness, Bellemare, Graves, Riedmiller, Fidjeland, Ostrovski, et~al.]{mnih2015human}
+Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei~A Rusu, Joel Veness, Marc~G Bellemare, Alex Graves, Martin Riedmiller, Andreas~K Fidjeland, Georg Ostrovski, et~al.
+\newblock Human-level control through deep reinforcement learning.
+\newblock \emph{nature}, 518\penalty0 (7540):\penalty0 529--533, 2015.
+
+\bibitem[Mnih et~al.(2016)Mnih, Badia, Mirza, Graves, Lillicrap, Harley, Silver, and Kavukcuoglu]{pmlr-v48-mniha16}
+Volodymyr Mnih, Adria~Puigdomenech Badia, Mehdi Mirza, Alex Graves, Timothy Lillicrap, Tim Harley, David Silver, and Koray Kavukcuoglu.
+\newblock Asynchronous methods for deep reinforcement learning.
+\newblock In Maria~Florina Balcan and Kilian~Q. Weinberger (eds.), \emph{Proceedings of The 33rd International Conference on Machine Learning}, volume~48 of \emph{Proceedings of Machine Learning Research}, pp.\  1928--1937, New York, New York, USA, 20--22 Jun 2016. PMLR.
+\newblock URL \url{https://proceedings.mlr.press/v48/mniha16.html}.
+
+\bibitem[Schulman et~al.(2015)Schulman, Levine, Abbeel, Jordan, and Moritz]{schulman2015trust}
+John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz.
+\newblock Trust region policy optimization.
+\newblock In \emph{International conference on machine learning}, pp.\  1889--1897. PMLR, 2015.
+
+\bibitem[Schulman et~al.(2017)Schulman, Wolski, Dhariwal, Radford, and Klimov]{schulman2017proximal}
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+\newblock Proximal policy optimization algorithms.
+\newblock \emph{arXiv preprint arXiv:1707.06347}, 2017.
+
+\bibitem[Shenfeld et~al.(2023)Shenfeld, Hong, Tamar, and Agrawal]{shenfeld2023tgrl}
+Idan Shenfeld, Zhang-Wei Hong, Aviv Tamar, and Pulkit Agrawal.
+\newblock Tgrl: An algorithm for teacher guided reinforcement learning.
+\newblock In \emph{International Conference on Machine Learning}, pp.\  31077--31093. PMLR, 2023.
+
+\bibitem[Sutton et~al.(1998)Sutton, Barto, et~al.]{sutton1998reinforcement}
+Richard~S Sutton, Andrew~G Barto, et~al.
+\newblock \emph{Reinforcement learning: An introduction}, volume~1.
+\newblock MIT press Cambridge, 1998.
+
+\bibitem[Taylor \& Stone(2009)Taylor and Stone]{taylor2009transfer}
+Matthew~E Taylor and Peter Stone.
+\newblock Transfer learning for reinforcement learning domains: A survey.
+\newblock \emph{Journal of Machine Learning Research}, 10\penalty0 (7), 2009.
+
+\bibitem[Towers et~al.(2024)Towers, Kwiatkowski, Terry, Balis, Cola, Deleu, Goulão, Kallinteris, Krimmel, KG, Perez-Vicente, Pierré, Schulhoff, Tai, Tan, and Younis]{towersgym2024}
+Mark Towers, Ariel Kwiatkowski, Jordan~K. Terry, John~U. Balis, Gianluca~De Cola, Tristan Deleu, Manuel Goulão, Andreas Kallinteris, Markus Krimmel, Arjun KG, Rodrigo Perez-Vicente, Andrea Pierré, Sander Schulhoff, Jun~Jet Tai, Hannah Tan, and Omar~G. Younis.
+\newblock Gymnasium: A standard interface for reinforcement learning environments.
+\newblock \emph{CoRR}, abs/2407.17032, 2024.
+\newblock URL \url{https://doi.org/10.48550/arXiv.2407.17032}.
+
+\bibitem[Vincze et~al.(2025)Vincze, Ferrarotti, Custode, Lepri, and Iacca]{vincze2025smose}
+M{\'a}ty{\'a}s Vincze, Laura Ferrarotti, Leonardo~Lucio Custode, Bruno Lepri, and Giovanni Iacca.
+\newblock Smose: Sparse mixture of shallow experts for interpretable reinforcement learning in continuous control tasks.
+\newblock In \emph{Proceedings of the AAAI Conference on Artificial Intelligence}, volume~39, pp.\  20982--20990, 2025.
+
+\bibitem[Ye et~al.(2020)Ye, Chen, Zhang, Chen, Yuan, Liu, Chen, Liu, Qiu, Yu, et~al.]{ye2020towards}
+Deheng Ye, Guibin Chen, Wen Zhang, Sheng Chen, Bo~Yuan, Bo~Liu, Jia Chen, Zhao Liu, Fuhao Qiu, Hongsheng Yu, et~al.
+\newblock Towards playing full moba games with deep reinforcement learning.
+\newblock \emph{Advances in Neural Information Processing Systems}, 33:\penalty0 621--632, 2020.
+
+\bibitem[Yu et~al.(2020)Yu, Quillen, He, Julian, Hausman, Finn, and Levine]{yu2020meta}
+Tianhe Yu, Deirdre Quillen, Zhanpeng He, Ryan Julian, Karol Hausman, Chelsea Finn, and Sergey Levine.
+\newblock Meta-world: A benchmark and evaluation for multi-task and meta reinforcement learning.
+\newblock In \emph{Conference on robot learning}, pp.\  1094--1100. PMLR, 2020.
+
+\end{thebibliography}
