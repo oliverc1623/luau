@@ -1,15 +1,15 @@
 # Fdb version 4
-["bibtex collas2026_conference"] 1776310147.10277 "collas2026_conference.aux" "collas2026_conference.bbl" "collas2026_conference" 1776310148.34028 0
+["bibtex collas2026_conference"] 1776318432.07867 "collas2026_conference.aux" "collas2026_conference.bbl" "collas2026_conference" 1776318433.28642 0
   "./collas2026_conference.bst" 1776262022 27091 e17eed9e1d8ad1dc32885cb9cf88d548 ""
   "./main.bib" 1776310146.7551 49312 9fc3d6b4209b297782a1433ad53d1734 ""
-  "collas2026_conference.aux" 1776310147.98709 13884 32cfc4c692e8e02cf01c0232f5902698 "pdflatex"
+  "collas2026_conference.aux" 1776318432.92907 14245 aefc839bd49c6730fbc01b6ac80b2ba7 "pdflatex"
   (generated)
   "collas2026_conference.bbl"
   "collas2026_conference.blg"
   (rewritten before read)
-["pdflatex"] 1776310147.24825 "/home/elochang/luau/paper/collas2026_conference.tex" "collas2026_conference.pdf" "collas2026_conference" 1776310148.34052 0
+["pdflatex"] 1776318432.21054 "/home/elochang/luau/paper/collas2026_conference.tex" "collas2026_conference.pdf" "collas2026_conference" 1776318433.28667 0
   "/etc/texmf/web2c/texmf.cnf" 1776238114.07413 475 c0e671620eb5563b2130f56340a5fde8 ""
-  "/home/elochang/luau/paper/collas2026_conference.tex" 1776310123.63817 51250 ea8940671d149f69101c2693279491d2 ""
+  "/home/elochang/luau/paper/collas2026_conference.tex" 1776318432.11807 50283 096dd816d5db1c57d54ec5f1947009d7 ""
   "/usr/share/texlive/texmf-dist/fonts/enc/dvips/base/8r.enc" 1165713224 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/usr/share/texlive/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/adobe/courier/pcrr7t.tfm" 1136768653 960 379cc0019370a9e0208a0a3f949f847a ""
@@ -208,20 +208,20 @@
   "action_dist.pdf" 1776262022 47797 ea86096c9bd997743c8eb652e22342f5 ""
   "burn-in-decay-ablation-advice.pdf" 1776290771.68587 104668 92832a5e40fe41232b62ef1002ee11b7 ""
   "burn-in-decay-ablation-returns.pdf" 1776290771.80787 158486 f66a445c96b2e2a0a610ba5fc2432155 ""
-  "collas2026_conference.aux" 1776310147.98709 13884 32cfc4c692e8e02cf01c0232f5902698 "pdflatex"
-  "collas2026_conference.bbl" 1776310147.2311 11959 1739a0cf01935b95e3c19e4322484ab7 "bibtex collas2026_conference"
-  "collas2026_conference.out" 1776310147.98809 1589 7c7758a3582c923d4a0addeb62b52097 "pdflatex"
+  "collas2026_conference.aux" 1776318432.92907 14245 aefc839bd49c6730fbc01b6ac80b2ba7 "pdflatex"
+  "collas2026_conference.bbl" 1776318432.20307 11959 1739a0cf01935b95e3c19e4322484ab7 "bibtex collas2026_conference"
+  "collas2026_conference.out" 1776318432.93007 1789 4429a3babed823e9513f7731d9adfbe5 "pdflatex"
   "collas2026_conference.sty" 1776310146.7551 7299 53ecca82c021e4bc1093fda7ad3f4ac1 ""
-  "collas2026_conference.tex" 1776310123.63817 51250 ea8940671d149f69101c2693279491d2 ""
+  "collas2026_conference.tex" 1776318432.11807 50283 096dd816d5db1c57d54ec5f1947009d7 ""
+  "env-setup-tight.pdf" 1776318428.46006 151727 5a1fbd3f46c3b2d21a92720e28358c3c ""
   "fancyhdr.sty" 1776262022 20521 e5d13d98d57bd53d4fed3aa61bd29c86 ""
   "figures/cm-ablation.pdf" 1776262026 190957 74ca79b929d9ac2aa67a4296d7ebab24 ""
-  "figures/env-setup-diaa-fig.pdf" 1776262028 154259 8de9db40abc6eb259b6c082f1101aa06 ""
   "figures/ll-ablation.pdf" 1776262026 192650 312b0c42641693462ee253f89a7c0fa4 ""
   "figures/mt-ablation.pdf" 1776262026 202118 4b4823129fd3745624601d6c53c47423 ""
   "learning-curves-facet.pdf" 1776262022 555025 618a735dcb3a2d18b5a7444bfa26bc12 ""
   "math_commands.tex" 1776262022 12284 a71653715108dc62b66e3a0bde0307d8 ""
   "natbib.sty" 1776262022 45154 40088ce024445d7ee2bca59e704cdd01 ""
-  "oliver_fig.pdf" 1776277686.96896 171480 0b17fd9639b4bd7454a3971795323324 ""
+  "oliver_fig_tight.pdf" 1776318428.22106 177147 99b5969a4c186964d07066e669fdd87c ""
   "threshold-facet.pdf" 1776262022 26668 bf4776aeeef0c6f6c64d8e2d4f4a1d6d ""
   (generated)
   "collas2026_conference.aux"
