@@ -1,5 +1,10 @@
 # %%
-"""Decay ablation: pull runs from W&B, group by env_id and introspection_decay, plot facets."""
+"""
+Combined burn-in + decay ablation: 1x4 figure of advice rate.
+
+Cols 0-1: burn-in ablation (LunarLander, BipedalWalker)
+Cols 2-3: decay ablation   (LunarLander, BipedalWalker)
+"""
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -9,90 +14,162 @@ import wandb
 
 
 WANDB_PROJECT = "luau"
-EXP_NAME = "decay_ablation"
+BURN_IN_EXP = "burnin_ablation"
+DECAY_EXP = "decay_ablation"
 ENV_IDS = ["LunarLander-v3", "BipedalWalker-v3"]
 METRICS = ["advice", "episode_return"]
 SMOOTH_WINDOW = 10
+BURN_IN_XLIM = (0, 400_000)
+OUT_PDF = "burn-in-decay-ablation-advice.pdf"
+OUT_PDF_RETURNS = "burn-in-decay-ablation-returns.pdf"
 
 # %%
 
-api = wandb.Api()
-runs = list(
-    api.runs(
-        WANDB_PROJECT,
-        filters={"config.exp_name": EXP_NAME, "config.env_id": {"$in": ENV_IDS}},
-    ),
-)
-print(f"Found {len(runs)} runs for exp_name={EXP_NAME}, env_ids={ENV_IDS}")
 
-records = []
-for run in runs:
-    cfg = run.config
-    env_id = cfg.get("env_id")
-    decay = cfg.get("introspection_decay")
-    if env_id is None or decay is None:
-        continue
-    history = run.history(keys=METRICS, samples=500, pandas=True)
-    if history.empty:
-        continue
-    history["env_id"] = env_id
-    history["introspection_decay"] = decay
-    history["run_id"] = run.id
-    records.append(history)
-print(f"Collected history from {len(records)} runs")
-
-df = pd.concat(records, ignore_index=True)
-df = df.rename(columns={"_step": "Step", "advice": "Advice", "episode_return": "Episodic Returns"})
-
-# %%
-
-# Smooth per (run_id) so seaborn can compute error bands across seeds.
-agg = df.sort_values(["env_id", "introspection_decay", "run_id", "Step"]).copy()
-for col in ["Advice", "Episodic Returns"]:
-    agg[col] = agg.groupby(["env_id", "introspection_decay", "run_id"])[col].transform(
-        lambda x: x.rolling(window=SMOOTH_WINDOW, min_periods=1).mean(),
+def fetch_runs(exp_name: str, hyperparam_key: str) -> pd.DataFrame:
+    """Pull W&B runs for an ablation experiment and return a smoothed dataframe."""
+    api = wandb.Api()
+    runs = list(
+        api.runs(
+            WANDB_PROJECT,
+            filters={"config.exp_name": exp_name, "config.env_id": {"$in": ENV_IDS}},
+        ),
     )
+    print(f"Found {len(runs)} runs for exp_name={exp_name}")
 
-agg["introspection_decay"] = agg["introspection_decay"].astype(str)
+    records = []
+    for run in runs:
+        cfg = run.config
+        env_id = cfg.get("env_id")
+        value = cfg.get(hyperparam_key)
+        if env_id is None or value is None:
+            continue
+        history = run.history(keys=METRICS, samples=500, pandas=True)
+        if history.empty:
+            continue
+        history["env_id"] = env_id
+        history[hyperparam_key] = value
+        history["run_id"] = run.id
+        records.append(history)
+    print(f"Collected history from {len(records)} runs for {exp_name}")
+
+    df = pd.concat(records, ignore_index=True)
+    df = df.rename(columns={"_step": "Step", "advice": "Advice", "episode_return": "Episodic Returns"})
+
+    df = df.sort_values(["env_id", hyperparam_key, "run_id", "Step"]).copy()
+    for col in ["Advice", "Episodic Returns"]:
+        df[col] = df.groupby(["env_id", hyperparam_key, "run_id"])[col].transform(
+            lambda x: x.rolling(window=SMOOTH_WINDOW, min_periods=1).mean(),
+        )
+    df[hyperparam_key] = df[hyperparam_key].astype(str)
+    return df
+
+
+burn_in_df = fetch_runs(BURN_IN_EXP, "burn_in")
+decay_df = fetch_runs(DECAY_EXP, "introspection_decay")
 
 # %%
 
+sns.set_theme(context="paper", font_scale=1.5, font="Times New Roman", style="darkgrid")
 
-def facet_plot(df: pd.DataFrame, value_col: str, ylabel: str, out_pdf: str) -> None:
-    """Facet by env_id, color by introspection_decay."""
-    g = sns.relplot(
-        data=df,
+fig, axes = plt.subplots(1, 4, figsize=(18, 4.2), sharex=False, sharey=False)
+
+# (dataframe, hue column, legend title, xlim, env, ax index)
+panel_specs = [
+    (burn_in_df, "burn_in", "Burn-in", BURN_IN_XLIM, "LunarLander-v3", 0),
+    (burn_in_df, "burn_in", "Burn-in", BURN_IN_XLIM, "BipedalWalker-v3", 1),
+    (decay_df, "introspection_decay", "Decay", None, "LunarLander-v3", 2),
+    (decay_df, "introspection_decay", "Decay", None, "BipedalWalker-v3", 3),
+]
+
+for df, hue_key, legend_title, xlim, env_id, col_idx in panel_specs:
+    ax = axes[col_idx]
+    sub = df[df["env_id"] == env_id]
+    sns.lineplot(
+        data=sub,
         x="Step",
-        y=value_col,
-        hue="introspection_decay",
-        col="env_id",
-        kind="line",
+        y="Advice",
+        hue=hue_key,
         palette="Set2",
-        height=4.2,
-        aspect=1.5,
-        col_wrap=3,
         linewidth=2,
         errorbar="se",
-        facet_kws={"sharey": False, "sharex": False},
+        ax=ax,
     )
-    g.set_titles(col_template="{col_name}")
-    g.set_axis_labels("Step", ylabel)
-    g.figure.subplots_adjust(bottom=0.25)
-    sns.move_legend(
-        g,
-        "upper center",
-        bbox_to_anchor=(0.35, 0.05),
-        ncols=df["introspection_decay"].nunique(),
-        title="Decay",
-        frameon=False,
-    )
-    g.savefig(out_pdf, format="pdf", bbox_inches="tight")
-    plt.show()
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    ax.set_title(env_id)
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    # Keep the legend only on the rightmost panel of each hyperparameter pair.
+    if col_idx in (1, 3):
+        ax.legend(
+            title=legend_title,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+        )
+    else:
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.remove()
 
+# Group annotations above the two hyperparameter pairs.
+fig.text(0.28, 1.02, "Burn-in ablation", ha="center", va="bottom", fontsize=24)
+fig.text(0.72, 1.02, "Decay ablation", ha="center", va="bottom", fontsize=24)
 
-sns.set_theme(context="paper", font_scale=2.2, font="Times New Roman", style="darkgrid")
+fig.supxlabel("Step")
+fig.supylabel("Advice")
+fig.tight_layout()
+fig.savefig(OUT_PDF, format="pdf", bbox_inches="tight")
+plt.show()
 
-facet_plot(agg, "Episodic Returns", "Episodic Returns", "decay-ablation-returns.pdf")
-facet_plot(agg, "Advice", "Advice", "decay-ablation-advice.pdf")
+# %%
+
+# 2x2 returns figure: row 0 burn-in, row 1 decay; cols are envs.
+
+fig2, axes2 = plt.subplots(2, 2, figsize=(12, 8), sharex=False, sharey=False)
+
+row_specs_returns = [
+    (burn_in_df, "burn_in", "Burn-in", None),
+    (decay_df, "introspection_decay", "Decay", None),
+]
+
+for row_idx, (df, hue_key, legend_title, xlim) in enumerate(row_specs_returns):
+    for col_idx, env_id in enumerate(ENV_IDS):
+        ax = axes2[row_idx, col_idx]
+        sub = df[df["env_id"] == env_id]
+        sns.lineplot(
+            data=sub,
+            x="Step",
+            y="Episodic Returns",
+            hue=hue_key,
+            palette="Set2",
+            linewidth=2,
+            errorbar="se",
+            ax=ax,
+        )
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if row_idx == 0:
+            ax.set_title(env_id)
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        if col_idx == len(ENV_IDS) - 1:
+            ax.legend(
+                title=legend_title,
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
+                frameon=False,
+            )
+        else:
+            legend = ax.get_legend()
+            if legend is not None:
+                legend.remove()
+
+fig2.supxlabel("Step")
+fig2.supylabel("Episodic Returns")
+fig2.tight_layout()
+fig2.savefig(OUT_PDF_RETURNS, format="pdf", bbox_inches="tight")
+plt.show()
 
 # %%

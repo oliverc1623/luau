@@ -58,7 +58,7 @@ agg["burn_in"] = agg["burn_in"].astype(str)
 # %%
 
 
-def facet_plot(df: pd.DataFrame, value_col: str, ylabel: str, out_pdf: str) -> None:
+def facet_plot(df: pd.DataFrame, value_col: str, ylabel: str, out_pdf: str, xlim: tuple | None = None) -> None:
     """Facet by env_id, color by burn_in."""
     g = sns.relplot(
         data=df,
@@ -75,6 +75,9 @@ def facet_plot(df: pd.DataFrame, value_col: str, ylabel: str, out_pdf: str) -> N
         errorbar="se",
         facet_kws={"sharey": False, "sharex": False},
     )
+    if xlim is not None:
+        for ax in g.axes.flat:
+            ax.set_xlim(xlim)
     g.set_titles(col_template="{col_name}")
     g.set_axis_labels("Step", ylabel)
     g.figure.subplots_adjust(bottom=0.25)
@@ -93,6 +96,6 @@ def facet_plot(df: pd.DataFrame, value_col: str, ylabel: str, out_pdf: str) -> N
 sns.set_theme(context="paper", font_scale=2.2, font="Times New Roman", style="darkgrid")
 
 facet_plot(agg, "Episodic Returns", "Episodic Returns", "burn-in-ablation-returns.pdf")
-facet_plot(agg, "Advice", "Advice", "burn-in-ablation-advice.pdf")
+facet_plot(agg, "Advice", "Advice", "burn-in-ablation-advice.pdf", xlim=(0, 400_000))
 
 # %%
