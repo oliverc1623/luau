@@ -6,6 +6,7 @@
 # it also excludes anything in your `.gitignore` file
 extend-exclude = [
     ".pyenv",
+    "*.md",
 ]
 
 extend-include = ["*.ipynb"]
