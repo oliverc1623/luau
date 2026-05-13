@@ -38,35 +38,7 @@ luau/
 
 Experiments are tracked with [Weights & Biases](https://wandb.ai). Model checkpoints (actor.pt, qnet.pt) are saved as WandB artifacts.
 
-### Transfer Efficacy Metric
-
-Performance is measured by **Transfer Efficacy (TE)**:
-
-```
-TE = (AUC_method - AUC_baseline) / AUC_baseline
-```
-
-along with jumpstart (initial performance advantage) and asymptotic reward.
-
-## TODO
-
-### Easy
-- [ ] Fix Figure 3 caption: "SAC" appears twice — one should read "Baseline"
-- [ ] Add confidence intervals / shading to Figure 3 learning curves (4 seeds are already run)
-- [ ] Explain the large MetaDrive jumpstart values in Table 2 (670%, 935%, 599%) — add a sentence in Results
-- [ ] Explain why DIAA still outperforms SAC in BWHM even after the threshold collapses to zero (Discussion, p.8)
-- [ ] Clean up boilerplate sections below (tooling, Getting Started, Contributing — leftover from project template)
-
-### Medium
-- [ ] Ablation: burn-in (δ) and decay (λ) parameters for DIAA — the Discussion already attributes CM's slow learning to burn-in being too long, so this is a known gap
-- [ ] Ablation: coefficient learning rate (μ) — the one hyperparameter unique to DIAA's threshold update is never ablated
-- [ ] Disentangle DIAA's two changes from IAA: (1) student Q-functions in the introspection criterion vs. (2) dynamic threshold — ideally with an ablation showing each change's individual contribution
-- [ ] Add a 2D PCA action distribution plot for at least one environment to strengthen the interpretability contribution
-
-### Hard
-- [ ] Formalize the "threshold as task difficulty metric" contribution — correlate steady-state threshold value with an independent source-target similarity measure (e.g., behavioral distance or reward gap)
-- [ ] Add a direct TGRL baseline on at least one task — TGRL is the primary algorithmic inspiration and reviewers will expect an empirical comparison
-- [ ] Ablation: coefficient learning rate (μ) sensitivity across all five tasks
+## Tools & Libraries
 
 * [Poetry](https://python-poetry.org/)
     * For dependency management, packaging, and publishing
@@ -80,7 +52,6 @@ along with jumpstart (initial performance advantage) and asymptotic reward.
     * For pre-commit hooks
 * [PyInvoke](http://www.pyinvoke.org/)
     * For task running, because I hate `make`
-
 
 ## To get started
 1. [Create a repository from a template](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
@@ -129,32 +100,6 @@ Theres also [issue templates](.github/ISSUE_TEMPLATE/bug_report.yml) and [rulese
 
 ## Contributing
 If you have any suggestions, please open an issue.  If you'd like to contribute, please open a pull request.  I'm always looking for ways to improve this template. I'm open to suggestions, but I'm also very opinionated.  I'm trying to keep it as simple as possible while remaining good enough for production code.
-
-## Updating from template
-If you want to update your project from the template, or add the template to an existing project. 
-There's a handy inv task. Just run `inv setup.update-from-template`.
-
-or you can do it manually with the following commands
-
-```bash
-git remote add template https://github.com/lite-dsa/python-template.git
-git fetch template
-git merge template/main --allow-unrelated-histories
-```
-
-# Packages
-
-```
-pip install stable-baselines3[extra]
-pip install swig
-pip install gymnasium[box2d]
-pip install minigrid
-pip install ffio
-pip install wandb
-pip install scikit-image
-pip install h5py
-pip install seaborn
-```
 
 # Making a video from image frames
 
