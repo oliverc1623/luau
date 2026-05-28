@@ -14,11 +14,12 @@ import torch
 import torch.nn.functional as f
 import tqdm
 import tyro
-import wandb
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule, TensorDictModule
 from torch import nn, optim
 from torchrl.data import LazyTensorStorage, ReplayBuffer
+
+import wandb
 
 
 warnings.filterwarnings("ignore")
@@ -476,7 +477,7 @@ if __name__ == "__main__":
                 student_qnet_target.lerp_(student_qnet_params.data, args.tau)
                 kl_qnet_target.lerp_(kl_qnet_params.data, args.tau)
 
-            if iter_indx % 1000 == 0:
+            if iter_indx % 1000 == 0 and len(actor_performance) and len(aux_performance):
                 performance_difference = np.mean(actor_performance) - np.mean(aux_performance)
                 if performance_difference > 0:
                     args.teacher_coef = args.teacher_coef + args.teacher_coef_update
