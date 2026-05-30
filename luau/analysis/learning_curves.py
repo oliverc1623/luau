@@ -9,9 +9,12 @@ pd.set_option("display.max_columns", None)
 sns.set_theme(style="whitegrid", palette="pastel")
 
 # %%
-df_bipedal = pd.read_csv("data/bipedal-learning-curves.csv")
+df_bipedal = pd.read_csv("data/bipedal_round3.csv")
 df_bipedal = df_bipedal.rename(
     columns={
+        "Group: tgrl - episode_return": "TGRL",
+        "Group: tgrl - episode_return__MIN": "TGRL_Min",
+        "Group: tgrl - episode_return__MAX": "TGRL_Max",
         "Group: sac-baseline - episode_return": "Baseline",
         "Group: sac-baseline - episode_return__MIN": "Baseline_Min",
         "Group: sac-baseline - episode_return__MAX": "Baseline_Max",
@@ -30,9 +33,12 @@ df_bipedal["Environment"] = "BWHM"
 
 # %%
 
-df_lunar = pd.read_csv("data/lunar-round2.csv")
+df_lunar = pd.read_csv("data/lunar_round3.csv")
 df_lunar = df_lunar.rename(
     columns={
+        "Group: tgrl - episode_return": "TGRL",
+        "Group: tgrl - episode_return__MIN": "TGRL_Min",
+        "Group: tgrl - episode_return__MAX": "TGRL_Max",
         "Group: sac-baseline-lunarlander-v3 - episode_return": "Baseline",
         "Group: sac-baseline-lunarlander-v3 - episode_return__MIN": "Baseline_Min",
         "Group: sac-baseline-lunarlander-v3 - episode_return__MAX": "Baseline_Max",
@@ -51,10 +57,13 @@ df_lunar["Environment"] = "LLWE"
 
 # %%
 
-df_curveroad = pd.read_csv("data/curve-merge-learning-curves.csv")
+df_curveroad = pd.read_csv("data/curvemerge_round2.csv")
 df_curveroad = df_curveroad.dropna()
 df_curveroad = df_curveroad.rename(
     columns={
+        "Group: tgrl - episode_return": "TGRL",
+        "Group: tgrl - episode_return__MIN": "TGRL_Min",
+        "Group: tgrl - episode_return__MAX": "TGRL_Max",
         "Group: sac-baseline - episode_return": "Baseline",
         "Group: sac-baseline - episode_return__MIN": "Baseline_Min",
         "Group: sac-baseline - episode_return__MAX": "Baseline_Max",
@@ -73,10 +82,13 @@ df_curveroad["Environment"] = "CM"
 
 # %%
 
-df_tintersection = pd.read_csv("data/t-inter.csv")
+df_tintersection = pd.read_csv("data/t_int_round2.csv")
 df_tintersection = df_tintersection.dropna()
 df_tintersection = df_tintersection.rename(
     columns={
+        "Group: tgrl - episode_return": "TGRL",
+        "Group: tgrl - episode_return__MIN": "TGRL_Min",
+        "Group: tgrl - episode_return__MAX": "TGRL_Max",
         "Group: sac-baseline - episode_return": "Baseline",
         "Group: sac-baseline - episode_return__MIN": "Baseline_Min",
         "Group: sac-baseline - episode_return__MAX": "Baseline_Max",
@@ -95,10 +107,13 @@ df_tintersection["Environment"] = "T-Int."
 
 # %%
 
-df_merge_turn = pd.read_csv("data/merge-turn.csv")
+df_merge_turn = pd.read_csv("data/merge_turn_round2.csv")
 df_merge_turn = df_merge_turn.dropna()
 df_merge_turn = df_merge_turn.rename(
     columns={
+        "Group: tgrl - episode_return": "TGRL",
+        "Group: tgrl - episode_return__MIN": "TGRL_Min",
+        "Group: tgrl - episode_return__MAX": "TGRL_Max",
         "Group: sac-baseline - episode_return": "Baseline",
         "Group: sac-baseline - episode_return__MIN": "Baseline_Min",
         "Group: sac-baseline - episode_return__MAX": "Baseline_Max",
@@ -130,7 +145,7 @@ combined_df = pd.concat(
 
 # Apply a rolling mean to smooth the curves, calculated per environment
 window_size = 10
-algorithms = ["Baseline", "Finetune", "IAA", "DIAA"]
+algorithms = ["Baseline", "Finetune", "IAA", "DIAA", "TGRL"]
 
 # Columns to apply smoothing on
 cols_to_smooth = []
@@ -147,7 +162,7 @@ for col in cols_to_smooth:
 
 # %%
 
-algorithms = ["Baseline", "Finetune", "IAA", "DIAA"]
+algorithms = ["Baseline", "Finetune", "IAA", "DIAA", "TGRL"]
 for algo in algorithms:
     # Estimate standard deviation from the range
     std_dev_est = combined_df[f"{algo}_Max"] - combined_df[f"{algo}_Min"]
@@ -177,9 +192,34 @@ plt.show()
 # %%
 
 
-def generate_learningcurve_facets(df: pd.DataFrame) -> None:
-    """Generate a faceted learning curve plot, separated by environment, with independent y-axes."""
-    algorithms = ["Baseline", "DIAA", "IAA", "Finetune"]
+# Fixed color per algorithm so the same method has the same color across both figures.
+_SET2 = sns.color_palette("Set2", 5)
+ALGO_COLORS = {
+    "Baseline": _SET2[0],
+    "DIAA": _SET2[1],
+    "IAA": _SET2[2],
+    "Finetune": _SET2[3],
+    "TGRL": _SET2[4],
+}
+
+
+def generate_learningcurve_facets(
+    df: pd.DataFrame,
+    environments: list[str],
+    algorithms: list[str],
+    filename: str,
+    col_wrap: int,
+    aspect: float = 1.2,
+    xlim_overrides: dict[str, tuple[float, float]] | None = None,
+) -> None:
+    """
+    Generate a faceted learning curve plot for the given environments, with independent y-axes.
+
+    ``xlim_overrides`` maps an environment name to an ``(xmin, xmax)`` tuple to truncate that
+    facet's x-axis (e.g., to highlight the jumpstart). Other facets keep their full range.
+    """
+    xlim_overrides = xlim_overrides or {}
+    df = df[df["Environment"].isin(environments)]
     df_long = pd.melt(
         df,
         id_vars=["Step", "Environment"],
@@ -188,54 +228,62 @@ def generate_learningcurve_facets(df: pd.DataFrame) -> None:
         value_name="Episodic Returns",
     )
 
-    # Set up the facet grid: 2 rows, 3 columns, larger size, independent y-axis
     g = sns.relplot(
         data=df_long,
         x="Step",
         y="Episodic Returns",
         hue="Algorithm",
+        hue_order=algorithms,
         col="Environment",
+        col_order=environments,
         kind="line",
-        palette="Set2",
-        height=4.2,
-        aspect=1.7,
-        col_wrap=3,
+        palette=ALGO_COLORS,
+        height=10,
+        aspect=aspect,
+        col_wrap=col_wrap,
         linewidth=2,
-        facet_kws={"sharey": False},  # <-- This disables shared y-axis
+        facet_kws={"sharey": False, "sharex": False},  # independent x and y axes per facet
     )
 
     # Add shaded min/max regions to each subplot
     for env_name, ax in g.axes_dict.items():
         df_env = df[df["Environment"] == env_name]
-        handles, labels = g.axes.flat[0].get_legend_handles_labels()
-        color_map = {label: handle.get_color() for label, handle in zip(labels, handles, strict=False)}
         for algo in algorithms:
-            color = color_map[algo]
             ax.fill_between(
                 df_env["Step"],
                 df_env[f"{algo}"] - df_env[f"{algo}_SE"],
                 df_env[f"{algo}"] + df_env[f"{algo}_SE"],
-                color=color,
+                color=ALGO_COLORS[algo],
                 alpha=0.2,
             )
+        if env_name in xlim_overrides:
+            ax.set_xlim(*xlim_overrides[env_name])
     g.set_titles(col_template="{col_name}")
 
-    # Move legend into whitespace below the bottom row, centered
+    # Move legend below the plots, spread horizontally
     sns.move_legend(
         g,
         "lower center",
-        bbox_to_anchor=(0.7, 0.2),
-        ncols=1,
+        bbox_to_anchor=(0.5, -0.05),
+        ncols=len(algorithms),
         title=None,
         frameon=False,
     )
 
-    g.savefig("learning-curves-facet.pdf", format="pdf")
+    g.savefig(filename, format="pdf", bbox_inches="tight")
     plt.show()
 
 
-# Generate the plot
-sns.set_theme(context="paper", font_scale=3, font="Times New Roman")
-generate_learningcurve_facets(combined_df)
+# Generate the plots
+sns.set_theme(context="paper", font_scale=6, font="Times New Roman")
+
+# All 5 experiments in a single row (all now include TGRL)
+generate_learningcurve_facets(
+    combined_df,
+    environments=["LLWE", "BWHM", "T-Int.", "CM", "MT"],
+    algorithms=["Baseline", "DIAA", "IAA", "Finetune", "TGRL"],
+    filename="learning-curves-facet.pdf",
+    col_wrap=5,
+)
 
 # %%
