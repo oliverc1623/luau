@@ -251,7 +251,7 @@ The MetaDrive environments feature three target tasks. In all three tasks, the s
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\linewidth]{figures/learning-curves-facet copy.pdf}
+\includegraphics[width=\linewidth]{figures/learning-curves-facet-w-tgrl.pdf}
 \caption{Learning curves for SAC, DIAA, IAA, Fine-tune, and TGRL on all five target tasks (LLWE, BWHM, T-Int., CM, and MT).}
 \label{fig:learning-curves}
 \end{figure}
@@ -279,22 +279,31 @@ In addition to learning curves, we present the distribution of actions taken for
 
 \begin{table*}[t]
 \centering
+% \setlength{\tabcolsep}{4pt}
 \begin{tabular}{lllllll}
 \hline
 \textbf{Method} & \textbf{Metric} & \textbf{LLWE} & \textbf{BWHM} & \textbf{T-Inters.} & \textbf{Curve Merge} & \textbf{Merge Turn} \\ \hline
-\multirow{3}{*}{IAA} & TE & -0.69 & -0.03 & 0.02 & -0.09 & -0.01 \\
- & Jumpstart & -3.2\% & \textbf{0.0\%} & 40.9\% & 17.6\% & 67.5\% \\
- & Final Reward & -16.5\% & -7.7\% & 4.99\% & -10.1\% & 13.3\% \\ \hline
-\multirow{3}{*}{DIAA} & TE & \textbf{1.60} & \textbf{0.99} & \textbf{0.17} & 0.11 & 0.05 \\
-     & Jumpstart & \textbf{22.0\%} & \textbf{1.6\%} & \textbf{670\%} & \textbf{935\%} & \textbf{599\%} \\
- & Final Reward & 10.0\% & \textbf{161\%} & \textbf{11.2\%} & \textbf{3.7\%} & \textbf{15.1\%} \\ \hline
-\multirow{3}{*}{Fine-tune} & TE & 1.08 & 0.17 & 0.16 & 0.15 & 0.05 \\
- & Jumpstart & 14.0\% & 0.0\% & 0.76\% & -0.30\% & 11.7\% \\
- & Final Reward & 10.9\% & 22.5\% & 10.1\% & 1.8\% & 8.1\% \\ \hline
+\multirow{3}{*}{IAA} & TE & $-0.06_{\pm 0.09}$ & $0.09_{\pm 0.17}$ & $0.02_{\pm 0.14}$ & $-0.09_{\pm 0.28}$ & $0.01_{\pm 0.03}$ \\
+ & JS & $0.8_{\pm 6.7\%}$ & $-0.0_{\pm 0.8\%}$ & $49.7_{\pm 40.5\%}$ & $20.7_{\pm 20.0\%}$ & $79.3_{\pm 61.0\%}$ \\
+ & FR & $-26.5_{\pm 39.2\%}$ & $5.3_{\pm 11.7\%}$ & $3.9_{\pm 13.3\%}$ & $-10.2_{\pm 27.1\%}$ & $4.8_{\pm 5.6\%}$ \\
+\hline
+\multirow{3}{*}{DIAA} & TE & $\mathbf{0.13}_{\pm 0.01}$ & $\mathbf{1.21}_{\pm 0.41}$ & $\mathbf{0.17}_{\pm 0.03}$ & $0.11_{\pm 0.04}$ & $\mathbf{0.08}_{\pm 0.05}$ \\
+ & JS & $-1.9_{\pm 11.1\%}$ & $\mathbf{0.3}_{\pm 2.1\%}$ & $815.0_{\pm 92.3\%}$ & $\mathbf{1099.4}_{\pm 130.6\%}$ & $\mathbf{814.6}_{\pm 66.3\%}$ \\
+ & FR & $6.8_{\pm 8.7\%}$ & $\mathbf{112.2}_{\pm 57.0\%}$ & $\mathbf{10.7}_{\pm 2.0\%}$ & $\mathbf{6.1}_{\pm 13.3\%}$ & $\mathbf{11.3}_{\pm 3.6\%}$ \\
+\hline
+\multirow{3}{*}{FT} & TE & $0.09_{\pm 0.05}$ & $0.21_{\pm 0.19}$ & $0.16_{\pm 0.05}$ & $0.15_{\pm 0.06}$ & $0.08_{\pm 0.02}$ \\
+ & JS & $-0.2_{\pm 6.3\%}$ & $-0.0_{\pm 0.8\%}$ & $0.9_{\pm 20.8\%}$ & $-0.4_{\pm 15.5\%}$ & $2.2_{\pm 20.8\%}$ \\
+ & FR & $13.9_{\pm 11.8\%}$ & $16.7_{\pm 15.1\%}$ & $8.3_{\pm 4.7\%}$ & $4.7_{\pm 9.4\%}$ & $1.0_{\pm 2.1\%}$ \\
+\hline
+\multirow{3}{*}{TGRL} & TE & $-0.02_{\pm 0.11}$ & $0.43_{\pm 0.25}$ & $-0.65_{\pm 0.14}$ & $-0.72_{\pm 0.08}$ & $-0.19_{\pm 0.10}$ \\
+ & JS & $3.0_{\pm 6.3\%}$ & $0.3_{\pm 1.0\%}$ & $876.4_{\pm 188.7\%}$ & $635.1_{\pm 161.7\%}$ & $657.0_{\pm 137.2\%}$ \\
+ & FR & $-42.8_{\pm 28.4\%}$ & $9.3_{\pm 24.5\%}$ & $-82.5_{\pm 30.3\%}$ & $-70.0_{\pm 11.9\%}$ & $-18.0_{\pm 6.1\%}$ \\
+\hline
 \end{tabular}
-\caption{Results for IAA, DIAA, and Fine-tune across the five target tasks. This table compares transfer efficacy (TE), jumpstart, and final reward; all metrics are calculated in relation to the baseline, SAC.}
+\caption{Transfer efficacy (TE), jumpstart (JS), and final reward (FR) for IAA, DIAA, Fine-tune (FT), and TGRL across the five target tasks. All metrics are computed relative to the SAC baseline. \textbf{Bold} entries mark metrics where DIAA achieves the best value across all methods. Values are mean $\pm$ standard deviation across four seeds.}
 \label{tbl:results}
 \end{table*}
+
 
 \begin{figure}[t]
     \centering
