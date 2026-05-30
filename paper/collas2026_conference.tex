@@ -88,7 +88,7 @@ Off-policy methods and parallelization improve data utilization and throughput b
     \label{fig:enter-label}
 \end{figure}
 
-In this work, we introduce a x method that combines ideas from action advising and suboptimal imitation learning. Introspective action advising presents a  mechanism for the teacher to assess whether issuing advice will benefit the student more than the student's own actions \citep{campbell2023introspective}. This work is based on a fixed threshold: advice is given if the difference between the value function of the teacher and the value function of a fine-tuned copy of the teacher falls within this threshold bound. Consequently, the introspection threshold requires task specific tuning. Since a copy of the teacher's critic is being fine-tuned, there is added computational overhead. 
+In this work, we introduce a method that combines ideas from action advising and suboptimal imitation learning. Introspective action advising presents a  mechanism for the teacher to assess whether issuing advice will benefit the student more than the student's own actions \citep{campbell2023introspective}. This work is based on a fixed threshold: advice is given if the difference between the value function of the teacher and the value function of a fine-tuned copy of the teacher falls within this threshold bound. Consequently, the introspection threshold requires task specific tuning. Since a copy of the teacher's critic is being fine-tuned, there is added computational overhead. 
 
 To overcome these limitations, we draw inspiration from \citet{shenfeld2023tgrl} who propose Teacher Guided Reinforcement Learning (TGRL): a method that balances the importance of the teacher based on the student's performance. The intuition behind TGRL is that if a student outperforms a comparative policy with teacher advice, then the teacher's importance should decrease. Otherwise, if the student under-performs, then increase the teacher's importance. 
 
@@ -229,7 +229,7 @@ In Algorithm \ref{alg:introspect}, we keep the burn-in and decay parameters from
     | & \min(Q_{\pi_T 1}^{\text{Target}}(s_t,a_t), Q_{\pi_T 2}^{\text{Target}}(s_t,a_t)) \\
     & - \min(Q_{\pi_T 1}^{\text{Source}}(s_t,a_t), Q_{\pi_T 2}^{\text{Source}}(s_t,a_t))| \leq \epsilon.
 \end{split}
-\end{equation}$Q_{\pi_T 1}^{\text{Target}}(s_t,a_t)$ and $Q_{\pi_T 2}^{\text{Target}}(s_t,a_t)$ are fined-tuned copies of the teacher's critics. This inequality reflects the introspection mechanism in \citet{campbell2023introspective}. We implement this extension so that we compare introspection mechanisms - not algorithmic backbones. 
+\end{equation}$Q_{\pi_T 1}^{\text{Target}}(s_t,a_t)$ and $Q_{\pi_T 2}^{\text{Target}}(s_t,a_t)$ are fine-tuned copies of the teacher's critics. This inequality reflects the introspection mechanism in \citet{campbell2023introspective}. We implement this extension so that we compare introspection mechanisms - not algorithmic backbones. 
 
 \section{Experiments}
 \label{sec:experiments}
@@ -249,12 +249,12 @@ The MetaDrive environments feature three target tasks. In all three tasks, the s
 \section{Results}
 \label{sec:results}
 
-\begin{figure*}
+\begin{figure}[t]
 \centering
-\includegraphics[width=1.0\textwidth]{learning-curves-facet.pdf}
-\caption{Learning curves for SAC, DIAA, IAA, SAC, and Fine-tune for each target task.}
+\includegraphics[width=\linewidth]{figures/learning-curves-facet copy.pdf}
+\caption{Learning curves for SAC, DIAA, IAA, Fine-tune, and TGRL on all five target tasks (LLWE, BWHM, T-Int., CM, and MT).}
 \label{fig:learning-curves}
-\end{figure*}
+\end{figure}
 
 Here, we present our results from the experiments described in the Experiments section. We train method for 1 million timesteps; each includes four seeds per task, totaling to 4 million timesteps for each algorithm per task. 
 
@@ -265,13 +265,15 @@ Three metrics we refer to throughout results are jumpstart, transfer efficacy (T
 Jumpstart is the percentage increase of the initial reward under the transfer learning method, relative to the SAC baseline. Final reward is the asymptotic reward where training ends. We compute the percentage increase for the final reward relative to the SAC baseline. 
 
 % learning curve DIAA
-Figure \ref{fig:learning-curves} illustrates the learning curves for each algorithm and task. In every task, DIAA (orange curve) achieved a higher jumpstart value; figure \ref{fig:learning-curves} shows a steeper initial slope and y-axis intercept compared to the other methods. While the fine-tuning approach (pink curve) shared the same final reward with DIAA in \textbf{LLWE}, \textbf{T-Int.}, and \textbf{CM}, DIAA reaches the final reward in fewer timesteps. In \textbf{T-Int.}, for example, DIAA reached a reward of 150 by 250,000 steps, while the fine-tuning reached the maximum reward slightly before 500,000 timesteps. 
+Figure \ref{fig:learning-curves} illustrates the learning curves for each algorithm and task. In every task, DIAA (orange curve) achieved a higher jumpstart value; figure \ref{fig:learning-curves} shows a steeper initial slope and y-axis intercept compared to the other methods. While the fine-tuning approach (pink curve) shared the same final reward with DIAA in \textbf{LLWE}, \textbf{T-Int.}, and \textbf{CM}, DIAA reaches the final reward in fewer timesteps. In \textbf{T-Int.}, for example, DIAA reached a reward of 150 by 250,000 steps, while the fine-tuning reached the maximum reward slightly before 500,000 timesteps.
 
 DIAA shows a higher TE compared to IAA across all tasks. For instance, in Table \ref{tbl:results}, DIAA's three largest TE values were $1.60$, $0.99$, and $0.17$ in \textbf{LLWE}, \textbf{BWHM}, and \textbf{T-Int.}, respectively. In contrast, IAA yielded negative TE values of $-0.69$ and $-0.03$ in \textbf{LLWE} and \textbf{BWHM}, indicating IAA hindered the student agent compared to SAC. DIAA and IAA shared the same $\epsilon$, $\delta$, and $\lambda$ values, ensuring that any observed differences in performance can be attributed to core algorithmic distinctions.
 
 Fine-tuning performed well in all tasks, achieving a positive TE against SAC per Table \ref{tbl:results}. However, fine-tuning consistently had a worse jumpstart than IAA and DIAA, with values of $0.76\%, -0.30\%,$ and $11.\%$ in the MetaDrive environments. Fine-tuning hit final reward values, comparable to DIAA except for \textbf{BWHM} and \textbf{MT}, where fine-tuning ended training with reward increases of $22.5\%$ and $8.1\%$, respectively.
 
-IAA facilitates a sizable jumpstart boost, reaching percentage increases of $40.9\%$, $17.6\%$, and $67.5\%$ in the MetaDrive environments. For TE, IAA performs on pair or worse than the SAC baseline. This is most striking in Figure \ref{fig:learning-curves}, where IAA (blue curve) is consistently below the SAC baseline (green curve). IAA showed an increase in asymptotic reward in \textbf{T-Int.} and \textbf{MT} with percentages of $4.88\%$ and $13.3\%$ respectively.  
+IAA facilitates a sizable jumpstart boost, reaching percentage increases of $40.9\%$, $17.6\%$, and $67.5\%$ in the MetaDrive environments. For TE, IAA performs on par or worse than the SAC baseline. This is most striking in Figure \ref{fig:learning-curves}, where IAA (blue curve) is consistently below the SAC baseline (green curve). IAA showed an increase in asymptotic reward in \textbf{T-Int.} and \textbf{MT} with percentages of $4.88\%$ and $13.3\%$ respectively.
+
+We also include TGRL \citep{shenfeld2023tgrl} as a teacher-guided baseline on the Box2D tasks in Figure \ref{fig:learning-curves}. TGRL converges at or below the SAC baseline in both \textbf{LLWE} and \textbf{BWHM}. This is consistent with the discussion in Section \ref{sec:related}: TGRL is designed for settings where a suboptimal teacher shares the student's state distribution, whereas our source and target tasks differ in their state distributions, limiting the benefit of cross-entropy imitation against the teacher.
 
 In addition to learning curves, we present the distribution of actions taken for each algorithm during training in Figure \ref{fig:act-dist}. These distributions highlight how distinct exploration strategies emerge, ultimately shaping the learned policy. We select one action dimension to highlight key strategies the student learned from the teacher. For example, CM shows that DIAA learned a throttle policy favoring maximum speed with a density greater than 0.2. T-Int. and MT illustrates steering angle; in these plots, DIAA favored a slightly skewed distribution past 0.0. Meanwhile the teacher favored steering policies at -1.0 and 1.0.
 
@@ -333,7 +335,7 @@ In this section, we analyze how changing the initial introspection threshold val
     \label{fig:ablation}
 \end{figure}
 
-Figure \ref{fig:ablation} shows the rewards and threshold values for each algorithm in the ablation study. Observe that when the initial threshold is 0.25, DAA increases the threshold for a longer duration. Conversely, when the threshold is 0.75, DIAA increases it promptly but for a short time before plummeting to zero. In both threshold settings, DIAA ultimately set the threshold to 0.0. We attribute this to BWHM being significantly more challenging than the source task. Finally, the reward for DIAA were greater then the threshold was 0.75 instead of 0.25. 
+Figure \ref{fig:ablation} shows the rewards and threshold values for each algorithm in the ablation study. Observe that when the initial threshold is 0.25, DIAA increases the threshold for a longer duration. Conversely, when the threshold is 0.75, DIAA increases it promptly but for a short time before plummeting to zero. In both threshold settings, DIAA ultimately set the threshold to 0.0. We attribute this to BWHM being significantly more challenging than the source task. Finally, the reward for DIAA were greater when the threshold was 0.75 instead of 0.25. 
 
 % \begin{figure}[tb]
 %     \centering
@@ -385,7 +387,7 @@ To implement the adaptive threshold, we extended IAA with SAC. We leverage the o
 
 LunarLander-v3 had an action space of shape $(2,)$ which action inputs were bounded between $[-1,1].$ The observation is a vector of size $(8,)$, encoding the agent's position along with other dynamic information. LunarLander-v3 has a sparse rewards of -100 or +100 for crashing or docking on the landing \cite{towersgym2024}. In addition, a dense reward shapes the agent's behavior as it lands. The action space is $(4,)$ where each vector contained values between negative one and positive one. The observation space is a one-dimensional vector of length 24, containing information about the agent's physics dynamics along with a 10-point LiDAR point cloud. The agent is reward for forward progress, for a maximum of 300+ points at the end of an episode \cite{towersgym2024}; conversely, the agent receives -100 points for falling. 
 
-MetaDrive's observation space is a 259 feature vector, which represents the LiDAR state. This vector contains the ego state, navigation information, and lidar-like point clouds. The action space for the vehicles is $[-1,1]^2.$ The first value controls steering while the second value control throttle. We did not enable reverse throttling. We use the default reward function defined in \cite{li2022metadrive}; the equation is stated in Appendix \ref{appx:envs}. The MetaDrive reward function is defined as
+MetaDrive's observation space is a 259 feature vector, which represents the LiDAR state. This vector contains the ego state, navigation information, and lidar-like point clouds. The action space for the vehicles is $[-1,1]^2.$ The first value controls steering while the second value control throttle. We did not enable reverse throttling. We use the default reward function defined in \cite{li2022metadrive}. The MetaDrive reward function is defined as
 \begin{equation}
     R = c1R_{driving} + c2 R_{speed} + R_{terminiation}
 \label{eq:metadrive-rf}
