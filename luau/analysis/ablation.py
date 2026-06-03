@@ -125,6 +125,11 @@ plt.show()
 # %%
 df_threshold = pd.concat([df_threshold_25, df_threshold_75], ignore_index=True)
 
+# Estimate the standard error for the threshold curves from the min/max range.
+for algo in ["IAA", "DIAA"]:
+    if f"{algo}_Max" in df_threshold.columns and f"{algo}_Min" in df_threshold.columns:
+        df_threshold[f"{algo}_SE"] = (df_threshold[f"{algo}_Max"] - df_threshold[f"{algo}_Min"]) / 4
+
 sns.set_theme(context="paper", font_scale=2.5, font="Times New Roman", style="darkgrid")
 
 algorithms = ["DIAA", "IAA"]
@@ -158,6 +163,14 @@ for i, thr in enumerate(thresholds):
     df_env = df_threshold[df_threshold["Threshold"] == thr]
     for algo in algorithms:
         ax.plot(df_env["Step"], df_env[algo], color=color_map[algo], label=algo, linewidth=1.5)
+        if f"{algo}_SE" in df_env.columns:
+            ax.fill_between(
+                df_env["Step"],
+                df_env[algo] - df_env[f"{algo}_SE"],
+                df_env[algo] + df_env[f"{algo}_SE"],
+                color=color_map[algo],
+                alpha=0.2,
+            )
     ax.set_title(f"Initial Threshold: {thr}")
     ax.set_xlabel("Step")
     if i == 0:

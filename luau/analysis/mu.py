@@ -150,43 +150,4 @@ generate_mu_facets(
     filename="mu-ablation.pdf",
 )
 
-# %% Plot abs_diff for threshold_lr = 0.01.
-
-TARGET_MU = 0.01
-
-# Fetch the abs_diff curves for the threshold_lr = 0.01 seeds.
-abs_diff_curves = []
-for r in runs:
-    if r.config.get("threshold_lr") != TARGET_MU:
-        continue
-    hist = r.history(keys=["abs_diff"], samples=GRID_POINTS * 5)
-    if "abs_diff" not in hist.columns or hist.empty:
-        continue
-    steps = hist["_step"].to_numpy(float)
-    vals = hist["abs_diff"].to_numpy(float)
-    finite = np.isfinite(steps) & np.isfinite(vals)
-    if finite.any():
-        abs_diff_curves.append((steps[finite], vals[finite]))
-
-# Aggregate across seeds (mean +/- SE) on a common grid.
-grid = np.linspace(
-    max(s[0] for s, _ in abs_diff_curves),
-    min(s[-1] for s, _ in abs_diff_curves),
-    GRID_POINTS,
-)
-stacked = np.array([smooth(np.interp(grid, s, v)) for s, v in abs_diff_curves])
-mean = stacked.mean(axis=0)
-se = stacked.std(axis=0, ddof=1) / np.sqrt(stacked.shape[0]) if stacked.shape[0] > 1 else np.zeros_like(mean)
-
-color = MU_COLORS[str(TARGET_MU)]
-fig, ax = plt.subplots(figsize=(8, 6))
-ax.plot(grid, mean, color=color, linewidth=2, label=rf"$\mu$ = {TARGET_MU}")
-ax.fill_between(grid, mean - se, mean + se, color=color, alpha=0.2)
-ax.set_xlabel("Step")
-ax.set_ylabel("Absolute Q-value Difference")
-ax.legend(frameon=False)
-fig.tight_layout()
-fig.savefig("mu-abs-diff.pdf", format="pdf", bbox_inches="tight")
-plt.show()
-
 # %%
