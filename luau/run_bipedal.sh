@@ -1,10 +1,10 @@
 #!/bin/bash
 # Execute scripts with different seeds and additional arguments for torchcompile scripts
 scripts=(
-    sac_finetune.py
-    sac_iaa.py
     sac_diaa.py
-    sac_siaa.py
+    # sac_finetune.py
+    # sac_iaa.py
+    # sac_tgrl.py
 )
 for script in "${scripts[@]}"; do
     for seed in 11 21 31 41; do
@@ -17,7 +17,7 @@ for script in "${scripts[@]}"; do
                 --cudagraphs \
                 --compile \
                 --total-timesteps 1_000_000 \
-                --pretrained_run_id "luau/rrq1gm3t" \
+                --pretrained_run_id "luau/wxi10qyt" \
                 --env_kwargs hardcore True
         else
             python $script --seed=$seed

@@ -6,8 +6,8 @@ scripts=(
 
 # env-id, map pairs
 envs=(
-    "TIntersection-v0 T"
-    "CyCurveMerge-v0 Cy"
+    # "TIntersection-v0 T"
+    # "CyCurveMerge-v0 Cy"
     "MergeTurn-v0 yT"
 )
 

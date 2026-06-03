@@ -9,7 +9,7 @@ for script in "${scripts[@]}"; do
         for threshold in 0.25 0.75 0.9; do
             if [[ $script == *.py ]]; then
                 python $script --seed=$seed \
-                    --env-id "MergeTurn-v0" \
+                    --env-id "TIntersection-v0" \
                     --exp_name "student_ablation" \
                     --num-envs 8 \
                     --gradient_steps -1 \
@@ -18,7 +18,7 @@ for script in "${scripts[@]}"; do
                     --total-timesteps 1_000_000 \
                     --traffic_density 0.2 \
                     --accident_prob 1.0 \
-                    --map "yT" \
+                    --map "T" \
                     --use_lateral_reward \
                     --pretrained_run_id "luau/kg8xhrne" \
                     --introspection_threshold $threshold \

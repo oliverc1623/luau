@@ -7,15 +7,17 @@ for script in "${scripts[@]}"; do
     for seed in 11 21 31 42; do
         if [[ $script == *.py ]]; then
             python $script --seed=$seed \
-                --env-id "CurveRoadDense-v0" \
+                --env-id "MergeTurn-v0" \
                 --exp_name "student" \
                 --num-envs 8 \
                 --gradient_steps -1 \
                 --cudagraphs \
                 --compile \
                 --total-timesteps 1_000_000 \
-                --traffic_density 0.3 \
-                --map "C"
+                --traffic_density 0.2 \
+                --accident_prob 1.0 \
+                --map "yT" \
+                --use_lateral_reward
         else
             python $script --seed=$seed
         fi
